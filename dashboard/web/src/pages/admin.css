@@ -1,0 +1,39 @@
+/* Admin pages (Badges, Registry, Attack): only what styles.css cannot express. Tokens only, no new colours or fonts. */
+
+.stack { display: grid; gap: var(--sp-2); align-content: start; }   /* vertical rhythm inside a card or a form */
+.stack > * { min-width: 0; }
+.split--form { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }   /* narrow form, wide result */
+@media (max-width: 1000px) { .split--form { grid-template-columns: minmax(0, 1fr); } }
+details > summary { cursor: pointer; }
+/* on pure black / white a field no longer differs from its card by shade: its edge has to carry it (3:1) */
+.input, .select { border-color: var(--ink-3); }
+.note, .gap-body { overflow-wrap: anywhere; }   /* an RPC error or a file path can be one long unbroken token */
+
+/* badges: 4 across on the demo laptop, 2 by 2 on a narrow window */
+.badges { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.badge-no { font: var(--w-thin) 3rem/.8 var(--font-display); color: var(--ink-3); }
+/* ponytail: assumes the mono glyph advance (.6em, less the letter-spacing) and a 4-letter symbol beside the number */
+.badges .card { container-type: inline-size; }
+.badge-bal { margin: 0; font-size: min(clamp(2.1rem, 3.5vw, 3.2rem), calc((100cqi - 3.5rem) / (var(--n, 5) * .55))); }
+.badge-bal small { margin-left: .8em; }
+.badges .chip { font-size: .8rem; }
+/* BADGE-GAP(badge-pubkeys): a slot with no public key is a visible hole, never a card with made-up numbers */
+.badge--waiting { border-style: dashed; border-color: var(--ink-3); background: transparent; }
+.badge-wait { font: var(--w-black) 1.7rem/1 var(--font-display); letter-spacing: .01em; text-transform: uppercase; color: var(--ink-2); }
+
+/* registry: the issue form is one row of fields; the button sits on the input line */
+.issue { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); align-items: start; }
+.issue .btn { min-height: 2.75rem; }
+
+/* attack: claimed beside actual, sized to be read from across the room */
+.versus { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: var(--sp-2); }
+.versus-side { container-type: inline-size; display: grid; gap: .5rem; align-content: start; padding: var(--sp-2) var(--sp-3); border: 1px solid var(--line); border-radius: var(--r); background: var(--bg-2); }
+.versus-side--bad { border: 4px double var(--bad); padding: calc(var(--sp-2) - 3px) calc(var(--sp-3) - 3px); background: color-mix(in srgb, var(--bad) 10%, var(--bg-1)); }
+/* as big as fits: --n characters of mono (.6em advance, less the letter-spacing) plus the symbol, capped at 7rem. Same ponytail as .badge-bal */
+.versus-amt { font: 800 min(7rem, calc((100cqi - 4.5rem) / (var(--n, 3) * .54)))/1 var(--font-mono); letter-spacing: -.06em; white-space: nowrap; }
+.versus-amt small { margin-left: .7em; font: var(--w-semi) 1rem/1 var(--font-body); letter-spacing: .1em; }
+.versus-ne { align-self: center; font: var(--w-thin) 5rem/1 var(--font-display); }
+/* a GapCard inside the narrow delivery column: let its marker chip drop under the text instead of squeezing it */
+.delivery .gap { flex-wrap: wrap; }
+.delivery .gap-body { flex-basis: 12rem; }
+@media (max-width: 640px) { .versus { grid-template-columns: minmax(0, 1fr); } .versus-ne { justify-self: center; line-height: .6; } }

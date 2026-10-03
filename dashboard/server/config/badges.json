@@ -1,0 +1,37 @@
+{
+  "_gap": "BADGE-GAP(badge-pubkeys, key-location, token-accounts): fill from each flashed badge (Settings > Identity). See docs/dashboard/BADGE-GAPS.md",
+  "badges": [
+    {
+      "id": 1,
+      "label": "Merchant (team)",
+      "pubkey": "Gn2GQYmcQkatE2594ov2ELKkYWZHwARG7FiAoPWSEcxq",
+      "keyLocation": "software",
+      "tokenAccount": null,
+      "standIn": true
+    },
+    {
+      "id": 2,
+      "label": "Impostor (team)",
+      "pubkey": "DhEb6hTLaMQt13xYd8fNASC4PAQoV8mbMkJzH7pCW511",
+      "keyLocation": "software",
+      "tokenAccount": null,
+      "standIn": true
+    },
+    {
+      "id": 3,
+      "label": "Judge A",
+      "pubkey": "4vJDQvQxRrfLYpjFWXFsVTMsw7cayvWB46pnzdn2BW97",
+      "keyLocation": "software",
+      "tokenAccount": null,
+      "standIn": true
+    },
+    {
+      "id": 4,
+      "label": "Judge B",
+      "pubkey": "FdBSxAmqiTcttuoTezCQRTLRk4pgQpZ8uqGfve5N17XD",
+      "keyLocation": "software",
+      "tokenAccount": null,
+      "standIn": true
+    }
+  ]
+}
