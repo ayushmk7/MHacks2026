@@ -4,7 +4,7 @@ The laptop dashboard for "Verified Hardware Payments on the Solana Badge" (MHack
 
 Built on Solana OS by spacemandev; we added the wallet and identity layer.
 
-Product spec: [`PRD Verified Hardware Payments on the Solana Badge.md`](PRD%20Verified%20Hardware%20Payments%20on%20the%20Solana%20Badge.md).
+Product spec: [`Prd-verified-payment-key.md`](Prd-verified-payment-key.md). Build specs: [`PRD_GUIDE.md`](PRD_GUIDE.md) (start with [`00-Interfaces.md`](00-Interfaces.md)).
 
 ## Status (2026-10-03)
 

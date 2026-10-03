@@ -1,7 +1,7 @@
 # P1-R — Test Harness: Prove the Risky Parts First
 
 Owner: **R** · Part 1 (≈ hours 0–8) · Gate contribution: the laptop side of the first badge-signed devnet payment
-Reads: `00-interfaces.md` (§1, §3, §5) · Parent: `PRD-verified-payment-key.md`
+Reads: `00-Interfaces.md` (§0, §1, §3, §5) · Parent: `Prd-verified-payment-key.md`
 
 ## 1. Why this exists
 
@@ -10,13 +10,15 @@ Four unknowns can sink the project. The harness answers them in the first hours,
 | Unknown | Kills | Measured by |
 | --- | --- | --- |
 | Does the SE050 hold and sign with the Ed25519 key? | the "secure element" claim | R1 |
-| Can a badge reach devnet RPC and the backend over the hotspot? | every payment | R2 |
+| Can a badge reach devnet RPC, the badge listener and SNTP over the hotspot? | every payment | R2 |
 | Does a badge-produced signature verify on the laptop and land on devnet? | the whole product | R3 |
-| What is the ESP-NOW round-trip time? | the presence deadline | R4 |
+| How long does CHAL → signed PROOF take? | the presence deadline | R4 |
 
 ## 2. What already exists
-- Solana OS on the badges: identity key, `badge.espnow`, `badge.http`, serial console, app sideloading over Wi-Fi/BLE/USB, and a **virtual badge** browser emulator that runs the same Lua apps with ESP-NOW relayed over a server (https://github.com/spacemandev-git/solana-defcon-badge-26/blob/main/firmware/solana-os/README.md).
-- The broker already does challenge-response signing with the badge key; reading its client code shows how signatures and public keys are encoded today.
+- **Solana OS on the badges:** identity key, `badge.espnow`, `badge.http`, the serial console (push protocol only, **no Lua serial read**) and app sideloading. See https://github.com/spacemandev-git/solana-defcon-badge-26/blob/main/firmware/solana-os/README.md.
+- **The broker** already does challenge-response signing with the badge key. Its client code shows how signatures and public keys are encoded today.
+- **The existing Node server's badge listener** (port 8788) serves `GET /badge/pending?badge=<pubkey>` → `{messageBase64, txBase64}` and accepts `POST /badge/outcome` (`docs/API.md`, `docs/BADGE-GAPS.md`). That is the transport for R3.
+- **`npm run pay`** and `scripts/simulate-payment.mjs` already send HACK transfers between stand-in keys. Use them as a reference for building transactions in JS.
 
 You do **not** need A's wallet module to start R1, R2 and R4.
 
@@ -24,67 +26,65 @@ You do **not** need A's wallet module to start R1, R2 and R4.
 
 | ID | Deliverable | Language | Priority |
 | --- | --- | --- | --- |
-| R0 | `harness/` repo folder, Python 3.11 venv: `pynacl`, `solders`, `solana`, `pyserial`, `requests` | — | P0 |
-| R1 | **SE050 survey:** script that reads each badge's serial log and Settings → Identity result; table of badge → key location → failing step if any | Python + manual | P0 |
-| R2 | **Network probe app (Lua):** on button press, `GET /health` on backend and `getHealth` on devnet RPC; show latency and result on screen | Lua | P0 |
-| R3 | **Signing harness (laptop):** build an unsigned `transferChecked` (+ optional memo) message for a badge's pubkey; push it to the badge; receive the signature; verify with PyNaCl; attach and `sendTransaction`; print explorer link | Python | P0 |
-| R4 | **ESP-NOW ping-pong app (Lua):** two badges exchange 60 B and 160 B messages 200×; report p50 / p95 / max RTT on screen and over serial | Lua | P0 |
-| R5 | **Laptop verifier library** `vk_verify.py`: verify REQ, PROOF, bank payload and registry record signatures per 00 §3/§5/§6/§7; used by U's backend and the attack console | Python | P1 |
-| R6 | **Message fuzz set:** malformed / oversized / wrong-prefix inputs for A's decoder and `sign_*` functions | Python | P1 |
-
-### Transport for R3 (pick the first that works)
-1. Serial: a tiny Lua test app reads a base64 line from USB serial, calls `wallet.sign_solana`, prints the base64 signature. (Simplest; recommended.)
-2. HTTP: the badge polls `GET /test/next` on the laptop and posts the signature back.
-Until A's `wallet.sign_solana` exists, use the broker's existing signing path or a temporary software key to prove the laptop side (build → verify → submit).
+| R0 | `harness/` folder: Python 3.11 venv (`pynacl`, `solders`, `solana`, `requests`) for attack scripts; JS work lives in the existing Node project | — | P0 |
+| R1 | **SE050 survey:** table of badge → pubkey → key location → failing step if any. The serial log is parsed by script, Settings → Identity is read by hand. Hand pubkeys to U for `server/config/badges.json` | Python + manual | P0 |
+| R2 | **Network probe app (Lua):** on button press, `GET /health` on the badge listener, `getHealth` on devnet RPC, and show `wallet.time_ok()` / SNTP result; display latency and result | Lua | P0 |
+| R3 | **Signing harness:** build an unsigned legacy `transferChecked` (+ optional zero-account memo) for a badge; queue it on `/badge/pending`; a tiny Lua test app polls it, calls `wallet.begin_solana` / `wallet.poll`, posts the sig back; verify; attach and `sendTransaction`; print explorer link | JS (in `server/`/`scripts/`) + Lua | P0 |
+| R4 | **Presence timing app (Lua):** two badges run the real exchange 200×: CHAL (60 B) → payee signs with `wallet.sign_proof` (or a stub sign before A10) → PROOF (76 B). Report p50 / p95 / max on screen and serial, for Wi-Fi on and off | Lua | P0 |
+| R5 | **Verifier library** for REQ, PROOF, bank payload and registry record per 00 §3/§5/§6/§7: `server/src/verify.js` (used by U's backend) + `harness/vk_verify.py` twin (attack console), both passing the same `harness/vectors.json` | JS + Python | P1 |
+| R6 | **Message fuzz set:** malformed / oversized / wrong-prefix / two-signer / versioned / wrong-mint / trailing-bytes inputs for A's decoder and `sign_*` functions, served through the R3 path | JS or Python | P1 |
 
 ## 4. Technical notes
 
 ### 4.1 Building the test transaction (R3)
-```python
-from solders.pubkey import Pubkey
-from solders.message import Message
-from solders.hash import Hash
-from spl.token.instructions import transfer_checked, TransferCheckedParams
-from spl.token.constants import TOKEN_PROGRAM_ID
-# payer = badge pubkey (signer 0); source/dest = ATAs; mint/decimals from 00 §2
-ix = transfer_checked(TransferCheckedParams(program_id=TOKEN_PROGRAM_ID,
-        source=src_ata, mint=mint, dest=dst_ata, owner=badge_pk,
-        amount=1_000_000, decimals=6))
-msg = Message.new_with_blockhash([ix], badge_pk, Hash.from_string(latest_blockhash))
-raw = bytes(msg)                      # this is what the badge signs
-# after badge returns sig:
-# VerifyKey(bytes(badge_pk)).verify(raw, sig)
-# tx = Transaction.populate(msg, [Signature.from_bytes(sig)]); client.send_raw_transaction(bytes(tx))
-```
-The blockhash expires in about a minute — fetch it right before pushing to the badge, and keep approval fast during tests.
+Build it in JS in the existing project. That reuses `@solana/kit` and the server's keypair and RPC config, and the badge listener already serves the result. The message **must be legacy** (A's decoder rejects versioned messages). Note that the server's `sendIxs` builds v0, so don't reuse it for this. The attack builder (`buildTamperedTx`, `ATTACK_TX_VERSION=legacy`) is the closest template.
+
+Requirements:
+- Payer and fee payer = badge pubkey (signer 0, also the token owner).
+- `source`/`dest` = the HACK associated token accounts. They must already exist; creating one would add a second instruction, which the decoder refuses.
+- Mint and decimals from 00 §2 (HACK, 2).
+- Any memo has zero accounts.
+
+After the badge returns its signature:
+1. Verify it with `node:crypto` Ed25519 or tweetnacl.
+2. Assemble the wire transaction as `[0x01, sig64, message]`.
+3. Send it base64-encoded and print the explorer link.
+
+Python equivalent for the attack console, with the fixes:
+- `Transaction.populate(msg, [Signature.from_bytes(sig)])` from `solders.transaction`.
+- ATAs via `spl.token.instructions.get_associated_token_address`.
+- `VerifyKey.verify` raises `BadSignatureError` rather than returning False.
+
+The blockhash lasts about 60–90 s. Fetch it right before queueing, and rebuild if the approval exceeds about 45 s.
 
 ### 4.2 Pubkey encoding
-The badge ID is the first 8 base58 characters of the public key; the full pubkey is the Solana address. Confirm the byte order matches what PyNaCl expects in R3 — a mismatch shows up as a signature that never verifies.
+The badge ID is the first 8 base58 characters of the public key; the full pubkey is the Solana address. Confirm the byte order matches what the verifier expects in R3. A mismatch shows up as a signature that never verifies.
 
-### 4.3 ESP-NOW (R4)
+### 4.3 Presence timing (R4)
 - Both badges on the same hotspot channel (or Wi-Fi off on both).
-- Timestamp with the badge's microsecond clock; RTT measured on the initiator.
-- Run once with Wi-Fi connected and once without; channel effects show up here.
+- Time with `badge.millis()`; there is no microsecond clock. Measure on the payer from `new_nonce` to PROOF receipt, which is exactly what `check_proof` will time.
+- Run once with Wi-Fi connected and once without, and in the actual room.
 
 ## 5. Interfaces you provide
-- R3 script usable by A as the "done" test for A6.
-- R4 numbers → A sets `PRESENCE_DEADLINE_MS` (suggest p99 × 2, floor 100 ms).
-- R5 library → U's backend imports it for `/bank/authorize` and `/registry` checks.
+- R3 harness: A's "done" test for A6.
+- R4 numbers → `PRESENCE_DEADLINE_MS` = p95 (including signature) × 1.5, separately for SE050 and NVS keys. Write the agreed values into 00 §4.
+- R5 `verify.js` + `vk_verify.py` + `vectors.json` → U's backend and the attack console. The vectors also go to A for firmware tests.
 
 ## 6. Dependencies
-- A: `wallet.sign_solana` for the final R3 run.
-- U: funded badge ATAs + mint (for R3 submit), backend `/health` (for R2; mock it locally if not ready).
+- A: `wallet.begin_solana` / `wallet.poll` for the final R3 run (a `VK_DEV_ALLOW_UNVERIFIED` build is fine before the registry exists); `sign_proof` for the final R4 run.
+- U: HACK mint, funded badge SOL + ATAs (`npm run devnet:setup` after real pubkeys are in `badges.json`), badge listener with `/health` open on the hotspot.
 
 ## 7. Done when
-- [ ] R1 table filled for all 4 badges.
-- [ ] R2 shows green for backend and devnet from a badge on the hotspot.
-- [ ] R3: badge-signed transfer confirmed on devnet, explorer link saved.
-- [ ] R4: RTT numbers posted to the team; deadline agreed.
-- [ ] R5: verifies a known-good and rejects a tampered sample for each message type.
+- [ ] R1 table filled for all 4 badges; pubkeys handed to U.
+- [ ] R2 shows green for the badge listener, devnet and the clock, from a badge on the hotspot.
+- [ ] R3: badge-signed HACK transfer confirmed on devnet; explorer link saved in `harness/RESULTS.md`.
+- [ ] R4: p50/p95/max and packet loss % for both Wi-Fi states posted; deadline agreed and written into 00.
+- [ ] R5: JS and Python both verify every known-good vector and reject a tampered copy of each message type.
+- [ ] R6: every fuzz input refused by the badge without a crash or watchdog reset.
 
 ## 8. Risks
 | Risk | Mitigation |
 | --- | --- |
 | Venue Wi-Fi interference | Hotspot only; test R4 in the actual room |
-| Devnet RPC rate limits | Second RPC endpoint in config; retry with backoff |
-| Waiting on A | Every item except the final R3 run works without A |
+| Devnet RPC rate limits | `RPC_URL` in `.env` swapped to a provider; retry with backoff |
+| Waiting on A | Every item except the final R3/R4 runs works without A (stub signing in Lua or a software key) |

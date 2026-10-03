@@ -12,7 +12,7 @@ A dedicated hardware key that proves who you are paying, proves they are standin
 | Event | MHacks 2026, 24-hour build |
 | Prize targets | MLH Best Use of Solana (primary), FinTech main track, Capital One Best Use of Nessie, .Tech domain |
 | Hardware | 4 Solana DEF CON 34 badges: 2 team, 2 handed to judges |
-| Crypto rail | Solana devnet: USDC (Circle faucet) or a team SPL token; Solana Attestation Service (SAS) registry |
+| Crypto rail | Solana devnet: HACK, our own SPL token (2 decimals, a stand-in stablecoin; swapping to USDC is a config change); Solana Attestation Service (SAS) registry |
 | Bank rail | Capital One Nessie mock banking API, behind an authorization backend |
 | Base software | Solana OS by spacemandev (open source); we add the wallet, identity and authorization layers |
 | Category line | "A security key for payments" |
@@ -167,7 +167,7 @@ P0 ships the crypto core; P1 carries the differentiation; P2 adds the bank rail 
 
 | ID | Requirement | Priority |
 | --- | --- | --- |
-| FW1 | `identity.pubkey()` and `identity.sign(payload)` exposed to Lua; signing unreachable except through the approval screen | P0 |
+| FW1 | `wallet` module exposed to Lua (`00-Interfaces.md` §4); no raw signing from Lua; payment signing only through the asynchronous approval screen, with record, request and presence checked in firmware | P0 |
 | FW2 | Firmware-owned approval screen: rail, amount, payee name, verification and presence state; SELECT signs, CANCEL rejects; Lua cannot draw over or skip it | P0 |
 | FW3 | Decoder for SPL Token `transferChecked`; any other instruction is shown as unknown and refused | P0 |
 | FW4 | Decoder for the bank authorization payload (see Protocols) | P2 |
@@ -180,11 +180,11 @@ P0 ships the crypto core; P1 carries the differentiation; P2 adds the bank rail 
 
 | ID | Requirement | Priority |
 | --- | --- | --- |
-| AP1 | Home: USDC balance and Nessie account balance, badge name, short address | P0 (USDC) / P2 (Nessie) |
-| AP2 | Request: payee broadcasts a signed payment request naming amount and rail | P1 |
-| AP3 | Pay: pick a nearby badge, strongest signal first; amount via D-pad | P0 |
+| AP1 | Home: HACK balance and Nessie account balance, badge name, short address | P0 (HACK) / P2 (Nessie) |
+| AP2 | Request: payee broadcasts a signed payment request naming amount and rail (merchant enters the amount via D-pad) | P1 |
+| AP3 | Pay: pick a nearby request, strongest signal first | P0 |
 | AP4 | Nonce handshake and presence state | P1 |
-| AP5 | Attestation check with session cache | P1 |
+| AP5 | Attestation check: a fresh issuer-signed record for every payment (no cache, so revocation shows at once) | P1 |
 | AP6 | Solana submit and confirmation poll; LEDs on both badges | P0 |
 | AP7 | Bank submit: send signed payload to the backend; show Nessie result | P2 |
 | AP8 | History of the last payments on both rails | P2 |
@@ -222,7 +222,7 @@ flowchart LR
   end
   N["Capital One Nessie (existing)<br/>customers, accounts, merchants<br/>purchases, transfers (mock bank)"]
   BE["Authorization backend (new)<br/>verifies badge signature, attestation<br/>enrolls keys, issues and revokes<br/>writes approval memos"]
-  S["Solana devnet (existing)<br/>USDC, SAS payee registry<br/>approval memo log"]
+  S["Solana devnet (existing)<br/>HACK token, SAS payee registry<br/>approval memo log"]
   DB["Dashboard, laptop (new)<br/>live feed; admin through backend"]
   NB["Nearby badges<br/>same protocol, same hotspot channel"]
   L2 <-- bank auth --> BE
@@ -238,7 +238,7 @@ flowchart LR
 | Wallet core (C) | Owns the key path: decode, display, button, sign | Trusted (with firmware integrity) |
 | Lua apps | Discovery, requests, handshake, submission, history | Untrusted for signing; cannot sign without the core |
 | Authorization backend | Holds the Nessie API key and issuer keypair; re-verifies every bank payment; writes memos | Trusted to block, not to change: a changed payload fails the badge signature |
-| Solana devnet | USDC payments, SAS registry and revocation, approval memo log | Public, tamper-evident |
+| Solana devnet | HACK payments, SAS registry and revocation, approval memo log | Public, tamper-evident |
 | Capital One Nessie | Customers, accounts, merchants, purchases, transfers | The bank core; reached only through the backend |
 | Dashboard | Live feed, admin, attack console | Admin and attack views on localhost only |
 
@@ -255,7 +255,7 @@ One attestation schema covers both rails; Nessie IDs appear on-chain only as sal
 | display\_name | string | Name shown on the approval screen |
 | device\_pubkey | 32 bytes | The payee badge's Ed25519 key; presence proofs must verify against it |
 | kind | enum | merchant or person |
-| solana\_wallet | 32 bytes, optional | Where USDC payments go (normally equal to device\_pubkey) |
+| solana\_wallet | 32 bytes, optional | Where HACK payments go (normally equal to device\_pubkey); the served record also carries its token account `solana_ata` |
 | bank\_ref\_hash | 32 bytes, optional | SHA-256(salt ‖ Nessie merchant or account ID) |
 | expiry | timestamp | Attestation lapses after this |
 
@@ -271,7 +271,7 @@ Revocation closes the attestation; the badge and backend both treat a missing or
 | Purchase | Payer account pays a verified merchant |
 | Transfer | Payer account pays a verified person's account |
 
-**Backend store** (SQLite or a JSON file is enough)
+**Backend store** (the existing TimescaleDB in `db/schema.sql`, extended with these tables)
 
 | Table | Columns |
 | --- | --- |
@@ -292,11 +292,11 @@ Three short radio messages establish identity and presence; the signed payment t
 | CHAL | Payer → payee | request id, 16 B nonce from the hardware RNG | ≤ 64 B |
 | PROOF | Payee → payer | request id, signature over `pay-proof:` + request id + nonce + payer pubkey | ≤ 128 B |
 
-The payer accepts PROOF only within a short deadline (target under 250 ms, set after measuring). ESP-NOW payloads are capped at 240 bytes and only reach badges on the same channel, so every badge joins one hotspot.
+The payer accepts PROOF only within a short deadline (set after measuring CHAL to signed PROOF: about 250 ms with a software key, about 500 ms if the key is in the SE050). ESP-NOW payloads are capped at 240 bytes and only reach badges on the same channel, so every badge joins one hotspot.
 
 **Solana rail**
 
-- One SPL Token `transferChecked` instruction (USDC devnet mint), plus an optional Memo instruction carrying the request id.
+- One SPL Token `transferChecked` instruction (HACK mint, pinned in firmware), plus an optional Memo instruction carrying the request id.
 - Token accounts created ahead of time so the payment stays one decodable instruction.
 - The badge builds, decodes, displays and signs the message itself, then submits through RPC.
 
@@ -361,7 +361,7 @@ The dashboard is the judges' window into both rails and the team's control panel
 | View | Shows | Demo use |
 | --- | --- | --- |
 | Live feed | Every approval and refusal, newest first: time, rail, payer, payee with verified state, amount; Solana explorer link or Nessie transaction ID; memo link | All beats |
-| Badges | Each badge: name, key location (secure element or software), USDC and Nessie balances, enrollment, attestation state | Setup |
+| Badges | Each badge: name, key location (secure element or software), HACK and Nessie balances, enrollment, attestation state | Setup |
 | Issuer ("Capital One") | Enroll a badge to a Nessie customer; issue or revoke an attestation | Revocation beat |
 | Attack console | Tampered relay (changes amount or recipient), impostor request, replay, unsigned Nessie call | Attack beats |
 
@@ -377,7 +377,7 @@ Each prize gets a component it cannot be removed from, so no track looks bolted 
 
 | Track | Load-bearing pieces | One-line pitch to that judge |
 | --- | --- | --- |
-| Best Use of Solana | SAS payee registry and live revocation; USDC payments signed on the badge; approval memo log for both rails | "Solana is the trust layer: who is verified, who is revoked, and a public record of every approval." |
+| Best Use of Solana | SAS payee registry and live revocation; HACK payments signed on the badge; approval memo log for both rails | "Solana is the trust layer: who is verified, who is revoked, and a public record of every approval." |
 | FinTech | Impersonation-fraud prevention on crypto and bank rails; verified payee, presence, trusted display | "Security keys stopped phishing for logins; this stops impersonation for payments." |
 | Best Use of Nessie | Customers and accounts bound to badge keys; merchants as verified payees; purchases and transfers gated by the key; balances on the badge | "Nessie is the bank core; our key is the customer-held authorization layer Capital One could issue." |
 | .Tech domain | Read-only live feed hosted on the domain | Register before the event |
@@ -389,7 +389,7 @@ Prior Nessie art for context: crypto plus Nessie has won before (Bitcard, HackMI
 About four minutes; two judges each hold a badge, the dashboard is on a screen behind them.
 
 1. **Hook (20 s).** "Americans lost $3.5B to imposter scams last year, and the scam happens on the phone you confirm on. Security keys stopped phishing for logins. This is one for payments."
-2. **Crypto payment (40 s).** Judge buys a sticker from "MHacks Merch ✓ ● present" in USDC; the explorer link appears on the feed.
+2. **Crypto payment (40 s).** Judge buys a sticker from "MHacks Merch ✓ ● present" in HACK; the explorer link appears on the feed.
 3. **Bank payment (40 s).** Same badge, same screen: "via Capital One"; judge pays $40; the Nessie purchase and its Solana memo appear on the feed.
 4. **Impostor (30 s).** A second team badge claims "MHacks Merch"; the judge's screen shows red "unverified"; they reject it.
 5. **Tampered relay (30 s).** Attack console changes $40 to $400 in transit; the badge shows $400; judge cancels. Then the console calls Nessie directly without a badge signature; the backend refuses and the feed shows it blocked.
@@ -405,8 +405,8 @@ Build in order of what secures a prize: the crypto core first, identity second, 
 ```mermaid
 flowchart TD
   P0["Before start: Pre-event setup<br/>flash badges, mint and fund, Nessie key, SAS credential, .tech domain"]
-  P1["0 to 8 h: Crypto core<br/>sign binding and approval screen, transferChecked decoder, Pay app, USDC submit"]
-  G1{"Gate: a USDC payment works end to end, or cut scope"}
+  P1["0 to 8 h: Crypto core<br/>sign binding and approval screen, transferChecked decoder, Pay app, HACK submit"]
+  G1{"Gate: a HACK payment works end to end, or cut scope"}
   P2["8 to 14 h: Identity and presence<br/>REQ, CHAL, PROOF handshake; SAS issue and check; red and amber states"]
   G2{"Gate: impostor caught on the judge badge"}
   P3["14 to 20 h: Bank rail<br/>enrollment, bank payload decoder, /bank/authorize, Nessie purchase and transfer, memos"]
@@ -449,8 +449,7 @@ Limitations to state before judges ask:
 ## Open questions
 
 - Product name.
-- USDC (Circle faucet) or a team SPL token on the crypto rail?
-- Does the badge fetch attestations itself over RPC, or through `GET /registry/:pubkey` with an issuer signature?
+- Demo beat 5 format (how the tamper attack is shown).
 - Exact Nessie endpoint paths and request fields in the current docs.
 - Presence deadline value, set after measuring ESP-NOW round trips.
 - Whether MHacks allows one project in Solana, Nessie and a main track at once.
@@ -460,7 +459,7 @@ Limitations to state before judges ask:
 - [ ] Flash Solana OS on all 4 badges; record whether Settings → Identity shows secure element or software
 - [ ] Get a Nessie API key; create customers, accounts and the merchant; make one test purchase and transfer
 - [ ] Create the SAS credential and `payee_v1` schema on devnet
-- [ ] Fund every badge with devnet SOL and USDC; create token accounts
+- [ ] Fund the registry authority with devnet SOL, then run `npm run devnet:setup` (HACK mint, badge SOL, token accounts, HACK)
 - [ ] Confirm a badge reaches devnet RPC and the backend through a phone hotspot
 - [ ] Register the .tech domain
 - [ ] Confirm prize-stacking rules on the MHacks Devpost
