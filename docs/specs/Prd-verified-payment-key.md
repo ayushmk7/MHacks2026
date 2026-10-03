@@ -10,7 +10,7 @@ A dedicated hardware key that proves who you are paying, proves they are standin
 | --- | --- |
 | Working name | TBD (see Open questions) |
 | Event | MHacks 2026, 24-hour build |
-| Prize targets | MLH Best Use of Solana (primary), FinTech main track, Capital One Best Use of Nessie, .Tech domain |
+| Prize targets | MLH Best Use of Solana (primary), FinTech main track, Capital One Best Use of Nessie |
 | Hardware | 4 Solana DEF CON 34 badges: 2 team, 2 handed to judges |
 | Crypto rail | Solana devnet: HACK, our own SPL token (2 decimals, a stand-in stablecoin; swapping to USDC is a config change); Solana Attestation Service (SAS) registry |
 | Bank rail | Capital One Nessie mock banking API, behind an authorization backend |
@@ -368,7 +368,7 @@ The dashboard is the judges' window into both rails and the team's control panel
 Requirements:
 
 - Feed updates within about 3 seconds of a confirmation on either rail.
-- Issuer keypair and Nessie key never reach the browser; issuer and attack views run on localhost; only the read-only feed is published on the .tech domain.
+- Issuer keypair and Nessie key never reach the browser; the whole dashboard runs on localhost.
 - Large type, readable from about 2 metres; uses the same hotspot as the badges.
 
 ## Track mapping
@@ -380,8 +380,6 @@ Each prize gets a component it cannot be removed from, so no track looks bolted 
 | Best Use of Solana | SAS payee registry and live revocation; HACK payments signed on the badge; approval memo log for both rails | "Solana is the trust layer: who is verified, who is revoked, and a public record of every approval." |
 | FinTech | Impersonation-fraud prevention on crypto and bank rails; verified payee, presence, trusted display | "Security keys stopped phishing for logins; this stops impersonation for payments." |
 | Best Use of Nessie | Customers and accounts bound to badge keys; merchants as verified payees; purchases and transfers gated by the key; balances on the badge | "Nessie is the bank core; our key is the customer-held authorization layer Capital One could issue." |
-| .Tech domain | Read-only live feed hosted on the domain | Register before the event |
-
 Prior Nessie art for context: crypto plus Nessie has won before (Bitcard, HackMIT 2016, bitcoin to a virtual card) ([GitHub](https://github.com/ravirahman/Bitcard-Chrome-Extension)); no Nessie project found used hardware, payee verification or presence.
 
 ## Demo script
@@ -404,7 +402,7 @@ Build in order of what secures a prize: the crypto core first, identity second, 
 
 ```mermaid
 flowchart TD
-  P0["Before start: Pre-event setup<br/>flash badges, mint and fund, Nessie key, SAS credential, .tech domain"]
+  P0["Before start: Pre-event setup<br/>flash badges, mint and fund, Nessie key, SAS credential"]
   P1["0 to 8 h: Crypto core<br/>sign binding and approval screen, transferChecked decoder, Pay app, HACK submit"]
   G1{"Gate: a HACK payment works end to end, or cut scope"}
   P2["8 to 14 h: Identity and presence<br/>REQ, CHAL, PROOF handshake; SAS issue and check; red and amber states"]
@@ -422,7 +420,7 @@ flowchart TD
 | Firmware | Sign binding, approval screen, transferChecked and bank payload decoders, watchdog, SE050 check | Badge apps (sign API), backend (payload format) |
 | Badge apps | Pay, Request, handshake, attestation check, RPC submit, history | Firmware (display data), backend (bank submit) |
 | Backend and chain | SAS credential and schema, issue and revoke, `/bank/authorize`, Nessie calls, memos | Dashboard (feed), badge apps (registry lookups) |
-| Dashboard and demo | Feed, issuer view, attack console, .tech hosting, pitch and recording | Everyone (rehearsal) |
+| Dashboard and demo | Feed, issuer view, attack console, pitch and recording | Everyone (rehearsal) |
 
 **Cut order if behind:** spending cap → voice readout → SE050 key → history → person-to-person transfers (keep merchant purchases) → unified screen (show rails as two scenes).
 
@@ -461,7 +459,6 @@ Limitations to state before judges ask:
 - [ ] Create the SAS credential and `payee_v1` schema on devnet
 - [ ] Fund the registry authority with devnet SOL, then run `npm run devnet:setup` (HACK mint, badge SOL, token accounts, HACK)
 - [ ] Confirm a badge reaches devnet RPC and the backend through a phone hotspot
-- [ ] Register the .tech domain
 - [ ] Confirm prize-stacking rules on the MHacks Devpost
 
 ## Sources

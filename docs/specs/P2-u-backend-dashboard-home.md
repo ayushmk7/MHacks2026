@@ -24,7 +24,6 @@ All of it extends the existing Node server and React dashboard; nothing is rewri
 | PU5 | Home app on the badge: HACK balance (RPC), Nessie balance (`/balance/:pubkey`), name, key location | Lua | P1 |
 | PU6 | History app (last 10, both rails) | Lua | P2 |
 | PU7 | Settings app: address, key location, backend IP (editable), spend cap display | Lua | P2 |
-| PU8 | Read-only feed on the .tech domain (tunnel or static mirror; the main API stays localhost-only) | Web | P2 |
 | PU9 | Demo script, rehearsal, backup screen recording, Devpost write-up | — | P0 (hours 20–24) |
 
 ## 3. Technical notes
@@ -60,7 +59,7 @@ Never expose a Nessie money-movement route that skips steps 1–7.
 
 ### 3.3 Dashboard
 - Extend the existing `web/` pages; keep the design system.
-- Issuer and Attack views stay on `localhost` only. The feed view is also published read-only (PU8).
+- The whole dashboard runs on `localhost` only; nothing is published.
 - Large type, readable from ~2 m.
 - In LIVE mode, judges must never see DEMO fixtures. Start the demo in LIVE.
 
