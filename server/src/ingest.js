@@ -1,0 +1,74 @@
+import { address } from '@solana/kit';
+import { rpc, rpcSubs, getTxWithRetry, parseTransfer, errMsg } from './solana.js';
+import { q, Q, dbState } from './db.js';
+
+export const ingestState = { state: 'idle', lastSignature: null, lastEventAt: null };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// devnet logsSubscribe (fast path) + a 15 s getSignaturesForAddress poll (safety net) -> INSERT.
+// The INSERT trigger NOTIFYs, and the server's LISTEN client turns that into the SSE event.
+export function startIngest({ mint, onStateChange }) {
+  const mintAddr = address(mint);
+  const seen = new Set();   // ponytail: unbounded; ~100 B per tx, fine for a 24 h event
+  const setState = s => { if (ingestState.state !== s) { ingestState.state = s; onStateChange?.(); } };
+
+  async function handle(sig, live) {
+    if (seen.has(sig)) return;
+    seen.add(sig);
+    try {
+      const tx = await getTxWithRetry(sig);
+      if (!tx) { seen.delete(sig); return; }                       // the safety poll retries it
+      const t = parseTransfer(tx, mint);
+      if (!t) return;                                              // mintTo, create-ATA, failed tx: not a payment
+      if (t.blockTime == null) { seen.delete(sig); return; }
+      const attackId = (await q(Q.matchAttack, [sig, t.payer, t.payee, t.amountRaw])).rows[0]?.id ?? null;
+      const lag = live ? Math.max(0, Date.now() - t.blockTime * 1000) : null;
+      await q(Q.insertPayment, [new Date(t.blockTime * 1000), sig, t.slot, t.payer, t.payee, t.payerTokenAccount,
+                                t.payeeTokenAccount, mint, t.amountRaw, t.decimals, attackId, lag]);
+      ingestState.lastSignature = sig;
+      ingestState.lastEventAt = new Date().toISOString();
+    } catch (err) {
+      seen.delete(sig);
+      console.error('[ingest]', sig, errMsg(err));
+    }
+  }
+
+  let running = false;
+  async function backfill() {
+    if (running || !dbState.schema) return;
+    running = true;
+    try {
+      const until = (await q(Q.latestChainSig)).rows[0]?.signature;
+      // ponytail: one page of 200; a longer outage drops older rows
+      const sigs = await rpc.getSignaturesForAddress(mintAddr, { ...(until && { until }), limit: 200, commitment: 'confirmed' }).send();
+      for (const s of [...sigs].reverse()) {                                              // oldest first
+        if (s.err || seen.has(s.signature)) continue;
+        await handle(s.signature, false);
+        await sleep(1100);   // public devnet allows 10 getTransaction per 10 s per IP: a burst here starves the live path
+      }
+    } catch (err) {
+      console.error('[ingest] backfill:', errMsg(err));
+    } finally { running = false; }
+  }
+
+  (async function subscribeLoop() {
+    setState('backfilling');
+    for (let attempt = 0; ; attempt++) {
+      const ac = new AbortController();
+      try {
+        const sub = await rpcSubs.logsNotifications({ mentions: [mintAddr] }, { commitment: 'confirmed' }).subscribe({ abortSignal: ac.signal });
+        attempt = 0;
+        setState('live');
+        backfill();
+        for await (const n of sub) if (!n.value.err) handle(n.value.signature, true);
+      } catch (err) {
+        console.error('[ingest] subscription:', errMsg(err));
+      }
+      ac.abort();
+      setState('reconnecting');
+      await sleep(Math.min(30_000, 1000 * 2 ** attempt));
+    }
+  })();
+
+  setInterval(backfill, 15_000);
+}

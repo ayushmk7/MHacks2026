@@ -1,0 +1,28 @@
+{
+  "name": "badgepay",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.12" },
+  "scripts": {
+    "setup": "npm install && npm install --prefix web",
+    "db:up": "docker compose up -d --wait db",
+    "db:down": "docker compose down",
+    "db:psql": "docker compose exec db psql -U postgres -d badgepay",
+    "db:migrate": "node --env-file-if-exists=.env scripts/db.mjs migrate",
+    "db:seed": "node --env-file-if-exists=.env scripts/db.mjs seed",
+    "db:reset": "node --env-file-if-exists=.env scripts/db.mjs reset --yes",
+    "devnet:setup": "node --env-file-if-exists=.env scripts/devnet-setup.mjs",
+    "pay": "node --env-file-if-exists=.env scripts/simulate-payment.mjs",
+    "server": "node --env-file-if-exists=.env server/src/index.js",
+    "web": "npm run dev --prefix web",
+    "dev": "npm run server & npm run web & wait",
+    "check": "node --test \"server/src/*.test.js\" \"web/src/*.test.js\" && npm run build --prefix web"
+  },
+  "dependencies": {
+    "@solana/kit": "5.5.1",
+    "@solana-program/token": "0.9.0",
+    "@solana-program/system": "0.10.0",
+    "sas-lib": "1.0.10",
+    "pg": "8.23.1"
+  }
+}

@@ -1,0 +1,4 @@
+.env
+server/.keys/
+node_modules
+web/dist
