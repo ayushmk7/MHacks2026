@@ -1,4 +1,4 @@
-# Distinctive Frontend Design
+# Frontend design guide
 
 Create visually distinctive, high-impact frontend interfaces that avoid generic "AI slop" aesthetics. This skill applies the four-vector approach: typography, color/theme, motion, and backgrounds.
 

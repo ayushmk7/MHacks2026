@@ -1,7 +1,7 @@
 # 00 — Shared Interfaces and Contracts
 
 Owner: all three (A, R, U) · Status: agree at hour 0, then change only by telling everyone
-Parent: `Prd-verified-payment-key.md` (product, threat model, demo)
+Parent: [`Prd-verified-payment-key.md`](Prd-verified-payment-key.md) (product, threat model, demo)
 
 Every other spec depends on this file. If a field, prefix or endpoint changes, change it **here first**, then in code.
 
@@ -9,7 +9,7 @@ Every other spec depends on this file. If a field, prefix or endpoint changes, c
 
 | Decision | Choice | Consequence |
 | --- | --- | --- |
-| Backend | **Extend the existing Node server** in `server/` (see `README.md`, `docs/API.md`). No rewrite | New routes are added to `server/src/http.js`; verification code is JavaScript; R keeps a Python twin for the attack console |
+| Backend | **Extend the existing Node server** in `dashboard/server/` (see the [repository README](../../README.md) and [dashboard API docs](../dashboard/API.md)). No rewrite | New routes are added to `dashboard/server/src/http.js`; verification code is JavaScript; R keeps a Python twin for the attack console |
 | Solana token | **HACK**, our own SPL mint, **2 decimals** | Created by `npm run devnet:setup`; address in `.env` `HACK_MINT`. 2 decimals = the same minor unit as cents on the bank rail |
 | Signing model | **Asynchronous approval**; firmware owns REQ verification and presence state | Lua never passes trust decisions to the firmware; see §4 |
 | Recipient check | Registry record carries **`solana_ata`** (computed by the backend, signed by the issuer) | Firmware compares bytes; no PDA math on the badge |

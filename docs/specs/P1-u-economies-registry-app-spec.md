@@ -1,7 +1,7 @@
 # P1-U — Economies, Registry, Badge Routes on the Existing Server, and the App Decision
 
 Owner: **U** · Part 1 (≈ hours 0–8) · Gate contribution: funded accounts and a live registry for the first devnet payment
-Reads: `00-Interfaces.md` (§0, §2, §6, §7, §8) · Parent: `Prd-verified-payment-key.md` · Existing system: `README.md`, `docs/ARCHITECTURE.md`, `docs/API.md`, `docs/BADGE-GAPS.md`
+Reads: [`00-Interfaces.md`](00-Interfaces.md) (§0, §2, §6, §7, §8) · Parent: [`Prd-verified-payment-key.md`](Prd-verified-payment-key.md) · Existing system: [repository overview](../../README.md), [architecture](../dashboard/ARCHITECTURE.md), [API](../dashboard/API.md), [badge gaps](../dashboard/BADGE-GAPS.md)
 
 ## 1. Why this exists
 

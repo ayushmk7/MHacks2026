@@ -1,7 +1,7 @@
 # P1-A — Firmware: Wallet Core in Solana OS
 
 Owner: **A** · Part 1 (≈ hours 0–8) · Gate: one badge-signed HACK payment confirmed on devnet
-Reads: `00-Interfaces.md` (§0 decisions, §1 platform facts, §3 signing domains, §4 Lua API) · Parent: `Prd-verified-payment-key.md`
+Reads: [`00-Interfaces.md`](00-Interfaces.md) (§0 decisions, §1 platform facts, §3 signing domains, §4 Lua API) · Parent: [`Prd-verified-payment-key.md`](Prd-verified-payment-key.md)
 
 ## 1. Why this exists
 

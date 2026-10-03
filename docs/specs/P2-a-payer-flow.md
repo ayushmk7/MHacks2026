@@ -1,7 +1,7 @@
 # P2-A — Payer Flow: Pay App, Bank Signing, Approval States
 
 Owner: **A** · Part 2 (≈ hours 8–20) · Status: **draft — finalize after U6 (app decision doc)**
-Reads: `00-Interfaces.md` (§4, §5, §6, §8.1) · Builds on: `P1-a` · Parent: `Prd-verified-payment-key.md`
+Reads: [`00-Interfaces.md`](00-Interfaces.md) (§4, §5, §6, §8.1) · Builds on: [P1-A](P1-a-firmware-wallet-core.md) · Parent: [`Prd-verified-payment-key.md`](Prd-verified-payment-key.md)
 
 ## 1. Why this exists
 This is the judge's side of every demo beat. They hold the payer badge, see a request, read the approval screen, and press SELECT or CANCEL. It must be impossible to misread and impossible to fool, even if the Lua Pay app itself is buggy or malicious. That is why every trust decision sits in the firmware (00 §4).

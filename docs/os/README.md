@@ -16,7 +16,7 @@ Badge OS is three things on one ESP32-S3 badge:
 | Wallet and identity layer | A wallet core in native firmware (`src/wallet/`): transaction decoder, signing gate with its own approval screens, payment protocol over ESP-NOW, on-chain attestation check, JSON-RPC client, audit log, history. | [OURS] |
 | App platform | One host API ("badge API") with the same names in Lua (`badge.x.y`), C (`badge_x_y`) and C++ (`badge::x::y`). Lua apps are pushed at run time and sandboxed. C++ apps are compiled into the image and trusted. | [UPSTREAM] Lua runtime, [OURS] native runtime, permissions and the new modules |
 
-Credit line, as in the [PRD](../../PRD%20Verified%20Hardware%20Payments%20on%20the%20Solana%20Badge.md): "Built on Solana OS by spacemandev; we added the wallet and identity layer."
+Credit line, as in the [PRD](../specs/Prd-verified-payment-key.md): "Built on Solana OS by spacemandev; we added the wallet and identity layer."
 
 The upstream repository has no licence file and no licence statement in either of its READMEs [UPSTREAM finding, read at `812b8c7`]. Its vendored parts carry their own terms (Lua: MIT; TweetNaCl: public domain). Credit upstream, and ask the author before publishing a fork. The library this design adds, Monocypher 4.0.2, is BSD-2-Clause OR CC0.
 
@@ -223,7 +223,7 @@ Other conventions used in every document:
 
 | Path | Contents |
 |---|---|
-| [PRD](../../PRD%20Verified%20Hardware%20Payments%20on%20the%20Solana%20Badge.md) | Requirements F1–F19, non-functional requirements, demo plan, risks. |
+| [PRD](../specs/Prd-verified-payment-key.md) | Requirements F1–F19, non-functional requirements, demo plan, risks. |
 | [`../dashboard/`](../dashboard/RUNBOOK.md) | Documentation of the laptop panel: [API.md](../dashboard/API.md), [ARCHITECTURE.md](../dashboard/ARCHITECTURE.md), [BADGE-GAPS.md](../dashboard/BADGE-GAPS.md), [RUNBOOK.md](../dashboard/RUNBOOK.md), [TIGER-DATA.md](../dashboard/TIGER-DATA.md). |
 | `dashboard/` (repository root) | The panel itself. Run its npm scripts from inside `dashboard/`. |
 

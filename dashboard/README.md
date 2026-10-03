@@ -2,7 +2,7 @@
 
 The laptop dashboard for "Verified Hardware Payments on the Solana Badge" (MHacks 2026). It does the three jobs the PRD gives the dashboard: it shows every HACK payment on Solana devnet as a new block in a live chain, it lets the registry admin issue and revoke badge verifications through the Solana Attestation Service, and it drives the "compromised app" attack demo by building a transfer whose real amount differs from the amount the checkout claims. Payments are stored in TimescaleDB (Tiger Data), and the database itself pushes each new row to the browser.
 
-Product spec: [`PRD Verified Hardware Payments on the Solana Badge.md`](../PRD%20Verified%20Hardware%20Payments%20on%20the%20Solana%20Badge.md). Repository overview: [`../README.md`](../README.md).
+Product spec: [Verified Payment Key PRD](../docs/specs/Prd-verified-payment-key.md). Repository overview: [`../README.md`](../README.md).
 
 This folder is `dashboard/` in the repository. Every command below runs from inside it, and every path below is relative to it.
 

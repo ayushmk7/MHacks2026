@@ -1,7 +1,7 @@
 # P2-U — Authorization Backend, Dashboard, Home/History Apps, and Demo
 
 Owner: **U** · Part 2 (≈ hours 8–20, then demo prep) · Status: **draft — finalize with U6**
-Reads: `00-Interfaces.md` (§6, §7, §8) · Builds on: `P1-u` · Parent: `Prd-verified-payment-key.md` · Existing system: `README.md`, `docs/`
+Reads: [`00-Interfaces.md`](00-Interfaces.md) (§6, §7, §8) · Builds on: [P1-U](P1-u-economies-registry-app-spec.md) · Parent: [`Prd-verified-payment-key.md`](Prd-verified-payment-key.md) · Existing system: [repository overview](../../README.md) and [dashboard docs](../dashboard/)
 
 ## 1. Why this exists
 U turns the existing server and dashboard into the system judges see:

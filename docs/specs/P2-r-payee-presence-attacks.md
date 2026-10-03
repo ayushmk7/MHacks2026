@@ -1,7 +1,7 @@
 # P2-R — Payee Flow, Presence Handshake, and Attack Console
 
 Owner: **R** · Part 2 (≈ hours 8–20) · Status: **draft — finalize after U6 (app decision doc)**
-Reads: `00-Interfaces.md` (§3, §5, §8) · Builds on: `P1-r` (R4 timing, R5 verifier) · Parent: `Prd-verified-payment-key.md`
+Reads: [`00-Interfaces.md`](00-Interfaces.md) (§3, §5, §8) · Builds on: [P1-R](P1-r-test-harness.md) (R4 timing, R5 verifier) · Parent: [`Prd-verified-payment-key.md`](Prd-verified-payment-key.md)
 
 ## 1. Why this exists
 Every verified payment starts with a payee asking for money and proving it is physically there. R owns that side, plus the tools that let judges watch attacks fail.

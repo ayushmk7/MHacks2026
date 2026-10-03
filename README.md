@@ -8,13 +8,12 @@ Built on Solana OS by spacemandev; we added the wallet and identity layer.
 
 ```
 MHacks2026/
-├─ Prd-verified-payment-key.md                             product spec: problem, requirements, protocol, demo plan
-├─ PRD_GUIDE.md                                            build-spec index (start with 00-Interfaces.md)
-├─ distinctive-frontend.md                                  frontend design guide (typography, colour, motion, backgrounds)
 ├─ dashboard/                                               the laptop dev panel ("BadgePay"): API server, database schema, scripts, web app
 ├─ docs/
 │  ├─ dashboard/                                            dashboard docs: API, ARCHITECTURE, BADGE-GAPS, RUNBOOK, TIGER-DATA
 │  └─ os/                                                   badge OS build documentation and host-tested reference code
+│  ├─ specs/                                                product PRD and implementation work packages
+│  └─ design/                                               frontend design guide
 └─ README.md                                                this file
 ```
 
@@ -22,8 +21,9 @@ MHacks2026/
 
 | To | Read |
 |---|---|
-| Understand the product | [PRD](Prd-verified-payment-key.md) |
-| Implement the badge workflow | [Build specs](PRD_GUIDE.md), starting with [Interfaces](00-Interfaces.md) |
+| Understand the product | [PRD](docs/specs/Prd-verified-payment-key.md) |
+| Implement the badge workflow | [Build specs](docs/specs/README.md), starting with [Interfaces](docs/specs/00-Interfaces.md) |
+| Apply the UI direction | [Frontend design guide](docs/design/frontend.md) |
 | Run the dashboard | [dashboard/README.md](dashboard/README.md). All its npm scripts run from inside `dashboard/` |
 | Look up how the dashboard works | [docs/dashboard/](docs/dashboard/): [ARCHITECTURE](docs/dashboard/ARCHITECTURE.md), [API](docs/dashboard/API.md), [TIGER-DATA](docs/dashboard/TIGER-DATA.md), [BADGE-GAPS](docs/dashboard/BADGE-GAPS.md), [RUNBOOK](docs/dashboard/RUNBOOK.md) |
 | Build the badge OS | [docs/os/README.md](docs/os/README.md). The firmware itself is not in this repository yet; these documents describe how to build it on top of Solana OS |

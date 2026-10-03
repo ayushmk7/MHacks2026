@@ -1,7 +1,7 @@
 # P1-R — Test Harness: Prove the Risky Parts First
 
 Owner: **R** · Part 1 (≈ hours 0–8) · Gate contribution: the laptop side of the first badge-signed devnet payment
-Reads: `00-Interfaces.md` (§0, §1, §3, §5) · Parent: `Prd-verified-payment-key.md`
+Reads: [`00-Interfaces.md`](00-Interfaces.md) (§0, §1, §3, §5) · Parent: [`Prd-verified-payment-key.md`](Prd-verified-payment-key.md)
 
 ## 1. Why this exists
 
@@ -17,7 +17,7 @@ Four unknowns can sink the project. The harness answers them in the first hours,
 ## 2. What already exists
 - **Solana OS on the badges:** identity key, `badge.espnow`, `badge.http`, the serial console (push protocol only, **no Lua serial read**) and app sideloading. See https://github.com/spacemandev-git/solana-defcon-badge-26/blob/main/firmware/solana-os/README.md.
 - **The broker** already does challenge-response signing with the badge key. Its client code shows how signatures and public keys are encoded today.
-- **The existing Node server's badge listener** (port 8788) serves `GET /badge/pending?badge=<pubkey>` → `{messageBase64, txBase64}` and accepts `POST /badge/outcome` (`docs/API.md`, `docs/BADGE-GAPS.md`). That is the transport for R3.
+- **The existing Node server's badge listener** (port 8788) serves `GET /badge/pending?badge=<pubkey>` → `{messageBase64, txBase64}` and accepts `POST /badge/outcome` (see the [API](../dashboard/API.md) and [badge-gap notes](../dashboard/BADGE-GAPS.md)). That is the transport for R3.
 - **`npm run pay`** and `scripts/simulate-payment.mjs` already send HACK transfers between stand-in keys. Use them as a reference for building transactions in JS.
 
 You do **not** need A's wallet module to start R1, R2 and R4.
