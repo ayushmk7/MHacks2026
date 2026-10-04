@@ -8,5 +8,6 @@ This folder is the source of truth for project documentation.
 | Laptop dashboard | [Dashboard documentation](dashboard/) |
 | Badge firmware and host-tested reference code | [Badge OS documentation](os/README.md) |
 | UI direction | [Frontend design guide](design/frontend.md) |
+| Debug logs and session changes | [Logs](logs/) |
 
 For setup and repository navigation, see the [repository README](../README.md).

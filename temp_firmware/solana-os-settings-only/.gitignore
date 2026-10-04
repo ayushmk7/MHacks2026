@@ -1,0 +1,3 @@
+# arduino-cli --output-dir / --build-path artifacts. app/scripts/build-firmware.ts
+# writes here when it compiles the image for the /flash page.
+build/
