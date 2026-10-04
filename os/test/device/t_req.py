@@ -284,7 +284,9 @@ def run(badge, badge2):
     try:
         # ---- T-REQ1, T-REQ2, T-CHK1: the honest payment --------------------------------------
         req_id, payee_channel = open_request(payee)
-        start_payer(payer, paying(req_id))
+        honest = paying(req_id)
+        message = honest["msg_hex"]   # what the payer signs (bytes; the case writer hex-encodes it)
+        start_payer(payer, honest)
         payer_channel = int(rp_wait(payer, r"up ch \d+").split()[-1])
         assert payer_channel == payee_channel, (
             "the badges are on different ESP-NOW channels (%d and %d): join both to the same hotspot, "
