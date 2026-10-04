@@ -20,6 +20,10 @@ struct Screen {
 void push(const Screen *screen);   // show `screen` on top. The object must be static. Calls enter(), requests a repaint
 void pop();                        // back one screen (not re-entered: it keeps its cursor); does nothing on the launcher
 void home();                       // back to the launcher
+// An app started from a Settings action row (Wallet, Inbox) returns to Settings, on that row, when
+// it stops; one started from the launcher returns to the launcher. Set by settings_list.cpp.
+void appFromSettings(bool yes);
+bool appFromSettings();
 void repaint();                    // redraw the top screen on this pass
 const Screen *top();
 

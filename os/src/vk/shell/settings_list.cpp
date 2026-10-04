@@ -37,18 +37,27 @@ void collect() {
   }
 }
 
+bool sKeepCursor = false;                   // re-entered after an app that a row of this list started
+
 void enter() {
   collect();
-  sList = List();
+  if (!sKeepCursor) sList = List();
+  sKeepCursor = false;
 }
 
 void update() {
-  if (back()) return;                        // CANCEL: the launcher
+  if (back()) {                              // CANCEL: the launcher
+    appFromSettings(false);
+    sKeepCursor = false;
+    return;
+  }
   listMove(sList, sCount);
   if (!buttons::pressed(BTN_A) || sCount == 0 || sList.cursor < 0 || sList.cursor >= sCount) return;
 
   const SettingsPage *page = sPages[sList.cursor];
   if (page->action != nullptr) {             // an action row: act in place, the list stays
+    appFromSettings(true);                   // if it starts an app, that app comes back here
+    sKeepCursor = true;
     page->action();
     repaint();
     return;

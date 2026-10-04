@@ -140,6 +140,7 @@ void closeFolder() {
 
 void launch(const String &id) {
   ::leds::stopAnimation();
+  appFromSettings(false);
   runtime::requestLaunch(id);
 }
 

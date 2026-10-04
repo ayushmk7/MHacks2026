@@ -76,6 +76,12 @@ void showOver(const Screen *screen) {
   push(screen);
 }
 
+namespace {
+bool sAppFromSettings = false;
+}
+void appFromSettings(bool yes) { sAppFromSettings = yes; }
+bool appFromSettings() { return sAppFromSettings; }
+
 }  // namespace vk::shell
 
 // ---- upstream's interface (src/ui/shell.h) and screenName() --------------------------------------
@@ -104,6 +110,7 @@ void onAppStopped() {
     showError(runtime::lastError());
   } else {
     vk::shell::home();                       // the launcher keeps its cursor and clamps it to the new count
+    if (vk::shell::appFromSettings()) vk::shell::push(&vk::shell::kSettings);   // Wallet, Inbox: back to Settings, same row
     leds::playIdle();
   }
 }
