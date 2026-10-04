@@ -13,7 +13,7 @@
 ## Global constraints
 
 - Upstream base: `firmware/solana-os/` of <https://github.com/spacemandev-git/solana-defcon-badge-26> at commit `812b8c7aca5c366d18c0b040fafd2999f7204d84`.
-- Every edit to an upstream file is a hook listed in [upstream-hooks.md](../architecture/upstream-hooks.md), tagged `// VK: H<n>`. All hooks (H1–H17, H19, H20) are applied in WP01; later work packages do not touch upstream files (exceptions are named in the package).
+- Every edit to an upstream file is a hook listed in [upstream-hooks.md](../architecture/upstream-hooks.md), tagged `// VK: H<n>`. All hooks (H1–H17, H19, H20, and the provisional H21) are applied in WP01; later work packages do not touch upstream files (exceptions are named in the package).
 - All new firmware code lives under `src/vk/`, `src/native_apps/`, `apps/`, `lib/`, `scripts/`, `test/`.
 - The only caller of `identity::sign` / `identity::signBase64` is `src/vk/wallet/signer.cpp`.
 - `VK_SIGN_DOMAIN(` appears only in `src/vk/features/*/domain_*.cpp`.
@@ -126,13 +126,13 @@ If time runs out, cut in this order: WP54, WP45, WP43 + WP34, WP36, WP32 inbox (
 
 Stub behaviour (must equal upstream behaviour) is the last column of that table. In short: `modalActive()` is false because `approval::active()` is; `router::install()` installs `espnow_mgr::onReceive([](const uint8_t *m, const uint8_t *d, size_t n, int8_t r) { if (runtime::running()) runtime::dispatchEspnow(m, d, n, r); })`; `preLaunch` returns true; `native::*` report no apps; `leds::bootProgress` does nothing; `bootScreen` returns false; `signStoreRegistration(message)` returns `identity::signBase64(message)` from inside `signer.cpp`; `onAppStopping` calls its (so far empty) listener list.
 
-- [ ] Copy upstream into `os/`; commit it unmodified first (one commit, so the hooks are a reviewable diff).
-- [ ] Write `registry.h` and `service.h` exactly as in the overview. Write `vk.cpp`: `begin()` runs every service's `begin`, then logs `[vk] registries: services=<n> commands=<n> lua=<n> status=<n> domains=<n> routes=<n> permissions=<n> patterns=<n> native=<n> config=<n>`; `update()` runs every service's `update`.
-- [ ] Write the stubs. Write `build.sh` and `preflash-check.sh`.
-- [ ] Apply hooks H1–H17, H19 and H20 exactly as written. Copy the hook table to `UPSTREAM-HOOKS.md`.
-- [ ] `scripts/build.sh dev`. Expected: compiles; the hook check passes.
-- [ ] Add a temporary `VK_SERVICE` in a new file that logs once at boot; flash; confirm the line appears (this is the linker check of review focus 5). If it does not appear, add `src/vk/registry_anchor.cpp` per the overview's fallback and record the finding. Remove the temporary service.
-- [ ] Flash. Tests: T-BOOT1, `VKHELP` lists `VKHELP` and `VKINFO`, `VKINFO` answers `OK profile=dev api=2`, launch an upstream sample app and exit, the launcher repaints after a pushed app install, T-HOOK1 if a second badge is available.
+- [x] Copy upstream into `os/`; commit it unmodified first (one commit, so the hooks are a reviewable diff).
+- [x] Write `registry.h` and `service.h` exactly as in the overview. Write `vk.cpp`: `begin()` runs every service's `begin`, then logs `[vk] registries: services=<n> commands=<n> lua=<n> status=<n> domains=<n> routes=<n> permissions=<n> patterns=<n> native=<n> config=<n>`; `update()` runs every service's `update`.
+- [x] Write the stubs. Write `build.sh` and `preflash-check.sh`.
+- [x] Apply hooks H1–H17, H19, H20 and H21 exactly as written. Copy the hook table to `UPSTREAM-HOOKS.md`.
+- [x] `scripts/build.sh dev`. Expected: compiles; the hook check passes.
+- [x] Add a temporary `VK_SERVICE` in a new file that logs once at boot; flash; confirm the line appears (this is the linker check of review focus 5). If it does not appear, add `src/vk/registry_anchor.cpp` per the overview's fallback and record the finding. Remove the temporary service.
+- [x] Flash. Tests: T-BOOT1, `VKHELP` lists `VKHELP` and `VKINFO`, `VKINFO` answers `OK profile=dev api=2`, launch an upstream sample app and exit, the launcher repaints after a pushed app install, T-HOOK1 if a second badge is available. Done 2026-10-03 except T-HOOK1, which is deferred (needs a second badge).
 
 **Done when:** the fork boots and behaves as upstream; all hooks are present and checked; the registries line is logged.
 
@@ -146,14 +146,14 @@ Stub behaviour (must equal upstream behaviour) is the last column of that table.
 
 **Interfaces produced:** every declaration in the three spec documents' C blocks, unchanged.
 
-- [ ] In `docs/os/reference/code/`, build and run the reference `test_sol` unchanged to confirm the starting point (`all sol tests passed`; command in the README). Then copy the four files and the test; delete the test's curve and address-derivation cases, which exercise files that are not copied.
-- [ ] Extend `vectors.mjs` (Memo message, issuer and device key pairs, canonical record + signature, signed REQ, PROOF); regenerate; commit vectors.
-- [ ] Decoder: write the new negative and Memo tests first (one per rule in the decoder table); see them fail; change `sol_tx.c` (legacy only, 1232, Memo, compact-u16, `SOL_TX_ERR_MEMO`, struct change); extend the builder with the memo argument; tests pass.
-- [ ] `vk_reason`: enum and names; test that every code has a distinct lower-case name.
-- [ ] `vk_record`: tests first (canonical record parses; each mutation refused; signature verify with the test issuer key; one flipped bit fails); implement.
-- [ ] `vk_frames`: tests first (round trip per type; truncated and over-long refused; `signed_len`; signed-bytes helpers match the vectors); implement.
-- [ ] `vk_checks`: tests first, one per row of both tables in the check chain plus cap and green; implement `vk_check_solana` and `vk_headline_text`.
-- [ ] `test/host/run.sh` builds and runs all suites; wire it into `preflash-check.sh` as check 5.
+- [x] In `docs/os/reference/code/`, build and run the reference `test_sol` unchanged to confirm the starting point (`all sol tests passed`; command in the README). Then copy the four files and the test; delete the test's curve and address-derivation cases, which exercise files that are not copied.
+- [x] Extend `vectors.mjs` (Memo message, issuer and device key pairs, canonical record + signature, signed REQ, PROOF); regenerate; commit vectors.
+- [x] Decoder: write the new negative and Memo tests first (one per rule in the decoder table); see them fail; change `sol_tx.c` (legacy only, 1232, Memo, compact-u16, `SOL_TX_ERR_MEMO`, struct change); extend the builder with the memo argument; tests pass.
+- [x] `vk_reason`: enum and names; test that every code has a distinct lower-case name.
+- [x] `vk_record`: tests first (canonical record parses; each mutation refused; signature verify with the test issuer key; one flipped bit fails); implement.
+- [x] `vk_frames`: tests first (round trip per type; truncated and over-long refused; `signed_len`; signed-bytes helpers match the vectors); implement.
+- [x] `vk_checks`: tests first, one per row of both tables in the check chain plus cap and green; implement `vk_check_solana` and `vk_headline_text`.
+- [x] `test/host/run.sh` builds and runs all suites; wire it into `preflash-check.sh` as check 5.
 
 **Done when:** `test/host/run.sh` prints one "all … tests passed" line per suite and exits 0.
 
@@ -166,12 +166,12 @@ Stub behaviour (must equal upstream behaviour) is the last column of that table.
 
 **Interfaces consumed:** `VK_SERIAL_COMMAND`; hook H17's `vk_dev_apply_injected_buttons`. `VKSTATE` reads the approval through `vk::wallet::approval::current()`, `phase()` and `peekResult()`, the clock through `vk::clock`, notifications through `vk::host::notify`; all are WP01 stubs until their packages land, so the command is written once and its values become real as packages merge. The same holds for `VKTIME` (calls a dev-only `vk::clock::devSet`) and `VKNOTE`.
 
-- [ ] `vk_dev_apply_injected_buttons`: a queue of timed press/release events applied to the three masks; `VKBTN` fills it.
-- [ ] `VKSHOT`: run-length encode `display::canvas()`'s buffer, base64, CRC32.
-- [ ] `VKSTATE`: the JSON in the testing document, fields available so far.
-- [ ] `vkdev.py`: `info`, `cmd`, `wait-ready`, `state`, `btn`, `shot` (PNG via `zlib`), `push` (upstream `AUTH`/`BEGIN`/`DATA`/`END` using `VKPAIR`), `run`, `monitor`, `test`.
-- [ ] `t_boot.py`: T-BOOT1. Then a navigation test: `btn down tap`, `shot`, assert the two screenshots differ.
-- [ ] Release build: confirm none of these commands answers (T-REL2).
+- [x] `vk_dev_apply_injected_buttons`: a queue of timed press/release events applied to the three masks; `VKBTN` fills it.
+- [x] `VKSHOT`: run-length encode `display::canvas()`'s buffer, base64, CRC32.
+- [x] `VKSTATE`: the JSON in the testing document, fields available so far.
+- [x] `vkdev.py`: `info`, `cmd`, `wait-ready`, `state`, `btn`, `shot` (PNG via `zlib`), `push` (upstream `AUTH`/`BEGIN`/`DATA`/`END` using `VKPAIR`), `run`, `monitor`, `test`.
+- [x] `t_boot.py`: T-BOOT1. Then a navigation test: `btn down tap`, `shot`, assert the two screenshots differ.
+- [ ] Release build: confirm none of these commands answers (T-REL2). Deferred to Batch 6 (needs the release build).
 
 **Done when:** `vkdev.py --port P test test/device/t_boot.py` passes after an unattended flash.
 
@@ -420,10 +420,10 @@ Each app is one folder under `apps/` with `app.ini`, `main.lua`, `config.lua`, w
 
 | WP | Owner | Started | Tests passed | Notes |
 |---|---|---|---|---|
-| 00 | orchestrator | 2026-10-03 | upstream builds, flashes at 460800 baud, boots, `PING` ok | badge key is software (SE050 select failed) |
-| 01 | | | | |
-| 02 | | | | |
-| 03 | | | | |
+| 00 | orchestrator; agent 0 (Batch 0) | 2026-10-03 | upstream builds, flashes at 460800 baud, boots, `PING` ok; unmodified upstream compiles in place from `os/` | badge key is software (SE050 select failed). Public key `5vpmgLuCfbV7Lp2hTNFz7w75ibhVkc56G1mR6weQedvj`, read by eye from a screenshot of Settings → Identity (confirm against `VKINFO pubkey` when WP11 lands). Finding F17 (I²C clock held low) recorded |
+| 01 | Batch 1: 1A (hooks, `vk.cpp`, `core/`, build scripts), 1B (`host/`, `ui/`, `wallet/`, `sdk/` stubs); integrator I1 | 2026-10-03 | dev build compiles; pre-flash checks 1 to 5 pass (hook ids H1–H17, H19, H20, H21); T-BOOT1 (`t_boot.py`); `VKHELP` lists `VKHELP` and `VKINFO`; `VKINFO` → `OK profile=dev api=2`; linker check (`[vk] linkcheck alive`, U2 settled, no anchor file); upstream sample `hello` pushed, run (`VKSTATE.app` = `hello`), stopped, launcher repaints (screenshot equal to the one before) | Boot line: `[vk] registries: services=0 commands=8 lua=0 status=0 domains=0 routes=0 permissions=0 patterns=0 native=0 config=1` (the one config key is `theme`; with the temporary link-check service it read `services=1`). `[id] 5vpmgLuC, software (1 ms)`. Image 1,882,539 bytes. The first build compiled with no cross-agent error. H21 applied (`VK_SE050_QUARANTINE 1`): no `[se050]` line and no bus scan at boot; the I²C bus was still held low at this flash (`[btn] TCA9534 init FAILED`), so hardware buttons need one power cycle. H21 does not cover every path to the SE050 (see the hook's section). Deferred: T-HOOK1 (second badge). Not yet exercised: `fileio` `renameFile` over an existing file on LittleFS (first used by WP10 and WP24). The `bootScreen` stub forwards the percentage to `leds::bootProgress`, so WP12's boot bar is driven as soon as that body exists |
+| 02 | Batch 1: 1C; integrator I1 | 2026-10-03 | host suites `sol`, `record`, `frames`, `checks` (`test/host/run.sh`, also run as pre-flash check 5); the pure code compiles with the ESP32 toolchain and links into the image | vectors regenerate byte for byte (1C). Spec additions recorded in solana-payments.md, checks.md, espnow.md and testing.md. The shim has no suite of its own in the tree |
+| 03 | Batch 1: 1D; integrator I1 | 2026-10-03 | `t_boot.py` (T-BOOT1, serial checks, navigation by injected key); `vkdev.py` `wait-ready`, `reset`, `state`, `cmd`, `btn`, `shot`, `push`, `run`, `stop`, `test` used on the badge | Opening the port does not reset the badge; `reset` reboots it (`[os] ready` after 8.3 s); `VKSHOT` takes 0.6 to 1.0 s; pushing `hello` (2 files) takes 1.5 s. Deferred: T-REL2 (release build, Batch 6); `provision` (needs WP10 and a filled `dashboard/.env`); `monitor` and `provision` not run on the badge |
 | 10 | | | | |
 | 11 | | | | |
 | 12 | | | | |

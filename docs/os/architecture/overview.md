@@ -155,7 +155,7 @@ class Registered {
 }  // namespace vk
 ```
 
-Iteration: `for (auto *x = T::first(); x; x = x->next())`. Order of registration is not defined; a kind that needs an order carries an `order` field and is sorted by its owner.
+Iteration: `for (auto *x = T::first(); x; x = x->next())`. A registered struct whose own member is named `first` or `next` hides the registry's function of that name: `EspnowRoute` has a field `first`, so `EspnowRoute::first()` does not compile. For such a struct, and in generic code over any `T`, name the base class: `for (auto *x = Registered<T>::first(); x; x = x->Registered<T>::next())` (`vk.cpp` counts every registry this way; routes also have the helper `router::firstRoute()`). Order of registration is not defined; a kind that needs an order carries an `order` field and is sorted by its owner.
 
 The registries:
 
@@ -178,7 +178,7 @@ The registries:
 
 Step-by-step recipes for each are in [../guides/extending.md](../guides/extending.md).
 
-[UNVERIFIED] Self-registration relies on the linker keeping object files that nothing references by name. `arduino-cli` links the sketch's own objects directly (not from an archive), which keeps them. Checked in work package WP01. Fallback: one file `src/vk/registry_anchor.cpp` that references one symbol from each feature; adding a feature then also means adding one line there.
+Self-registration relies on the linker keeping object files that nothing references by name. `arduino-cli` links the sketch's own objects directly (not from an archive), which keeps them. Checked on a badge in WP01 (2026-10-03): a `VK_SERVICE` in a file that nothing else references ran at boot and logged its line, and the six dev commands registered by `features/devtools/devtools.cpp` are counted in the `[vk] registries:` line. The fallback (one file `src/vk/registry_anchor.cpp` that references one symbol from each feature) is therefore not used and the file does not exist. If a count in the boot line is ever lower than the build should have, that file is the fix.
 
 ## 7. Services
 

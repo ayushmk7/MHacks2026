@@ -57,6 +57,7 @@ void notifyChannelChanged(uint8_t channel);
 // installs its own on app start and clears it on stop.
 void onReceive(ReceiveHandler handler);
 void clearReceiveHandler();
+uint32_t lastRxMs();  // VK: H13
 
 // "aa:bb:cc:dd:ee:ff"
 String macToString(const uint8_t *mac);

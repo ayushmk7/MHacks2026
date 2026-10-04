@@ -60,6 +60,15 @@ int vk_record_verify(const uint8_t *bytes, size_t len, const uint8_t sig[64], co
                      int (*verify)(const uint8_t *, size_t, const uint8_t *, const uint8_t *));
 ```
 
+What "strict" means where the format above does not say (fixed by `vk_record.c` and `test_record`):
+
+- A number is 1 to 10 decimal digits with no sign and no leading zero, and must fit in 32 bits.
+- `attestation` is `none` or a base58 string that decodes to 32 bytes.
+- `solana_wallet` and `solana_ata` come as a pair. A record with only one of them parses with `has_solana = 0`, so check 10 gives WRONG RECIPIENT.
+- The parser alone cannot catch a record cut short inside its last number (`issued_at` with digits removed is still well formed); the issuer signature does.
+
+`vk_record.h` also defines `VK_RECORD_MAX` (512), `VK_RECORD_PREFIX` (`"registry:"`), `VK_KIND_MERCHANT` / `VK_KIND_PERSON` and `VK_STATUS_ACTIVE` / `VK_STATUS_REVOKED`.
+
 The record carries `solana_ata` so the badge compares 32 bytes instead of deriving an address. One record covers one token (the first row of the token table); a second token needs the backend to issue a record per token, which is out of scope until a second token exists.
 
 ## Clock
@@ -166,7 +175,14 @@ Checks run in this order. The first one that fails decides the verdict; a red ve
 | 10 | the record has `solana_ata` and it equals the decoded destination | `WRONG_RECIPIENT` ("WRONG RECIPIENT") | `mismatch` | no |
 | 11 | if a request was supplied (whether or not the `requests` feature is present): it parses, its `pay-req:` signature verifies with `record.device_pubkey`, `req.payee_pubkey == record.device_pubkey`, `req.rail` is Solana, `req.expiry` > `now` | `BAD_REQUEST` ("BAD REQUEST") | `unverified` | no |
 | 12 | if a request was supplied: `req.currency` equals the token symbol and `req.amount` equals the decoded amount | `WRONG_AMOUNT` ("WRONG AMOUNT") | `mismatch` | no |
-| 13 | if a request was supplied and the presence result is `PRESENT`, `LATE` or `BAD_SIG`: the result is not `BAD_SIG`, and the payee key stored with it equals `record.device_pubkey`. (`NONE` and `PENDING` have no stored key and pass this check; they become amber below) | `BAD_PROOF` ("BAD PROOF") | `bad_proof` | no |
+| 13 | if a request was supplied and the presence result is `PRESENT`, `LATE` or `BAD_SIG`: the result is not `BAD_SIG`, and the payee key stored with it equals `record.device_pubkey`. (`NONE` has no slot and `PENDING` has no proof to judge; both pass this check and become amber below. The stored key is compared only for `PRESENT`, `LATE` and `BAD_SIG`, although the lookup writes it for `PENDING` too) | `BAD_PROOF` ("BAD PROOF") | `bad_proof` | no |
+
+Terms in the table, as `vk_checks.c` implements them:
+
+- A record counts as **supplied** only if `record`, `record_len` and `record_sig` are all non-zero; a request only if `req` and `req_len` are.
+- `decoded` is set to 1 only after checks 1 and 2 have both passed, because "valid when decoded" covers `transfer` and `token` together. On UNKNOWN TOKEN `decoded` is 0 and the `big` line stays empty.
+- `VK_TIME_NONE` is treated like `VK_TIME_FLOOR`.
+- The REQ signature is verified over `"pay-req:"` followed by `frame[0..signed_len)`, so the requests feature must sign exactly those bytes ([protocol](../protocol/espnow.md#codec)).
 
 Check numbers are kept stable; there is no check 7. The record's `time_source` can never be NONE here, because the caller raised the clock from the verified record first ([Verdict to screen](#verdict-to-screen)).
 
@@ -201,7 +217,7 @@ Why record-only payments are allowed (amber, not red): a shop inside a game has 
 | line `Requested` | the request's amount and currency (only for `WRONG_AMOUNT`) |
 | line `Expected` | the record's token account, shortened (only for `WRONG_RECIPIENT`) |
 | line `Memo` | first 35 characters of the memo (only when present) |
-| line `Limit` | `over <cap> <symbol>` (only when the cap forced a hold) |
+| line `Limit` | `over <cap> <symbol>` (only when the cap forced a hold). The verdict has no flag for this; `decodeSolana` recomputes it as `token->cap != 0 && transfer.amount > token->cap` |
 | `severity`, `select`, `red_reason`, `dev_overridable` | from the verdict |
 | `recipient`, `recipient_name` | `record.device_pubkey`, `record.display_name` when valid; else the destination and empty |
 | `amount`, `decimals`, `symbol` | from the decoded bytes and the token table |

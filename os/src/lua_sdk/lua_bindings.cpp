@@ -5,6 +5,7 @@
 #include "../badge_log.h"
 #include "../config.h"
 #include "../settings.h"
+#include "../vk/host/lua_registry.h"  // VK: H7
 
 extern "C" {
 #include "../lua/lauxlib.h"
@@ -71,6 +72,7 @@ void openBadge(lua_State *L) {
   openNet(L);
   openEspnow(L);
   openBle(L);
+  vk::lua::open(L);  // VK: H7
 
   // A copy at the top level as well, so `badge.millis()` and `badge.gfx` sit
   // side by side - the shortcuts people reach for constantly should not need a

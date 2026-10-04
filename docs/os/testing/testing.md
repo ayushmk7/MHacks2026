@@ -26,7 +26,16 @@ cd os && test/host/run.sh        # builds and runs every suite; non-zero exit on
 | `test_manifest`, `test_consent` | manifest parser, consent hash and store | [app host](../platform/app-host.md#tests) |
 | `test_stores`, `test_contacts` | history ring, bad-magic recovery; contacts store and card acceptance | [stores](../wallet/stores.md#tests) |
 
-Vectors: `test/host/vectors.mjs` generates `vectors.json` and `vectors.h` using the dashboard's installed `@solana/kit` (run with `node` from `dashboard/`): transfer messages with and without a Memo, a test issuer key pair, a device key pair, a canonical registry record with its signature, a signed REQ. Regenerating must reproduce the committed files byte for byte.
+What the runner and the shim do, beyond the above (fixed in WP02; later suites rely on it):
+
+- `run.sh` takes suite names as `sol`, `test_sol` or `test_sol.c`; with no argument it runs every suite. Besides the exit status it requires the suite's last output line to be `all <name> tests passed`. A suite names the firmware files it links in a `// LINK:` comment within its first five lines ([execution plan](../roadmap/execution-plan.md#51-host-test-infrastructure-owner-1c-never-edited-afterwards)).
+- C suites include the pure headers by relative path (`"../../src/vk/wallet/pure/…"`). `src/identity/tweetnacl.c` alone is compiled with warnings off.
+- The in-memory file layer is as strict as the badge: paths are absolute and at most 118 characters; `writeAll`, `renameFile` and `makeDir` fail when the parent directory was not created with `makeDir`; `writeAt` fails on a missing file. A store's test must `makeDir("/vk")` first, as the firmware must.
+- The NVS shim follows the real limits: keys and namespaces are 1 to 15 characters; a read-only `begin` on a namespace never written returns false; `putString` of an empty string returns 0 even on success, as on the ESP32 core, so config code must not treat that as a failure.
+- Failure injection: `vk_host_nvs_fail_writes` and `vk_host_fileio_fail_writes`. A positive N fails the next N writes and counts down; a negative value fails every write until it is set back to 0. For NVS only `put*` counts; for files `writeAll`, `writeAt` and `renameFile`.
+- The shim has no `Serial`.
+
+Vectors: `test/host/vectors.mjs` generates `vectors.json` and `vectors.h` using the dashboard's installed `@solana/kit` (run with `node` from `dashboard/`): transfer messages with and without a Memo, a test issuer key pair, a device key pair, a canonical registry record with its signature, a signed REQ, a PROOF. The record's `solana_ata` is the destination of the two transfer vectors, so those messages pay the record's holder; `tx.mint` is the mint in base58. Regenerating must reproduce the committed files byte for byte.
 
 To make state machines host-testable, code under test never calls `millis()`, `buttons::` or `identity::` directly; it takes them as function pointers that the firmware fills with the real ones and the tests fill with fakes. With `-DVK_HOST_TEST` no Arduino header is included.
 
@@ -37,7 +46,7 @@ Dev profile only (`VK_TEST_HOOKS`), in `src/vk/features/devtools/`. They let a s
 | Command | Reply | Does |
 |---|---|---|
 | `VKSTATE` | `OK {json}` | one-line snapshot (below) |
-| `VKBTN <key> <action> [ms]` | `OK` | `key`: `up down left right a b`. `action`: `tap` (press, 80 ms, release), `press`, `release`, `hold <ms>` |
+| `VKBTN <key> <action> [ms]` | `OK` | `key`: `up down left right a b`. `action`: `tap [ms]` (press, 80 ms unless `ms` is given, release), `press`, `release`, `hold <ms>`. Times are capped at 60000 ms. `ERR busy` when the queue of 16 events is full |
 | `VKSHOT` | `OK shot 320 240`, then `+ <base64>` lines, then `OK end <crc32>` | the framebuffer, RGB565 little-endian, run-length encoded as (count u8, pixel u16) triples, base64 in 96-character lines |
 | `VKTIME <unix>` | `OK` | sets the clock and marks the source SNTP (lets tests exercise expiry without a network) |
 | `VKPAIR` | `OK <code>` | upstream's push pairing code, so apps can be pushed over serial without reading the screen |
@@ -53,6 +62,14 @@ Dev profile only (`VK_TEST_HOOKS`), in `src/vk/features/devtools/`. They let a s
  "provisioned":true,"time":"sntp","notes":0,"poll":"pending","heap":182344}
 ```
 
+Details the table leaves open, fixed in WP03:
+
+- **Replies.** A dev command with bad arguments answers `ERR usage`. `VKSHOT` with no framebuffer answers `ERR no_canvas`.
+- **`VKSHOT`** is the one command with two `OK` lines (`OK shot …` and `OK end …`); the tool treats it as a special case and retries up to three times on a CRC or decode failure. The CRC is the zlib CRC-32 of the decoded framebuffer (153,600 bytes), as 8 lower-case hex digits. Pixels are read with `canvas.readPixel()`, so they are true RGB565 whatever the sprite's byte order. Measured on the badge at 115200 baud: 1.0 s for the launcher, 0.6 s for the `hello` app's screen; the main loop is blocked for that long. Its reply lines go through upstream's log, so one `VKSHOT` overwrites the 64-line log ring that Settings → Console and `/api/logs` show.
+- **`VKSTATE` with no approval open:** `modal` false, `phase` `IDLE`, empty strings for `severity`, `select`, `title`, `headline`, `big` and `sub`, `lines` `[]`, `red_reason` `ok`.
+- **`VKSTATE.select`** is the rule in force, not the request's raw field: a red request shows `disabled`, or `hold` when the dev override applies.
+- **Stubs.** `VKTIME` and `VKNOTE` call `vk::clock::devSet` and `vk::host::notify::post`; `time` and `notes` become real when WP20 and WP32 land.
+
 `poll` comes from `approval::peekResult()`, so reading the state never consumes a result. Tests assert on `VKSTATE` (exact strings) and use `VKSHOT` only to check that something is visibly drawn or to keep a picture for a person to look at.
 
 ## The serial tool
@@ -66,6 +83,8 @@ vkdev.py --port P wait-ready [--timeout 30]  # waits for "[os] ready" after a fl
 vkdev.py --port P provision ...              # see config.md
 vkdev.py --port P push apps/pay              # push one app over serial (AUTH, BEGIN <id> <path>, DATA <base64>, END)
 vkdev.py --port P run pay                    # RUN <id>
+vkdev.py --port P stop                       # STOP the running app (authenticates first)
+vkdev.py --port P reset                      # pulse the reset line, then wait for ready
 vkdev.py --port P state                      # VKSTATE as JSON
 vkdev.py --port P btn a tap
 vkdev.py --port P shot out.png               # VKSHOT decoded to a PNG (stdlib zlib; no Pillow)
@@ -73,9 +92,13 @@ vkdev.py --port P test test/device/t_apr.py  # run a scripted device test
 vkdev.py --port P monitor                    # tail the log
 ```
 
+`--code <pairing code>` gives the push pairing code by hand; without it the tool reads it with `VKPAIR`, which only a dev build has. The tool refuses to send a line longer than 250 bytes.
+
+How the tool holds the port, confirmed on the badge in WP01: it opens the port with DTR asserted and RTS released, then releases DTR, so the reset line is never pulsed and **opening the port does not reset the badge** (no boot output, state kept). `reset` asserts RTS for 0.1 s with DTR released, as esptool's hard reset does, and **does reboot it**: the boot banner follows and `[os] ready` comes about 8 s later. `wait-ready` drains the answers to its own `PING`s before it returns.
+
 Serial push rules, from upstream's protocol: every command is answered by exactly one `OK` or `ERR` line, mixed in with `[tag]` log lines, so wait for it before sending the next; send at most 180 raw bytes per `DATA` line; `AUTH` again before each file and after any `RUN` (upstream drops the session whenever an app stops or a launch fails); a file is limited to 96 KB.
 
-A scripted device test is a Python file with `def run(badge):` that uses `badge.cmd()`, `badge.state()`, `badge.btn()`, `badge.shot()`, `badge.wait_state(predicate, timeout)` and plain `assert`. Tests live in `os/test/device/`, one file per group below.
+A scripted device test is a Python file with `def run(badge):` that uses `badge.cmd()`, `badge.state()`, `badge.btn()`, `badge.shot()`, `badge.wait_state(predicate, timeout)` and plain `assert`. Tests live in `os/test/device/`, one file per group below. The full `badge` API and the helpers in `test/device/common.py` are listed in the [execution plan](../roadmap/execution-plan.md#52-device-test-api-owner-1d). A launcher with no installed app has one row, so `t_boot.py` falls back to CANCEL (which opens Settings) when DOWN changes nothing on the screen.
 
 The unattended loop for an agent: edit → `scripts/build.sh dev --upload <port>` → `vkdev.py wait-ready` → `vkdev.py test ...` → read the result and the log → repeat.
 
@@ -186,7 +209,7 @@ Fill in on hardware; these numbers set config values and decide fallbacks.
 | M1 | CHAL → PROOF round trip, 50 samples | log line `[req] proof <ms> ms` on the payer | p50 = , p95 = | `presence_ms` = p95 × 1.5 |
 | M2 | one Ed25519 verify; one sign (software key; SE050 key) | log lines `[vk] verify <ms> ms`, `[vk] sign <domain> <n> bytes <ms> ms` | | if verify > 400 ms, switch `VK_ED25519_BACKEND` to 1 |
 | M3 | `begin_solana` → approval visible | timestamp in the log at `begin` and at first draw | | target under 2 s |
-| M4 | image size; free heap and free PSRAM in the launcher and during an approval | compile output; `VKSTATE.heap`; upstream heartbeat line | | slot is 3,342,336 bytes |
+| M4 | image size; free heap and free PSRAM in the launcher and during an approval | compile output; `VKSTATE.heap`; upstream heartbeat line | WP01 dev build (2026-10-03): 1,882,539 bytes, 56 % of the slot (unmodified upstream: 1,871,707); globals 77,504 bytes. Launcher: heap 197 to 202 KB free, PSRAM 7,971 KB free. During an approval: not yet measured | slot is 3,342,336 bytes |
 | M5 | one RPC request over the hotspot | `[bal] fetch <ms> ms` | | `balance_poll_s`, HTTP timeouts |
 | M6 | loop-task stack high-water mark during a signature and during an HTTPS request | `uxTaskGetStackHighWaterMark(NULL)` logged once a minute in the dev profile | | if under 1 KB free, raise the loop stack with `SET_LOOP_TASK_STACK_SIZE(16 * 1024)` in `os.ino` (a new hook) |
 

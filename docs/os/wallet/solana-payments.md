@@ -52,6 +52,13 @@ Fixed program ids (32 raw bytes each, constants in `sol_tx.c`):
 | 11 | the Memo instruction has zero accounts and 1 or more bytes of valid UTF-8 data | `SOL_TX_ERR_MEMO` |
 | 12 | no bytes remain after the last instruction | `SOL_TX_ERR_TRAILING` |
 
+How the table is applied (fixed by `sol_tx.c` and `test_sol`):
+
+- Rules are checked in the order the bytes are parsed; rules 8, 9, 10 and 12 are checked after both instructions have been read. A message that ends early is `SOL_TX_ERR_TRUNCATED` wherever it ends.
+- Rule 3: `SOL_TX_ERR_HEADER` when the three header bytes are not `1, 0, 2` or `1, 0, 3`; `SOL_TX_ERR_ACCOUNTS` when the key count is not the third header byte plus 3.
+- A compact-u16 that is not the shortest encoding gives the error of the field it encodes: `ACCOUNTS` (key count), `IX_COUNT`, `IX_ACCOUNTS`, `IX_DATA` (the Token instruction's data length), `MEMO` (the Memo instruction's account count or data length).
+- Rule 5: with 6 keys the two instructions may come in either order, Token then Memo or Memo then Token.
+
 Why so strict: a second instruction can do anything (close the account, approve a delegate, pay a priority fee out of SOL). The badge is a payment key, not a general wallet, so everything it has no screen for is refused.
 
 Changes to the reference `sol.h`:
@@ -95,7 +102,9 @@ Apps cannot pack a u64 (Lua integers are 32-bit), so the firmware builds the mes
    Key order: payer; source and destination in ascending raw-byte order; then the readonly keys
    (mint, Token program, and the Memo program if memo_len > 0) in ascending raw-byte order.
    Returns the length, or 0 if cap is too small, source == destination, or memo is not valid UTF-8.
-   Guarantee: sol_tx_decode_transfer() accepts the result and returns the same fields. */
+   Guarantee: sol_tx_decode_transfer() accepts the result and returns the same fields.
+   To keep that guarantee it also returns 0 when amount == 0, when memo_len > 0 with a NULL memo, and
+   when the message would exceed SOL_TX_MSG_MAX (a memo over 982 bytes). */
 size_t sol_tx_build_transfer(const uint8_t payer[32], const uint8_t source[32],
                              const uint8_t destination[32], const uint8_t mint[32],
                              const uint8_t blockhash[32], uint64_t amount, uint8_t decimals,

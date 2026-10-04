@@ -66,7 +66,7 @@ bool readEd25519PublicKey(uint32_t objectId, uint8_t publicKey[32]);
 // Ed25519 hashes inside the part, so the message travels whole rather than as a
 // digest - hence a ceiling, set well above the ~90-byte registration challenge
 // that is the only thing the badge actually signs.
-constexpr size_t MAX_SIGN_MESSAGE_BYTES = 180;
+constexpr size_t MAX_SIGN_MESSAGE_BYTES = 242;  // VK: H12 (was 180). 242 + 12 bytes of TLV = 0xFE, the largest single-byte Lc
 bool signEd25519(uint32_t objectId, const uint8_t *message, size_t length, uint8_t signature[64]);
 
 }  // namespace se050_apdu

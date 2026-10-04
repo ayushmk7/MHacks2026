@@ -33,9 +33,12 @@ Recipes for every kind of addition and removal: [guides/extending.md](guides/ext
 
 ## Status
 
-- **Only unmodified upstream has run on a badge so far** (WP00, 2026-10-03: builds, flashes, boots; that badge's key is a software key because its SE050 refused the applet select). Statements about upstream were verified by reading its source at commit `812b8c7`. Statements marked `[UNVERIFIED]` need hardware and always name a fallback.
-- `os/` holds unmodified upstream (commit `f7a05d7`), which compiles in place ([build directory](guides/build-flash-provision.md#build-directory)). None of our own firmware source exists yet; WP01 adds `src/vk/` and the hooks.
-- Host-tested starting code exists in [`reference/code/`](reference/code/): the Solana message decoder and builder, base58, SHA-256, their test and vectors. From `docs/os/reference/code/`:
+- **The fork runs on a badge** (WP01 to WP03, 2026-10-03). `os/` is upstream plus every hook (H1 to H17, H19, H20, H21) and the `src/vk/` skeleton: every header of the stub contract, with stub bodies. The dev build compiles in place (1,882,539 bytes), flashes, boots to `[os] ready`, logs `[vk] registries: …` and behaves like upstream: the `hello` sample is pushed over serial, runs, exits, and the launcher repaints.
+- **The unattended test loop works.** `scripts/vkdev.py` reads the badge's state, injects button presses, takes screenshots, pushes apps and resets the badge over USB serial; `test/device/t_boot.py` passes (T-BOOT1). The pure wallet code in `src/vk/wallet/pure/` passes its four host suites (`test/host/run.sh`).
+- **Nothing of the wallet works yet.** Config, signer, approval, clock, router, permissions and notifications are stubs until their work packages land (Batch 2 onwards); `VKINFO` answers `OK profile=dev api=2` and nothing more.
+- The development badge's key is a software key (`5vpmgLuC…`; the full key is in the [tracking notes](roadmap/implementation-plan.md#tracking)). Its SE050 refused the applet select in WP00 and is now kept off the I²C bus at boot by hook H21 (finding F17). **Its hardware buttons do not work until someone removes power once**: at the WP01 flash the I²C clock line was still held low (`[btn] TCA9534 init FAILED`). The tests do not need them; they inject buttons over serial.
+- Statements about upstream were verified by reading its source at commit `812b8c7`. Statements marked `[UNVERIFIED]` need hardware and always name a fallback.
+- The starting code for the pure modules is kept unchanged in [`reference/code/`](reference/code/): the Solana message decoder and builder, base58, SHA-256, their test and vectors. The firmware's copies in `os/src/vk/wallet/pure/` have since been changed as [solana-payments](wallet/solana-payments.md) says. From `docs/os/reference/code/`:
   ```bash
   cc -std=c99 -Wall -Wextra -Wpedantic -O2 -DSOL_HOST_SHA256 \
      sol_b58.c sol_curve.c sol_pda.c sol_tx.c sol_sha256.c test_sol.c -o /tmp/test_sol && /tmp/test_sol
@@ -101,15 +104,15 @@ Everything marked `[UNVERIFIED]`, with the fallback and the package that settles
 | # | Item | Fallback | Settled by |
 |---|---|---|---|
 | U1 | ~~The toolchain builds upstream~~ settled: core 3.3.12 builds it | — | WP00, done |
-| U2 | Self-registering statics survive linking | `src/vk/registry_anchor.cpp` | WP01 |
+| U2 | ~~Self-registering statics survive linking~~ settled: they do (a service in an unreferenced file ran at boot); no anchor file is needed | — | WP01, done |
 | U3 | Ed25519 speed on the ESP32-S3 (TweetNaCl) | Monocypher backend | WP51 (M2) |
 | U12 | Upstream's 7-frame ESP-NOW queue loses frames while a signature blocks the loop | re-challenge; amber when presence is unknown | WP51 (M1) |
 | U4 | SE050 signs a 214-byte message with the limit raised to 242 | software key (H18) | WP50; blocked on this badge, whose SE050 refuses select |
-| U13 | Which SE050 operation latches the I²C clock low (finding F17) | H21 quarantines the SE050 entirely | needs a power cycle, then one more debugging session |
+| U13 | Which SE050 operation latches the I²C clock low (finding F17) | H21 keeps the SE050 off the bus at boot; it does not cover every path to the part ([H21](architecture/upstream-hooks.md#h21--se050-quarantine-provisional)) | needs a power cycle, then one more debugging session |
 | U5 | SNTP sync callback exists in the installed core | poll the sync status | WP20 |
 | U6 | The hotspot lets badges and the laptop reach each other, and passes SNTP | clock floor from records (amber at best) | WP20, WP21 |
 | U7 | Presence round-trip time | `presence_ms` from M1; presence shown amber if unusable | WP51 (M1) |
 | U8 | Loop-task stack is sufficient with TLS + signing | raise it with a new hook | WP51 (M6) |
 | U9 | Authority keypair file is 64 bytes with the public key last | `--issuer <base58>` | WP10 |
-| U10 | ~~USB auto-reset~~ settled: works; upload needs 460800 baud | — | WP00, done |
+| U10 | ~~USB auto-reset and serial control~~ settled: auto-reset into the bootloader works; upload needs 460800 baud; opening the port with `vkdev.py` does not reset the badge; its RTS pulse does (ready again after about 8 s) | — | WP00 and WP01, done |
 | U11 | Upstream's licence | keep the fork private; ask the author | before publishing |

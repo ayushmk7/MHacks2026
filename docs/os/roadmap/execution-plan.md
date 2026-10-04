@@ -197,8 +197,17 @@ A test is `test/device/t_<name>.py` with `def run(badge):` (or `def run(badge, b
 `test/device/common.py` (1D): `b58enc`, `b58dec`, `load_vectors()`, `provision_test(badge)`, `to_launcher(badge)`, `launch(badge, app_id)`.
 
 - `provision_test`: if provisioned, `VKRESET` and an injected hold; then `VKSET` every key the firmware lists in `VKKEYS` with the values in section 1, then `VKCOMMIT`.
-- `to_launcher`: `stop`, dismisses upstream's error screen with `b`.
-- `launch`: `run`, and if a modal with title `Allow app` appears, `btn a hold 1300`.
+- `to_launcher`: cancels an open approval, then `stop`, `b`, `stop`. A single `b` is not enough: it dismisses upstream's error screen, but on the launcher it opens Settings, and `VKSTATE` cannot tell the two apart. A `stop` with nothing running always puts the launcher back.
+- `launch`: `run`, and if a modal with title `Allow app` appears, an injected hold of `VKGET hold_ms` + 300 ms (1300 under test provisioning).
+
+As built in Batch 1 (integrator I1, confirmed on the badge):
+
+- `btn()` blocks for the tap or hold time plus 150 ms, so a `shot()` sent straight after sees the key; `btn(..., wait=False)` returns at once.
+- `shot()` takes about 1 s; `reset()` returns about 8 s after the pulse; opening the port does not reset the badge.
+- `common.py` also has `test_config()` and `hold_ms(badge)`. `vectors.json` has `tx.mint` (base58), which the test provisioning in section 1 uses.
+- Routes are iterated with `router::firstRoute()` or `Registered<EspnowRoute>::first()`, never `EspnowRoute::first()` (the struct's field `first` hides it).
+- `approval.h` removes the Arduino core's `DISABLED` macro; a file that names `SelectRule::DISABLED` includes `approval.h` itself.
+- Hook H21 is applied (`VK_SE050_QUARANTINE 1`); the expected hook list in every later check includes H21.
 
 `test/device/fixtures.py` (3C): `build_transfer_msg`, `make_record`, `make_req`, `case_lua(dict)`.
 

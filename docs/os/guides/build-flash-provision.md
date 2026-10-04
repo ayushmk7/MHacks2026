@@ -8,9 +8,16 @@ From an empty laptop to four provisioned badges. macOS is shown; Linux differs o
 - **Upload must use 460800 baud.** At the default 921600 the CH340 link fails after the baud change ("Unable to verify flash chip connection"). Use the FQBN with `,UploadSpeed=460800` for `arduino-cli upload` (`scripts/build.sh` does).
 - The badge boots to `[os] ready` and answers `PING` with `OK pong`. Opening the serial port does not reset the badge.
 - On this badge the SE050 answers its ATR but refuses the applet select (`[se050] link/select failed (no ack on write)`), so the identity is a **software key** (`[id] 5vpmgLuC, software (878 ms)`). Key generation plus one sign and one verify took 878 ms in total, so TweetNaCl is well under a second per operation here.
-- The log showed `[i2c] bus is held low ... recovering` and `[btn] TCA9534 stopped answering ... re-probing` shortly after boot; upstream re-probes by itself. Watch for it if buttons seem dead.
+- The log showed `[i2c] bus is held low ... recovering` and `[btn] TCA9534 stopped answering ... re-probing` shortly after boot. This is finding F17 ([baseline](../architecture/upstream-baseline.md#findings-that-shape-the-design)): upstream's recovery does not release a held clock line, and the buttons stay dead until power is removed once.
 - The filesystem already held 6 upstream sample apps.
 - Python packages cannot be installed system-wide on this Mac (PEP 668): use the venv at `<repo>/.venv` (`.venv/bin/python`), which has `pyserial` and `esptool`.
+
+WP01 to WP03 were run on the same badge on 2026-10-03, with the fork (all hooks, the `src/vk/` skeleton, the dev tools):
+
+- `scripts/build.sh dev --upload /dev/cu.usbserial-10` works as written below: pre-flash checks, compile, upload at 460800 baud with the same `--build-path`, hard reset. Image 1,882,539 bytes.
+- `vkdev.py` opens the port without resetting the badge, and its `reset` (an RTS pulse) reboots it; `[os] ready` comes about 8 s after the pulse.
+- The boot log has `[vk] registries: services=0 commands=8 lua=0 status=0 domains=0 routes=0 permissions=0 patterns=0 native=0 config=1` and `[id] 5vpmgLuC, software (1 ms)`. With hook H21 it has no `[se050]` line and no `[i2c] scanning bus` line.
+- The I²C clock line was still held low at this flash (`[btn] bus not idle at first probe - recovering`, `[btn] TCA9534 init FAILED (will keep re-probing)`, then `[i2c] bus is held low (error 2: NACK on address) - recovering`). H21 does not release a bus that is already held: **remove power once** (USB out, battery off, a few seconds). After that the expected lines are `[btn] TCA9534 init ok` and no later `stopped answering`.
 
 ## Toolchain
 
@@ -107,9 +114,10 @@ arduino-cli upload  --fqbn "$UPLOAD_FQBN" --build-path "$FW/build/<profile>" -p 
 - **Sketch path:** the absolute path of `os/` (`"$FW"`), not `.`, so the script works from any directory. Its main file is `os.ino`.
 - **Build path:** `os/build/dev` for the dev profile and `os/build/release` for the release profile. Two directories, so switching profile never reuses the other profile's objects, and a release upload can never send a dev image. `arduino-cli` accepts a build path inside the sketch folder: it compiles only the sketch's top-level files and `src/`, so `build/` is not picked up.
 - **No symlink is needed.** The space in the repository path breaks neither the compile nor the link; quoting the two paths is enough.
-- **Upload** must use the FQBN with `,UploadSpeed=460800` (`$UPLOAD_FQBN`) and the same `--build-path`, so it sends the image that was just built. At the default 921600 baud the upload fails on this badge's CH340. (The compile line was run as written; the upload line's `--build-path` was checked against `arduino-cli upload --help` only, because the port was in use. The first integrator to flash confirms it.)
+- **Upload** must use the FQBN with `,UploadSpeed=460800` (`$UPLOAD_FQBN`) and the same `--build-path`, so it sends the image that was just built. At the default 921600 baud the upload fails on this badge's CH340. Both lines were run as written in WP01 (2026-10-03): the upload sends `build/<profile>/os.ino.bin` and resets the badge.
 - `build/` is ignored by git (upstream's `os/.gitignore` and the repository's `.gitignore` both list it). Never commit it.
-- Measured: a first build into an empty build directory took 49 s (the ESP32 core itself was already in `arduino-cli`'s cache from WP00; with a cold cache expect about 4 minutes), an unchanged rebuild 14 s. Image: 1,871,707 bytes (11 % of the 16 MB flash), globals 76,984 bytes; identical to the WP00 build from the scratch path.
+- Measured in WP01, with `src/vk/` added: a build after source changes takes 65 to 85 s (most of the sketch is recompiled), a rebuild with nothing changed about 20 s including the host tests of check 5, and the upload 35 s (31 s of it writing 1.88 MB at 460800 baud). The line `Maximum is 16777216 bytes` in `arduino-cli`'s size summary is the flash size, not the application slot, which is 3,342,336 bytes.
+- Measured in WP00, unmodified upstream: a first build into an empty build directory took 49 s (the ESP32 core itself was already in `arduino-cli`'s cache from WP00; with a cold cache expect about 4 minutes), an unchanged rebuild 14 s. Image: 1,871,707 bytes (11 % of the 16 MB flash), globals 76,984 bytes; identical to the WP00 build from the scratch path.
 
 ## Pre-flash checks
 
@@ -123,6 +131,12 @@ arduino-cli upload  --fqbn "$UPLOAD_FQBN" --build-path "$FW/build/<profile>" -p 
 | 4 | no file under `src/native_apps/` or `src/vk/features/` includes anything from `src/identity/` (the badge's own key comes from `vk::wallet::publicKey()`) | a feature or native app reaching for the key |
 | 5 | `test/host/run.sh` passes | the pure code changed behaviour |
 | 6 | release only: `vk_profile.h` defines `VK_PROFILE_DEV 0` | a dev build about to go on a judge badge |
+
+How the script reads the table:
+
+- Check 1 runs the grep in [upstream-hooks](../architecture/upstream-hooks.md#checking-the-hooks). A row that names a range (H8: H8a–H8f) stands for those ids; a row whose purpose starts with `optional:` (H18) may be absent from the source.
+- Checks 2 and 3 scan `os.ino` and `src/` only (not `test/`), and ignore text after `//` on a line, so a comment may name these calls. Check 3 also skips the one line that defines the macro, `#define VK_SIGN_DOMAIN(` in `src/vk/wallet/signer.h`.
+- Check 5 can be skipped with `VK_PREFLASH_SKIP_HOST_TESTS=1` when running the script by hand; `scripts/build.sh` never sets it.
 
 ## Installing apps
 

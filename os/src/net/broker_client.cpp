@@ -10,6 +10,7 @@
 #include "../badge_log.h"
 #include "../identity/identity.h"
 #include "../settings.h"
+#include "../vk/wallet/signer.h"  // VK: H10
 #include "ble_bridge.h"
 #include "broker_ca.h"
 #include "cert_store.h"
@@ -510,7 +511,7 @@ void submitRegistration() {
   // stray newline here would produce a valid signature over the wrong bytes,
   // which fails as "bad_signature" and looks like a broken key.
   const String message = "solana-badge-register:" + pubkey + ":" + sNonce;
-  const String signature = identity::signBase64(message);
+  const String signature = vk::wallet::signStoreRegistration(message);  // VK: H10
   if (signature.length() == 0) {
     sNonce = "";
     fail("cannot register", "identity refused to sign");

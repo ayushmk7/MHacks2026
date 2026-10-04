@@ -18,6 +18,7 @@
 #include "../net/push_server.h"
 #include "../net/wifi_mgr.h"
 #include "../settings.h"
+#include "../vk/ui/statusbar.h"  // VK: H20
 #include "theme.h"
 
 namespace shell {
@@ -1465,6 +1466,7 @@ void update() {
     }
   }
 
+  if (vk::ui::consumeShellRepaint()) sDirty = true;  // VK: H20
   if (!sDirty) return;
   sDirty = false;
 

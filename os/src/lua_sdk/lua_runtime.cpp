@@ -12,6 +12,9 @@
 #include "../net/ble_bridge.h"
 #include "../net/ble_mgr.h"
 #include "../net/espnow_mgr.h"
+#include "../vk/host/lifecycle.h"    // VK: H19
+#include "../vk/host/native.h"       // VK: H8a
+#include "../vk/host/permissions.h"  // VK: H8a
 #include "lua_bindings.h"
 
 extern "C" {
@@ -126,6 +129,7 @@ bool callGlobal(const char *name, int argCount, uint32_t budgetMs) {
   // Callers push arguments only after checking sState, so reaching here with a
   // dead state means nothing was pushed and there is nothing to clean up.
   if (sState == nullptr) return true;
+  if (vk::host::luaPaused()) { lua_pop(sState, argCount); return true; }  // VK: H19
 
   // Insert the message handler below the arguments so lua_pcall can find it.
   const int handlerIndex = lua_gettop(sState) - argCount + 1;
@@ -206,6 +210,14 @@ void extendDeadline(uint32_t extraMs) {
 }
 
 bool launch(const String &appId) {
+  { String vkError; if (!vk::host::preLaunch(appId, vkError)) {                                          // VK: H8a
+      if (!running()) sLastError = vkError; else badge_log::tagf("lua", "%s", vkError.c_str());          // VK: H8a
+      return false; } }                                                                                  // VK: H8a
+  if (vk::host::native::exists(appId)) {                                                                // VK: H8a
+    stop(); sLastError = ""; sCurrentApp = appId; sLastApp = appId; sLastFrameAt = millis();             // VK: H8a
+    if (vk::host::native::start(appId)) return true;                                                     // VK: H8a
+    sCurrentApp = ""; sLastError = "native app failed to start"; return false;                           // VK: H8a
+  }                                                                                                      // VK: H8a
   if (!app_store::exists(appId)) {
     sLastError = "no such app: " + appId;
     badge_log::tagf("lua", "%s", sLastError.c_str());
@@ -271,6 +283,12 @@ bool launch(const String &appId) {
 }
 
 void stop() {
+  vk::host::onAppStopping(sCurrentApp);  // VK: H8b
+  if (vk::host::native::active()) {      // VK: H8b
+    sTeardownActive = true; vk::host::native::stop(); sTeardownActive = false;                          // VK: H8b
+    ble_mgr::clearLineHandler(); ble_bridge::reset(); mic::disable(); leds::stopAnimation(); leds::off();  // VK: H8b
+    sCurrentApp = ""; return;            // VK: H8b
+  }                                      // VK: H8b
   if (sState == nullptr) {
     sCurrentApp = "";
     return;
@@ -287,7 +305,7 @@ void stop() {
   // Radio handlers hold std::function objects that capture the Lua state.
   // Clearing them before lua_close() is what keeps a late ESP-NOW packet from
   // reaching a freed VM.
-  espnow_mgr::clearReceiveHandler();
+  // VK: H9 the router owns the ESP-NOW handler for the life of the firmware (upstream finding F1)
   ble_mgr::clearLineHandler();
 
   // The phone's bridge claim goes with the app, for the same reason the push
@@ -349,13 +367,18 @@ bool processRequests() {
   return acted;
 }
 
-bool running() { return sState != nullptr; }
+bool running() { return sState != nullptr || vk::host::native::active(); }  // VK: H8c
 const String &currentApp() { return sCurrentApp; }
 const String &lastApp() { return sLastApp; }
 const String &lastError() { return sLastError; }
 void clearError() { sLastError = ""; }
 
 bool update() {
+  if (vk::host::native::active()) {                                    // VK: H8d
+    const uint32_t vkNow = millis();                                   // VK: H8d
+    vk::host::native::update((vkNow - sLastFrameAt) / 1000.0f);        // VK: H8d
+    sLastFrameAt = vkNow; return true;                                 // VK: H8d
+  }                                                                    // VK: H8d
   if (sState == nullptr) return true;
 
   const uint32_t now = millis();
@@ -377,6 +400,7 @@ bool update() {
 }
 
 void dispatchButton(uint8_t key, bool pressed) {
+  if (vk::host::native::active()) { vk::host::native::button(key, pressed); return; }            // VK: H8e
   if (sState == nullptr) return;
   lua_pushstring(sState, buttons::shortName(key));
   lua_pushboolean(sState, pressed);
@@ -384,6 +408,7 @@ void dispatchButton(uint8_t key, bool pressed) {
 }
 
 void dispatchEspnow(const uint8_t *mac, const uint8_t *data, size_t length, int8_t rssi) {
+  if (vk::host::native::active()) { vk::host::native::espnow(mac, data, length, rssi); return; } // VK: H8f
   if (sState == nullptr) return;
   lua_pushstring(sState, espnow_mgr::macToString(mac).c_str());
   lua_pushlstring(sState, (const char *)data, length);

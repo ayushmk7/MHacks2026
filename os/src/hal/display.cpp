@@ -5,6 +5,7 @@
 #include "../net/espnow_mgr.h"
 #include "../net/wifi_mgr.h"
 #include "../ui/theme.h"
+#include "../vk/ui/statusbar.h"  // VK: H14
 #include "power.h"
 
 namespace display {
@@ -218,6 +219,7 @@ void statusBar(const char *title) {
   }
   if (espnow_mgr::enabled()) strcat(radios, "NOW ");
   snprintf(right, sizeof(right), "%s%d%%", radios, (int)power::percent());
+  vk::ui::statusbar::draw(width() - 8 - (int)sCanvas.textWidth(right) - 8);  // VK: H14
   textRight(right, width() - 8, 7, theme::MUTED, 1);
   sDirty = true;
 }

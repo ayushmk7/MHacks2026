@@ -143,7 +143,9 @@ size_t vk_card_build(const vk_card_t *in, uint8_t *out, size_t cap);
 size_t vk_card_signed_bytes(const vk_card_t *card, uint8_t out[113]);
 ```
 
-Parsers are strict: exact length, `name_len` in range, printable ASCII names, known `rail`. Host suite `test_frames` round-trips every type and refuses each truncated or over-long copy.
+Parsers are strict: exact length, `name_len` in range, printable ASCII names, known `rail`. Two more refusals keep build-after-parse byte-identical: a RESULT `status` above 2, and a REQ `currency` that is not 1 to 4 printable ASCII characters followed only by NUL bytes.
+
+The header also defines the length constants (`VK_FRAME_MAX` 240, `VK_REQ_MIN_LEN` 127, `VK_REQ_MAX_LEN` 158, `VK_CHAL_LEN` 60, `VK_PROOF_LEN` 76, `VK_PROOF_SIGNED_LEN` 56, `VK_RESULT_LEN` 77, `VK_HELLO_MAX_LEN` 85, `VK_CARD_MAX_LEN` 181), `VK_RAIL_SOLANA` / `VK_RAIL_BANK`, `VK_RESULT_OK` / `REJECTED` / `FAILED`, and the signing prefixes `VK_PREFIX_PAY_REQ` (`"pay-req:"`), `VK_PREFIX_PAY_PROOF` (`"pay-proof:"`) and `VK_PREFIX_CONTACT` (`"contact:"`). A REQ is signed over its prefix plus `frame[0..signed_len)`, a PROOF over its prefix plus `vk_proof_signed_bytes`, a card over its prefix plus `vk_card_signed_bytes`. Host suite `test_frames` round-trips every type and refuses each truncated or over-long copy.
 
 ## Router
 
@@ -161,6 +163,10 @@ struct EspnowRoute : Registered<EspnowRoute> {
 };
 #define VK_ESPNOW_ROUTE(ident, first, last, handler) \
   static vk::host::router::EspnowRoute vk_route_##ident(first, last, #ident, handler)
+
+// The field `first` hides the registry's static first(): EspnowRoute::first() does not compile.
+// Iterate with: for (auto *r = firstRoute(); r; r = r->next())
+inline EspnowRoute *firstRoute() { return Registered<EspnowRoute>::first(); }
 
 void install();                                                     // hook H3
 bool send(const uint8_t *mac, const uint8_t *frame, size_t len);    // mac nullptr = broadcast

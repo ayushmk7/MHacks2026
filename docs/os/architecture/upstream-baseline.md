@@ -1,6 +1,6 @@
 # Upstream baseline
 
-What Solana OS already provides, with the exact names our code calls. Every fact here was read from the upstream source at commit `812b8c7` of <https://github.com/spacemandev-git/solana-defcon-badge-26>, folder `firmware/solana-os/`. Nothing here has been run on a badge by us.
+What Solana OS already provides, with the exact names our code calls. Every fact here was read from the upstream source at commit `812b8c7` of <https://github.com/spacemandev-git/solana-defcon-badge-26>, folder `firmware/solana-os/`. Since WP01 (2026-10-03) the fork built from this source runs on a badge: it boots, the launcher and settings screens work, and upstream's `hello` sample app is pushed over serial, runs and exits. Facts below that were only read, not exercised, stay as read.
 
 Use this instead of guessing an upstream function name. If something you need is not listed, read the upstream file named in the table and add it here.
 

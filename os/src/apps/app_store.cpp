@@ -4,6 +4,7 @@
 
 #include "../badge_log.h"
 #include "../config.h"
+#include "../vk/host/native.h"  // VK: H11
 
 namespace app_store {
 namespace {
@@ -231,15 +232,16 @@ void refresh() {
   badge_log::tagf("fs", "%u app(s) installed", (unsigned)sCount);
 }
 
-size_t count() { return sCount; }
+size_t count() { return sCount + vk::host::native::count(); }  // VK: H11
 
 bool at(size_t index, Info &out) {
-  if (index >= sCount) return false;
+  if (index >= sCount) return vk::host::native::infoAt(index - sCount, out);  // VK: H11
   out = sApps[index];
   return true;
 }
 
 bool byId(const String &id, Info &out) {
+  if (vk::host::native::infoById(id, out)) return true;  // VK: H11
   for (size_t i = 0; i < sCount; ++i) {
     if (sApps[i].id == id) {
       out = sApps[i];
@@ -250,6 +252,7 @@ bool byId(const String &id, Info &out) {
 }
 
 bool exists(const String &id) {
+  if (vk::host::native::exists(id)) return true;  // VK: H11
   return isValidId(id) && sMounted && LittleFS.exists(directory(id));
 }
 

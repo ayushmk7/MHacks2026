@@ -39,6 +39,7 @@
 #include "src/settings.h"
 #include "src/ui/boot.h"
 #include "src/ui/shell.h"
+#include "src/vk/vk.h"  // VK: H1
 
 namespace {
 
@@ -90,9 +91,8 @@ void pumpSerialConsole() {
     const char c = (char)value;
     if (c == '\n') {
       if (sSerialLine.length()) {
-        push_protocol::handleLine(sSerialLine, [](const String &reply) {
-          badge_log::println(reply.c_str());
-        });
+        const push_protocol::Reply reply = [](const String &text) { badge_log::println(text.c_str()); };  // VK: H6
+        if (!vk::serial::handleLine(sSerialLine, reply)) push_protocol::handleLine(sSerialLine, reply);   // VK: H6
       }
       sSerialLine = "";
     } else if (c != '\r') {
@@ -131,10 +131,7 @@ void startRadios() {
   // ESP-NOW frames reach the running app; with no app up they are simply
   // dropped, since the beacons that drive the radar are handled inside
   // espnow_mgr and never come through here.
-  espnow_mgr::onReceive(
-      [](const uint8_t *mac, const uint8_t *data, size_t length, int8_t rssi) {
-        if (runtime::running()) runtime::dispatchEspnow(mac, data, length, rssi);
-      });
+  vk::host::router::install();  // VK: H3
 
   // The app-store client is a radio consumer rather than a radio: begin() only
   // reads settings and picks up any stored token, and the first request waits
@@ -195,8 +192,8 @@ void setup() {
   badge_log::tagf("btn", "TCA9534 init %s",
                   buttons::begin() ? "ok" : "FAILED (will keep re-probing)");
   power::begin();
-  se050::test();
-  badge_i2c::scan();
+  if (!VK_SE050_QUARANTINE) se050::test();       // VK: H21
+  if (!VK_SE050_QUARANTINE) badge_i2c::scan();   // VK: H21
 
   // Deliberately its own stage rather than part of "Peripherals": it must run
   // after se050::test(), because whether the secure element answered decides
@@ -208,6 +205,8 @@ void setup() {
 
   boot::progress("Runtime", "starting Lua", 65);
   runtime::begin();
+  boot::progress("Wallet", "config, keys, stores", 75);  // VK: H2
+  vk::begin();                                           // VK: H2
 
   boot::progress("Radios", "wi-fi, esp-now, bluetooth", 85);
   // Hand the RNG back before the radios start: once Wi-Fi/BT are up the RF
@@ -270,17 +269,21 @@ void loop() {
   // loop next to the server rather than in a task of its own - see the note at
   // the top of broker_client.h.
   broker::update();
+  vk::update();  // VK: H5
 
   pumpSerialConsole();
 
   // --- App / shell --------------------------------------------------------
-  routeButtons();
-
-  if (runtime::running()) {
-    runtime::update();
-  } else {
-    shell::update();
-  }
+  if (vk::modalActive()) {     // VK: H4
+    vk::modalUpdate();         // VK: H4
+  } else {                     // VK: H4
+    routeButtons();
+    if (runtime::running()) {
+      runtime::update();
+    } else {
+      shell::update();
+    }
+  }                            // VK: H4
 
   // Launch and stop requests are applied here, between frames, never inside a
   // Lua callback - see the note in lua_runtime.h.
@@ -291,7 +294,7 @@ void loop() {
   // skip it. The badge would drop back to the launcher with no explanation and
   // the error would sit in runtime::lastError() until some unrelated app exited
   // and wore the blame for it.
-  const bool lifecycleRan = runtime::processRequests();
+  const bool lifecycleRan = vk::modalActive() ? false : runtime::processRequests();  // VK: H4
 
   if ((sAppWasRunning || lifecycleRan) && !runtime::running()) {
     // The app exited or errored. Peripheral cleanup already happened inside

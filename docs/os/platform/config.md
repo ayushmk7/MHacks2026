@@ -128,6 +128,8 @@ python3 os/scripts/vkdev.py --port /dev/cu.usbserial-10 provision \
 
 What it does, in order: `VKINFO` (refuses if already provisioned unless `--force`); reads `RPC_URL`, `HACK_MINT`, `HACK_SYMBOL`, `HACK_DECIMALS` and `AUTHORITY_KEYPAIR` from the env file; takes the issuer public key as the last 32 bytes of the 64-byte keypair file [UNVERIFIED format; override with `--issuer <base58>`]; sends `VKSET` for `issuer_key`, `tokens`, `rpc_url`, `listener_url`; sends `VKWIFI <ssid>|<password>`; sends `VKCOMMIT`; with `--autostart <id>`, sets upstream's autostart app with `VKAUTOSTART <id>`; prints the badge's public key and key location for `dashboard/server/config/badges.json`.
 
+Details of the tool (WP03): `--cap` and `--max` are required. `listener_url` is sent only when `--listener` is given. The keypair file is the JSON array of 64 numbers that the dashboard writes; a raw 64-byte file is also accepted. With `--force` on a provisioned badge each secure key answers `OK pending`, and the tool waits up to 130 s, polling `VKGET`, while a person holds SELECT on the badge. With an empty `HACK_MINT` in the env file the tool stops with a message (run `npm run devnet:setup` first).
+
 Four badges are four runs of that one command with different `--port` values.
 
 ### By hand

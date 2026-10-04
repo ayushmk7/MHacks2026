@@ -2,6 +2,10 @@
 
 #include "../badge_log.h"
 #include "badge_i2c.h"
+#include "../vk/vk_build.h"                     // VK: H17
+#if VK_TEST_HOOKS                                // VK: H17
+#include "../vk/features/devtools/devtools.h"   // VK: H17
+#endif                                           // VK: H17
 
 namespace buttons {
 namespace {
@@ -194,6 +198,9 @@ void update() {
     }
   }
 
+#if VK_TEST_HOOKS                                                           // VK: H17
+  vk_dev_apply_injected_buttons(&sDownMask, &sPressedMask, &sReleasedMask); // VK: H17
+#endif                                                                      // VK: H17
   for (uint8_t i = 0; i < BUTTON_COUNT; ++i) {
     const uint8_t bit = (uint8_t)(1U << i);
     if (sPressedMask & bit) {

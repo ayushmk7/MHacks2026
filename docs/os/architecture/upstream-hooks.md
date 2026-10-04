@@ -6,7 +6,7 @@ Every change Badge OS makes to a Solana OS file. This list is complete: if an ed
 
 1. A hook is the smallest edit that hands control to code under `src/vk/`. Logic never goes in an upstream file.
 2. Every changed or added line ends with `// VK: H<n>`.
-3. `os/UPSTREAM-HOOKS.md` is a copy of the table in this file. `scripts/preflash-check.sh` compares the hook ids found by `grep -rn "// VK: H" os.ino src --include=*.ino --include=*.cpp --include=*.h | grep -v "src/vk/"` with that table and fails on any difference.
+3. `os/UPSTREAM-HOOKS.md` is a copy of the table in this file. `scripts/preflash-check.sh` compares the hook ids found by `grep -rn "// VK: H" os.ino src | grep -v "^src/vk/"` with that table and fails on any difference. The exclusion is anchored to the start of the line, which is the file path: the H1 line itself contains the text `src/vk/` and an unanchored exclusion would drop it. A table row whose purpose names a range of sites (H8: "H8a–H8f") stands for those ids; a row whose purpose starts with `optional:` (H18) may be absent from the source.
 4. A new hook needs a new id here first. Prefer a registry ([overview](overview.md#6-self-registration)) over a new hook: most additions need none.
 5. With the WP01 stubs behind them, the hooks leave upstream's behaviour unchanged, so the fork boots like upstream after work package WP01. Two stubs are not empty: `router::install()` must install a handler that forwards to `runtime::dispatchEspnow`, and `signStoreRegistration()` must forward to the signer. Three hooks change behaviour on purpose: H9 (fixes finding F1), H12 (a larger SE050 limit) and H16 (API version 2).
 
@@ -137,7 +137,7 @@ In `openBadge()`, directly after `openBle(L);`, and add `#include "../vk/host/lu
 
 ### H8 — pre-launch and native apps
 
-All in `src/lua_sdk/lua_runtime.cpp`. Add `#include "../vk/host/native.h"` and `#include "../vk/host/permissions.h"` (tagged H8).
+All in `src/lua_sdk/lua_runtime.cpp`. Add `#include "../vk/host/native.h"` and `#include "../vk/host/permissions.h"`, tagged `// VK: H8a`: the source has no plain `H8` id, only H8a to H8f.
 
 H8a, first lines of `launch()`, before the `app_store::exists` check:
 
@@ -336,7 +336,18 @@ Until it is proven, the fork does not address the SE050 at boot at all. In `setu
   if (!VK_SE050_QUARANTINE) badge_i2c::scan();   // VK: H21
 ```
 
-`VK_SE050_QUARANTINE` is defined in `src/vk/vk_build.h` and is 1. With it set, upstream's identity code sees no secure element and uses (or creates) a software key; nothing else in the firmware addresses `0x48`. Set it to 0 only on a badge whose SE050 is known to work.
+`VK_SE050_QUARANTINE` is defined in `src/vk/vk_build.h` and is 1; `vk.h` includes that header, so `os.ino` sees the macro through hook H1. Set it to 0 only on a badge whose SE050 is known to work.
+
+What it achieves, checked on the development badge on 2026-10-03 (WP01): that badge already holds a **software** identity, so `identity::load()` returns before any SE050 call, and with these two edits nothing addresses `0x48` during boot. The boot log has no `[se050]` line and no `[i2c] scanning bus` line, and the identity line is `[id] 5vpmgLuC, software (1 ms)`.
+
+What it does not cover. This is read from the upstream source and has not been exercised: `se050_t1::begin()` sends the soft reset and the applet select whenever it is called, and none of its callers asks `se050::present()` first. With the two edits above the SE050 is still addressed by:
+
+- `identity::create()`, which runs on a badge with no stored identity (the first boot after `erase_flash`) and from Settings → Identity → New identity. `createOnSecureElement()` calls `se050_apdu::begin()`, and `createInSoftware()` calls `se050::randomBytes()`. Hook H18 skips only the first of the two.
+- `identity::load()` and `identity::sign()` on a badge whose stored identity is in the SE050.
+- Settings → Info with SELECT pressed, which calls `se050::test()` and `badge_i2c::scan()` (`shell.cpp`, `updateInfo()`).
+- a Lua app that calls `badge.se050.*` (`lib_sensors.cpp`).
+
+So the sentence "nothing addresses `0x48`" holds only for the boot of a badge with a stored software key. On the development badge, until the trigger is known: do not use New identity, do not erase the flash, do not press SELECT on Settings → Info, and do not run an app that uses `badge.se050`. Closing these paths needs more tagged lines (the narrowest place is the top of `se050_t1::begin()` and of `se050::test()`), which is a change to this hook and must be written here first.
 
 This hook does not release a bus that is already held: **the badge must be power-cycled once** (USB unplugged, battery off, a few seconds) after flashing a build that contains it. It is provisional: when the trigger is identified, replace it with the narrowest change that avoids that one operation and update this section.
 
@@ -344,7 +355,8 @@ This hook does not release a bus that is already held: **the badge must be power
 
 ```bash
 cd os
-grep -rn "// VK: H" os.ino src | grep -v "src/vk/" | sed -E 's/.*VK: (H[0-9]+[a-g]?).*/\1/' | sort -u
+grep -rn "// VK: H" os.ino src | grep -v "^src/vk/" | sed -E 's/.*VK: (H[0-9]+[a-z]?).*/\1/' \
+  | sort -u | sort -t H -k 2n | tr '\n' ' '
 ```
 
 Expected output: `H1 H2 H3 H4 H5 H6 H7 H8a H8b H8c H8d H8e H8f H9 H10 H11 H12 H13 H14 H15 H16 H17 H19 H20 H21`, plus `H18` if used.

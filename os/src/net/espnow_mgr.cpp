@@ -36,6 +36,7 @@ size_t sPeerCount = 0;
 portMUX_TYPE sPeerMux = portMUX_INITIALIZER_UNLOCKED;
 
 ReceiveHandler sHandler;
+uint32_t sLastRxMs = 0;  // VK: H13
 
 // The receive callback runs on the Wi-Fi task, not the main loop. Touching the
 // Lua state from there would be a data race, so app payloads are parked in this
@@ -45,6 +46,7 @@ struct QueuedPacket {
   uint8_t data[ESPNOW_MAX_PAYLOAD];
   uint16_t length;
   int8_t rssi;
+  uint32_t rxMs;  // VK: H13
 };
 constexpr size_t QUEUE_LEN = 8;
 QueuedPacket sQueue[QUEUE_LEN];
@@ -133,6 +135,7 @@ void onDataReceived(const esp_now_recv_info_t *info, const uint8_t *data, int le
     memcpy(slot.data, payload, payloadLen);
     slot.length = (uint16_t)payloadLen;
     slot.rssi = rssi;
+    slot.rxMs = millis();  // VK: H13
     sQueueHead = next;
   }
   portEXIT_CRITICAL_ISR(&sQueueMux);
@@ -252,6 +255,7 @@ void update() {
     }
     portEXIT_CRITICAL(&sQueueMux);
     if (empty) break;
+    sLastRxMs = packet.rxMs;  // VK: H13
     if (sHandler) sHandler(packet.mac, packet.data, packet.length, packet.rssi);
   }
 }
@@ -302,6 +306,7 @@ bool beaconEnabled() { return sBeacon; }
 
 void onReceive(ReceiveHandler handler) { sHandler = std::move(handler); }
 void clearReceiveHandler() { sHandler = nullptr; }
+uint32_t lastRxMs() { return sLastRxMs; }  // VK: H13
 
 String macToString(const uint8_t *mac) {
   char text[18];

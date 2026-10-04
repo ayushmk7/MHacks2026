@@ -17,7 +17,7 @@
 
 // The Lua SDK reports this. Bump the minor when bindings are added, the major
 // when an existing binding changes shape, so apps can gate on badge.API_VERSION.
-#define SOLANA_OS_API_VERSION 1
+#define SOLANA_OS_API_VERSION 2  // VK: H16
 
 // ============================================================================
 // Pin mapping - v1 badge

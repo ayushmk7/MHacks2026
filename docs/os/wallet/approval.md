@@ -77,6 +77,8 @@ void appStopping(const char *app_id);  // drop an open approval or an un-polled 
 }  // namespace vk::wallet
 ```
 
+`SelectRule::DISABLED` collides with a macro: the Arduino-ESP32 core defines `DISABLED` as `0x00` (an interrupt mode, in `esp32-hal-gpio.h`). `approval.h` includes `<Arduino.h>` and then removes the macro with `#undef DISABLED`, so the enum name works in every file that includes `approval.h`, in any include order (the core's header is guarded and cannot define it again). Nothing in upstream, the core's libraries or LovyanGFX uses the macro. A file that names `SelectRule::DISABLED` must include `approval.h` itself.
+
 `open` and `confirm` return false if an approval is already active. All strings are truncated to fit, always NUL-terminated, and restricted to printable ASCII (`0x20`–`0x7E`); any other byte is replaced by `?` before drawing.
 
 ## State machine

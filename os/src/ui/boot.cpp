@@ -6,6 +6,7 @@
 #include "../hal/display.h"
 #include "../hal/leds.h"
 #include "../settings.h"
+#include "../vk/ui/leds.h"  // VK: H15
 #include "theme.h"
 
 namespace boot {
@@ -70,6 +71,7 @@ void showSplash(const uint8_t *png, uint32_t length, uint16_t w, uint16_t h) {
 }  // namespace
 
 void progress(const char *step, const char *detail, uint8_t percent) {
+  if (vk::ui::bootScreen(step, detail, percent)) { tick(); return; }  // VK: H15
   auto &canvas = display::canvas();
   canvas.fillScreen(theme::BG);
 
