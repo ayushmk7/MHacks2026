@@ -24,4 +24,22 @@ bool load(const String &appId, Extra &out);     // reads /apps/<id>/app.ini via 
 // Returns false when a `min_api` line holds anything else (empty, a sign, letters); `out.min_api` is
 // then 4294967295, so a caller that ignores the result still refuses the app.
 bool parse(const String &iniText, Extra &out);
+
+// ---- Added for the launcher's folders (2026-10-04). Nothing above this line was changed. ----
+
+// The launcher keys of a manifest (app-host.md, "Manifest"). In app.ini for a Lua app; in the
+// optional last argument of BADGE_APP for a native app, with ';' between the keys
+// ("category=tests;hidden=1").
+//   category  the launcher folder the app is listed in: [a-z0-9_-], at most 16 characters, stored
+//             in lower case. Empty (the default, or a value with any other character): the app is
+//             listed at the top level.
+//   hidden    1 or "true": not listed on the launcher (or by badge.system.launcher_apps());
+//             it still starts over serial and with badge.system.launch(). Default 0.
+//   count     a number the launcher shows on the app's cell. One value is known: `notes`, the
+//             waiting notifications (the Inbox declares it). Anything else: no number.
+// `profile` (dev: not installed by push-apps.sh release) and `include` (another app's Lua files
+// are pushed with this one) are read by scripts/push-apps.sh only; the firmware ignores them.
+struct Launcher { String category; bool hidden = false; bool countNotes = false; };
+bool parseLauncher(const String &iniText, Launcher &out);   // pure; never fails: a bad value is the default
+bool loadLauncher(const String &appId, Launcher &out);      // /apps/<id>/app.ini; false when there is none
 }

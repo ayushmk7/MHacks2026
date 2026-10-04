@@ -47,24 +47,18 @@ local drawn = false                    -- a frame has been shown: a blocking fet
 local next_fetch = 0                   -- badge.millis() of the next fetch; nil: no more fetches
 local note = nil                       -- the line under the barcode
 
--- The apps of cfg.menu that are installed, in cfg.menu's order.
+-- Every app the launcher lists, in its order, folders flattened (badge.system.launcher_apps():
+-- hidden apps and test fixtures are not in it), except Home itself. No app is named here.
 local function load_menu()
-  local installed = {}
-  local ok, apps = pcall(system.apps)
-  if ok and type(apps) == "table" then
-    for i = 1, #apps do
-      local app = apps[i]
-      if type(app) == "table" and type(app.id) == "string" then installed[app.id] = app end
-    end
-  end
-  local me = system.current_app and system.current_app() or "home"
+  local ok, apps = pcall(system.launcher_apps)
+  if not ok or type(apps) ~= "table" then apps = {} end
+  local me = system.current_app and system.current_app() or ""
   menu = {}
-  for i = 1, #cfg.menu do
-    local id = cfg.menu[i]
-    local app = installed[id]
-    if app and id ~= me then
-      local name = type(app.name) == "string" and app.name ~= "" and app.name or id
-      menu[#menu + 1] = {id = id, name = name:upper()}
+  for i = 1, #apps do
+    local app = apps[i]
+    if type(app) == "table" and type(app.id) == "string" and app.id ~= me then
+      local name = type(app.name) == "string" and app.name ~= "" and app.name or app.id
+      menu[#menu + 1] = {id = app.id, name = name:upper()}
     end
   end
   sel = math.max(1, math.min(sel, #menu))

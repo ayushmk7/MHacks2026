@@ -385,4 +385,4 @@ class WalletSettings final : public badge::App {
 
 }  // namespace
 
-BADGE_APP(WalletSettings, "wallet_settings", "Wallet", "1.0.0", "");
+BADGE_APP(WalletSettings, "wallet_settings", "Wallet", "1.0.0", "", "hidden=1");   // opened from Settings > Wallet

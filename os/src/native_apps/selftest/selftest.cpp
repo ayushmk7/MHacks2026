@@ -367,4 +367,4 @@ class SelfTest final : public badge::App {
 
 }  // namespace
 
-BADGE_APP(SelfTest, "selftest", "Self test", "1.0.0", "");
+BADGE_APP(SelfTest, "selftest", "Self test", "1.0.0", "", "category=tests");

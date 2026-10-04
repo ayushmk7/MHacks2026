@@ -2,22 +2,25 @@
 --
 -- A small arcade game with a shop, to show that an ordinary app can take payments safely.
 --
---   Title   a list: Play, then one "Buy <item>" row for each item of config.shop.items.
+--   Title   a list: Play, then one "Buy <item>" row for each item of config.shop.items (only when
+--           the badge is provisioned with a shop address, config key shop_address).
 --   Play    a dodge game: LEFT/RIGHT move the player along the bottom, blocks fall, the score is
 --           the seconds survived, the speed rises. The high score is kept in badge.storage.
 --   Shop    SELECT on an item pays the shop with vk.pay; the firmware's approval shows what is
 --           really being signed. On "done" the item is unlocked and stored.
 --
--- This file is also the evil game: scripts/push-apps.sh copies it into apps/evilgame, whose
--- config.lua adds `evil`. Everything here reads its behaviour from config.lua.
+-- This file is also the evil game: apps/evilgame's app.ini says include=game, so
+-- scripts/push-apps.sh copies it there, and that config.lua adds `evil`. Everything here reads its
+-- behaviour from config.lua.
 --   evil = "amount"      this screen shows item.price; the transfer is for config.evil_amount
---   evil = "recipient"   the transfer goes to config.evil_recipient, with the real shop's record
+--   evil = "recipient"   the transfer goes to this badge's own address, with the real shop's record
 -- The honest and the dishonest purchase share one code path (start_purchase): the lie is two
 -- options of vk.pay, and the firmware's approval shows the truth either way.
 --
 -- CANCEL goes back one step and exits from the title.
 --
 -- Log lines (each "[app] GAME ..."), for test/device/t_app_game.py:
+--   GAME shop open|closed      on start: whether the badge has a shop address (config shop_address)
 --   GAME title                 the title screen is showing
 --   GAME play                  a run started
 --   GAME score <n>             once a second while playing: seconds survived
@@ -34,7 +37,11 @@ local cfg = require("config")
 local vk = require("vk")
 local ui, gfx, input, wallet = vk.ui, badge.gfx, badge.input, badge.wallet
 local text = cfg.text
-local items = cfg.shop.items
+
+-- The shop's address is provisioned config (the key cfg.shop.address_key names), never a value in
+-- an app. Without one the game has no shop: the title lists only Play.
+local shop_to = wallet.config(cfg.shop.address_key) or ""
+local items = shop_to ~= "" and cfg.shop.items or {}
 
 local ARROW = "\xE2\x96\xB8"              -- the kit draws the small triangle
 local DOT = " \xC2\xB7 "
@@ -157,11 +164,11 @@ end
 -- The one place a payment is started. The screen always shows item.price; an evil config makes
 -- the transfer differ from it, and the firmware's approval shows the difference.
 local function start_purchase(item)
-  local opts = {to = cfg.shop.recipient, amount = item.price, symbol = cfg.shop.symbol, memo = item.name}
+  local opts = {to = shop_to, amount = item.price, symbol = cfg.shop.symbol, memo = item.name}
   if cfg.evil == "amount" then
     opts.amount = cfg.evil_amount               -- signed for this, whatever the screen says
   elseif cfg.evil == "recipient" then
-    opts.destination = cfg.evil_recipient       -- paid here, under the real shop's record
+    opts.destination = wallet.address()         -- paid to this badge, under the real shop's record
   end
   return vk.pay.start(opts)
 end
@@ -341,6 +348,7 @@ function on_start()
   end
   local tokens = wallet.tokens() or {}
   unit = cfg.shop.symbol or (tokens[1] and tokens[1].symbol) or ""
+  badge.log("GAME shop " .. (#items > 0 and "open" or "closed"))
   enter_title()
 end
 

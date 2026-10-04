@@ -159,6 +159,11 @@ const char *permissions() {
   return sEntry->permissions;
 }
 
+const char *launcherKeys(const String &id) {
+  const badge::NativeApp *entry = find(id);
+  return (entry != nullptr && entry->launcher != nullptr) ? entry->launcher : "";
+}
+
 }  // namespace vk::host::native
 
 // Declared in sdk/badge_sdk.hpp: asks the host to stop the running app at the end of the frame.

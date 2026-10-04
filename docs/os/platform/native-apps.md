@@ -20,29 +20,22 @@ A native app is firmware. It runs with no memory cap, no time budget and no perm
 
 ## The smallest app
 
-One file. No list to edit anywhere.
+One file, made by one command; no list to edit anywhere:
 
-```cpp
-// src/native_apps/hello_native/hello_native.cpp
-#include "../../vk/sdk/badge_sdk.hpp"
-
-class HelloNative final : public badge::App {
- public:
-  void on_draw() override {
-    auto &c = display::canvas();
-    c.fillScreen(theme::BG);
-    display::textCentered("gm from C++", display::width() / 2, 100, theme::GREEN, 2);
-    display::touch();
-  }
-  void on_button(uint8_t key, bool pressed) override {
-    if (key == BTN_B && pressed) badge::exit();     // CANCEL
-  }
-};
-
-BADGE_APP(HelloNative, "hello_native", "Hello (C++)", "1.0.0", "");
+```bash
+scripts/new-app.sh my_app "My app" --native [--category games]   # -> src/native_apps/my_app/my_app.cpp
+scripts/build.sh dev --upload <port>
 ```
 
-Build and flash; it appears in the launcher after the Lua apps (native apps are listed in id order). The id belongs to the firmware: a pushed Lua folder with the same id is ignored, and the native app is the one that launches ([app host](app-host.md#permissions)).
+The file is `os/templates/native_app/app.cpp` with the id, the name and the class filled in: a two-row Receipt list (a counter and a reset) drawn with the receipt kit, which redraws only after a key or a pause, and exits on CANCEL. Its last line registers it:
+
+```cpp
+BADGE_APP(MyAppApp, "my_app", "My app", "1.0.0", "", "category=games");
+```
+
+Build and flash; it appears in the launcher after the Lua apps (native apps are listed in id order), in the folder its last argument names. The id belongs to the firmware: a pushed Lua folder with the same id is ignored, and the native app is the one that launches ([app host](app-host.md#permissions)).
+
+(The sample app `hello_native` that used to stand here is gone: the template replaced it. The device tests' native fixture is `src/native_apps/nativetest/`, dev profile only and hidden.)
 
 ## The SDK header
 
@@ -86,17 +79,27 @@ void exit();     // asks the host to stop this app at the end of the frame (runt
 struct NativeApp : vk::Registered<NativeApp> {
   const char *id, *name, *version, *permissions;
   App *(*create)();
+  const char *launcher = "";   // the launcher keys of app.ini, ';' between them: "category=games"
   NativeApp(const char *i, const char *n, const char *v, const char *p, App *(*c)())
       : id(i), name(n), version(v), permissions(p), create(c) {}
+  // What BADGE_APP uses: `launcher` is the optional last argument.
+  NativeApp(App *(*c)(), const char *i, const char *n, const char *v, const char *p, const char *l = "")
+      : id(i), name(n), version(v), permissions(p), create(c), launcher(l != nullptr ? l : "") {}
 };
 
 }  // namespace badge
 
 // id: [a-z0-9._-], unique among native and Lua apps. permissions: comma-separated, as in app.ini.
-#define BADGE_APP(Class, id, name, version, permissions)                                   \
+// An optional last argument holds the launcher keys an app.ini would hold, with ';' between them
+// (app-host.md, "Manifest"):
+//   BADGE_APP(SelfTest, "selftest", "Self test", "1.0.0", "", "category=tests");
+// A native app compiled only in the dev profile wraps its own file in #if VK_PROFILE_DEV.
+#define BADGE_APP(Class, id, name, version, ...)                                           \
   static badge::App *badge_create_##Class() { return new Class(); }                       \
-  static badge::NativeApp badge_app_##Class(id, name, version, permissions, badge_create_##Class)
+  static badge::NativeApp badge_app_##Class(badge_create_##Class, id, name, version, __VA_ARGS__)
 ```
+
+The optional last argument is backwards compatible: a five-argument `BADGE_APP` line compiles as before and lists the app at the top level. The keys it takes (`category`, `hidden`, `count`) are those of [app.ini](app-host.md#launcher-and-install-keys).
 
 The app object is created with `new` when the app starts and deleted when it stops, so every launch begins with fresh state, like a Lua app.
 
@@ -133,8 +136,8 @@ The message is built with `sol_tx_build_transfer` ([solana-payments](../wallet/s
 
 ## Removing a native app
 
-Delete its folder and reflash. Nothing else references it.
+Delete its folder and reflash. Nothing else references it. Shown on the badge on 2026-10-04 with a throwaway app made by `new-app.sh --native --category scratch`: after the first flash it was in a SCRATCH folder; with the folder deleted, the next flash listed no such app and no SCRATCH folder.
 
 ## Tests
 
-Device: T-APP5 (a native app launches, draws, exits with CANCEL, and relaunches with fresh state) and T-APP6 (a native app without `sign` in its permissions gets `denied` from `begin`, in `on_start` and in `on_stop`; run with the temporary app `zz_denytest`, which is not kept in the tree), in [../testing/testing.md](../testing/testing.md#acceptance-tests).
+Device: T-APP5 (the fixture `nativetest` launches, draws, exits with CANCEL, and relaunches with fresh state) and T-APP6 (a native app without `sign` in its permissions gets `denied` from `begin`, in `on_start` and in `on_stop`; run with the temporary app `zz_denytest`, which is not kept in the tree), in [../testing/testing.md](../testing/testing.md#acceptance-tests).

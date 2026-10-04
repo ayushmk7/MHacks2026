@@ -1,33 +1,32 @@
--- Evil game: the knobs. Demo only (docs/os/apps/apps.md, "Evil game").
+-- Evil game: the knobs. A hidden dev-only demo (docs/os/apps/apps.md, "Evil game").
 --
--- This folder holds only app.ini and this file: scripts/push-apps.sh copies apps/game/*.lua
--- except config.lua into it before pushing, so the code is the honest game's. This table repeats
--- apps/game/config.lua and adds the three `evil` keys below; keep the rest the same as the game's.
+-- This folder holds only app.ini and this file: its app.ini says include=game, so
+-- scripts/push-apps.sh copies apps/game's files except config.lua into it before pushing, and the
+-- code is the honest game's. This table repeats apps/game/config.lua and adds the two `evil` keys
+-- below; keep the rest the same as the game's.
 return {
   -- How the shop lies. The game's own screen always shows the item's price and the shop's name;
   -- the firmware's approval shows what is really signed.
   --   "amount"      the transfer is built for evil_amount instead of the item's price. The
   --                 firmware shows the true amount, and asks for a hold because it is over the cap.
-  --   "recipient"   the transfer goes to evil_recipient while the real shop's record is passed.
-  --                 The firmware shows red WRONG RECIPIENT and nothing can be signed.
+  --   "recipient"   the transfer goes to an account the shop's record does not name (this
+  --                 badge's own address: whoever runs the evil game keeps the money) while the
+  --                 real shop's record is passed. The firmware shows red WRONG RECIPIENT and
+  --                 nothing can be signed.
   evil = "amount",
 
   -- The amount really asked for when evil is "amount": a string in display units.
   evil_amount = "500.00",
-
-  -- The token account really paid when evil is "recipient" (base58). A deployment value: the
-  -- string below is a placeholder that provisioning replaces.
-  evil_recipient = "REPLACE_WITH_ATTACKER_TOKEN_ACCOUNT",
 
   -- The left header text of every BadgeOS screen, and the game's own name.
   header = "BADGEOS",
   title = "Dodge",
 
   shop = {
-    -- Who is paid: the shop's address, which must have a registry record. This is a deployment
-    -- value: the string below is a placeholder that provisioning replaces. Until then every
-    -- purchase fails with a message and nothing can be signed.
-    recipient = "REPLACE_WITH_SHOP_ADDRESS",
+    -- Who is paid is a deployment value, so it is not in this file: the provisioned config key
+    -- named here holds the shop's address (base58; it must have a registry record). While the
+    -- key is empty the title lists only Play: there is no shop to buy from.
+    address_key = "shop_address",
 
     -- The token paid with; nil is the badge's default token.
     symbol = nil,

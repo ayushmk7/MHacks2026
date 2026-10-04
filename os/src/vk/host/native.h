@@ -17,4 +17,5 @@ void update(float dt);            // on_update(dt), on_draw()
 void button(uint8_t key, bool pressed);
 void espnow(const uint8_t *mac, const uint8_t *data, size_t length, int8_t rssi);
 const char *permissions();        // of the active app; "" when none
+const char *launcherKeys(const String &id);   // the optional last BADGE_APP argument; "" when none
 }

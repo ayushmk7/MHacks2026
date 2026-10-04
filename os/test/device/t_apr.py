@@ -34,9 +34,9 @@ from common import assert_screen_lit, assert_screen_sent, HOLD_MARGIN_MS, hold_m
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 SHOTS = os.path.join(_HERE, "shots")
-# The app steps 3 and 4 run over: the native hello_native, where a SELECT press does nothing and
+# The app steps 3 and 4 run over: the native nativetest, where a SELECT press does nothing and
 # which needs no push (upstream's sample apps are deleted).
-APP = "hello_native"
+APP = "nativetest"
 
 SHOT_BYTES = 320 * 240 * 2
 
@@ -186,7 +186,7 @@ def launcher_repaint(badge):
 
 
 def fresh_press(badge):
-    """Step 3, T-APR2. Runs over hello_native, where a SELECT press does nothing else."""
+    """Step 3, T-APR2. Runs over nativetest, where a SELECT press does nothing else."""
     badge.btn("a", "press")
     try:
         badge.ok("VKDEMOAPPROVE green")

@@ -5,6 +5,7 @@
 #include "../badge_log.h"
 #include "../config.h"
 #include "../vk/host/native.h"  // VK: H11
+#include "../vk/host/catalog.h"  // VK: H27
 
 namespace app_store {
 namespace {
@@ -230,6 +231,7 @@ void refresh() {
   }
   dir.close();
   badge_log::tagf("fs", "%u app(s) installed", (unsigned)sCount);
+  vk::host::catalog::invalidate();  // VK: H27
 }
 
 size_t count() { return sCount + vk::host::native::count(); }  // VK: H11

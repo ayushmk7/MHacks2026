@@ -37,7 +37,7 @@ Batch 5 (WP37, WP40 to WP45) and the close-out were flashed to the same badge on
 - Upstream's six sample apps were deleted from this badge's filesystem (`AUTH`, `LIST`, `DEL <id>`); a badge flashed from upstream firmware still has them until that is done.
 - Images: dev 1,991,895 bytes (59.6 % of the 3,342,336-byte slot), release 1,983,131 bytes (59.3 %). The release profile compiled at the first attempt and passes pre-flash check 6; on the badge `VKINFO` says `profile=release` and every dev command (`VKSTATE`, `VKBTN`, `VKSHOT`, `VKTIME`, `VKPAIR`, `VKNOTE`, `VKDEMOAPPROVE`, `VKPERF`) is answered by upstream's push protocol with `ERR not authorised - send AUTH <code>`, never `OK` (T-REL2). The badge was then flashed with the dev profile again.
 - The I²C bus stayed healthy through every flash and the whole regression: `[btn] TCA9534 init ok`, heartbeat `btn=0 int=H`, no `stopped answering` and no `held low` line in any test log.
-- `scripts/push-apps.sh --port … dev` takes about six minutes for the twelve app folders (each carries its own 55 KB copy of `vk.lua`). One run lost its push session part-way through two apps (`ERR not authorised` on a `DATA` line; pushing those two again worked). The cause was not found; if it happens, push the named apps again.
+- `scripts/push-apps.sh --port … dev` takes about six minutes for the twelve app folders (each carries its own 55 KB copy of `vk.lua`). One run lost its push session part-way through two apps (`ERR not authorised` on a `DATA` line; pushing those two again worked). The causes were found later the same day and the script no longer stops on them ([Installing apps](#why-a-push-used-to-fail-part-way)).
 
 ## Toolchain
 
@@ -166,14 +166,36 @@ Upstream's push writes only under `/apps/<id>/`, so the shared library is copied
 
 ```bash
 scripts/push-apps.sh --port /dev/cu.usbserial-10 dev        # every app, over USB serial
-scripts/push-apps.sh --host 192.168.4.31 --token 123456 release   # over Wi-Fi, without the dev-only test apps
+scripts/push-apps.sh --host 192.168.4.31 --token 123456 release   # over Wi-Fi, without the dev-only apps
 ```
 
-For each app folder under `apps/` the script: copies `lib/vk.lua` into a temporary copy of the folder; for `evilgame`, also copies `apps/game/*.lua` except `config.lua`; then pushes it, over serial with `vkdev.py push` (upstream's `AUTH`/`BEGIN`/`DATA`/`END` line protocol) or over Wi-Fi with `tools/badge-push.py --id <id>` (the tool otherwise takes the id from the folder name, which is a temporary one here). `apps/` holds only BadgeOS's apps: upstream's six samples are deleted. The `release` set leaves out the dev-only test apps `signtest`, `checktest`, `vktest` and `reqtest`; it **includes** `evilgame`, which the demo needs.
+The script names no app. Every folder under `apps/` that holds an `app.ini` is an app, and what happens to it comes from its own manifest ([app host](../platform/app-host.md#manifest)):
 
-The pairing code is on the badge under Settings → App push. In the dev profile `vkdev.py` reads it itself (`VKPAIR`). A release build has no `VKPAIR`, so over serial it needs the code too: `--token <code>` is accepted with `--port` and passed to `vkdev.py --code`. With `--host` the code may also come from the environment variable `BADGE_TOKEN`. `--dry-run` lists what would be pushed and pushes nothing. The script exits 0 when every app was pushed, 1 when any push failed, 2 for a usage error.
+| Key in `app.ini` | What the script does |
+|---|---|
+| `profile=dev` | `dev` installs the app, `release` leaves it out (the test fixtures `checktest`, `reqtest`, `signtest`, `vktest` and the `evilgame` demo say so) |
+| `include=<app>` | the files of `apps/<app>/` are pushed with this app too, except that app's `config.lua` and `app.ini` and except any file this app has itself (`evilgame` says `include=game`: the game's code with its own `config.lua`) |
 
-`vk.lua` (55 KB) goes into every app folder, whether or not the app requires it. `vkdev.py push` sends every file of a folder.
+For each app the script makes a temporary copy of the folder, adds the included files and `lib/vk.lua` as `vk.lua`, and pushes the copy under the folder's name: over serial with `scripts/push_serial.py` (upstream's `AUTH`/`BEGIN`/`DATA`/`END` line protocol, all apps in one session), or over Wi-Fi with `tools/badge-push.py --id <id>` (the tool otherwise takes the id from the folder name, which is a temporary one here). `apps/` holds only BadgeOS's apps: upstream's six samples are deleted. A new app is pushed with no edit to the script ([extending](extending.md#add-an-app)).
+
+The pairing code is on the badge under Settings → App push. In the dev profile the serial push reads it itself (`VKPAIR`). A release build has no `VKPAIR`, so over serial it needs the code too: `--token <code>` is accepted with `--port`. With `--host` the code may also come from the environment variable `BADGE_TOKEN`. `--dry-run` lists what would be pushed and pushes nothing. The Python is the repository's `.venv/bin/python`, or `$VK_PYTHON` (a git worktree has no `.venv` of its own). The script exits 0 when every app was pushed, 1 when any push failed, 2 for a usage error; an app counts as pushed only when `push_serial.py` printed `push: <id> ok`.
+
+`vk.lua` (55 KB) goes into every app folder, whether or not the app requires it. A push sends every file of a folder; an app takes 25 to 50 s over serial, most of it `vk.lua`.
+
+### Why a push used to fail part-way
+
+`push-apps.sh` used to fail now and then in the middle of a file, with `ERR not authorised - send AUTH <code>` or `ERR unknown command`, on whichever apps were being sent at the time. Two causes, both shown on the badge on 2026-10-04:
+
+1. **The push session is dropped whenever an app stops.** The session is one flag in upstream's `push_protocol`, shared by USB, BLE and Wi-Fi; upstream clears it when an app exits or a launch fails (`os.ino`, after `runtime::processRequests()`), when a BLE central disconnects, and when an app hands the BLE link back. The serial client authenticates once per file, so a file in flight when an app stops gets `ERR not authorised` on its next `DATA` line. Shown with a fixture app that exits by itself 3 s after it starts: a `vk.lua` push started while it ran failed after 3.1 s with `ERR not authorised`, every time. A person pressing CANCEL in an app, or a test stopping one, does the same.
+2. **Two programs on one serial port.** macOS lets any number of processes open `/dev/cu.usbserial-*`. Each then reads part of the other's replies (`O 180` for `OK 180`, `[s]` for `[fs]`), and the other one's `RUN`, `STOP` and `VKPAIR` lines land in the middle of the push, dropping the session as in 1. Shown by sending `STOP` from a second process every 3 s during a push: both programs failed. On the run that first reproduced the fault, an app was launched on the badge that the push had not launched.
+
+`scripts/push_serial.py` is the fix on the laptop side; the badge's protocol is upstream's and is not changed:
+
+- it opens the port **exclusively** (`TIOCEXCL`): while it runs, another program's `open()` fails with `Resource busy` instead of corrupting both; and it refuses to start while another program already has the port open (`lsof`), naming the process;
+- it **stops the running app** once before the first file, so no app is left to exit mid-push;
+- on exactly the reply `ERR not authorised`, it **authenticates again and sends that one file again** from its `BEGIN` (which truncates the partial file), at most twice per file, and prints the badge's last log lines, which say what dropped the session. Any other error fails the app. With the fixture app above the same push then completes (25 s).
+
+What remains: a person who launches and leaves apps on the badge during a push still costs a file a second send, and three drops within one file fail that app (seen once, minutes after a reflash, with nothing else on the port and Bluetooth off; the badge's log at that moment was not captured, which the script now does). `vkdev.py push`, which the device tests use, has neither defence; it belongs with `vkdev.py` to take the same two steps.
 
 ### Names on the network
 

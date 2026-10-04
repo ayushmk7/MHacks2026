@@ -47,6 +47,7 @@ Line numbers are for upstream commit `812b8c7`. Upstream's `solana-os.ino` is `o
 | H24 | `os.ino` `loop()` | the canvas is sent to the panel through `vk::flush()`, which counts the transfers |
 | H25 | `src/hal/buttons.cpp` `update()` | a key that wakes the dimmed or sleeping screen does nothing else: its edges are dropped until it is up (`vk_screen_filter_buttons`, `src/vk/ui/screen_power.h`) |
 | H26 | `src/hal/buttons.cpp` `update()` | upstream's one log line per key press is not written while the on-screen keyboard is open: a log of the presses would let a reader replay the cursor and recover a typed password (`vk::ui::keyboard::state()`) |
+| H27 | `src/apps/app_store.cpp` `refresh()` | the launcher's app catalogue is rebuilt after a rescan (two sites: the include and the call) |
 
 ## The edits
 
@@ -435,6 +436,19 @@ In `buttons::update()`, directly before the H17 block that applies injected butt
 
 `vk_screen_filter_buttons` (`src/vk/ui/screen_power.cpp`, logic in `power_core.c`) counts a held or pressed key as activity and, when a press arrives while the screen is dimmed or asleep, wakes the screen and clears the pressed and released bits of every key that was down at that moment until that key is up again ([ui](../ui/ui.md#screen-dim-and-sleep)). The down mask is left as it is, so the debounce's next comparison is unchanged and `buttons::down()` still tells the truth; because the press edge is gone, the repeat and hold timers of that key never start (`heldMs` is 0, so a CANCEL that wakes the screen cannot count towards the force-quit hold). With an approval open nothing is swallowed: the approval lit the screen itself. In both profiles. The hook runs before H17, so buttons injected by the dev profile's `VKBTN` are never swallowed; the service counts them as activity instead, and device tests that tap a dimmed badge keep working.
 
+### H27 — launcher catalogue after a rescan
+
+In `src/apps/app_store.cpp`, an include and the last line of `refresh()`:
+
+```cpp
+#include "../vk/host/catalog.h"  // VK: H27
+...
+  badge_log::tagf("fs", "%u app(s) installed", (unsigned)sCount);
+  vk::host::catalog::invalidate();  // VK: H27
+```
+
+`vk::host::catalog` (`src/vk/host/catalog.cpp`) is the list the launcher shows: every app with its folder (`category`), hidden apps left out ([app host](../platform/app-host.md#manifest)). It reads each app's `app.ini` once and keeps the result; this call marks it stale, and the next read rebuilds it. Every path that installs or removes an app (serial, BLE and Wi-Fi push, the store client, `removeApp`) ends in `refresh()`, so a re-pushed `app.ini` that only moves an app to another folder is seen at once, though the app count did not change. Behaviour of `app_store` is unchanged.
+
 ## Retired hooks
 
 Three hooks of the first design are gone. Their ids are not reused, and no line in the source carries them.
@@ -530,7 +544,7 @@ grep -rn "// VK: H" os.ino src | grep -v "^src/vk/" | sed -E 's/.*VK: (H[0-9]+[a
   | sort -u | sort -t H -k 2n | tr '\n' ' '
 ```
 
-Expected output: `H1 H2 H3 H4 H5 H6 H7 H8a H8b H8c H8d H8e H8f H9 H10 H11 H12 H13 H16 H17 H19 H21 H23 H24 H25 H26`, plus `H18` if used (and `H22` if Risk 5's fallback was applied).
+Expected output: `H1 H2 H3 H4 H5 H6 H7 H8a H8b H8c H8d H8e H8f H9 H10 H11 H12 H13 H16 H17 H19 H21 H23 H24 H25 H26 H27`, plus `H18` if used (and `H22` if Risk 5's fallback was applied).
 
 The replaced files (pre-flash check 1, second half):
 

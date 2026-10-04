@@ -1,5 +1,6 @@
 // src/vk/host/manifest.cpp
-// The two app.ini keys Badge OS adds, `permissions` and `min_api` (app-host.md, "Manifest").
+// The app.ini keys Badge OS adds (app-host.md, "Manifest"): `permissions` and `min_api`, read at
+// launch, and the launcher's `category` and `hidden`.
 // Upstream's own parser and its Info struct are not touched: this one reads the same file again.
 //
 // Host-test seam (test/host/test_manifest.cpp): parse() needs only the String class; load(), which
@@ -52,13 +53,12 @@ bool parseMinApi(const String &value, uint32_t &out) {
   return true;
 }
 
-}  // namespace
+constexpr unsigned int CATEGORY_MAX = 16;
 
-bool parse(const String &iniText, Extra &out) {
-  out.permissions = "";
-  out.min_api = MIN_API_DEFAULT;
-  bool ok = true;
-
+// Calls fn(key, value) for every `key=value` line of an app.ini text, the way upstream reads its own
+// keys: spaces around both dropped, the key in lower case, blank lines and comments skipped.
+template <typename Fn>
+void eachKey(const String &iniText, Fn fn) {
   const unsigned int length = iniText.length();
   unsigned int at = 0;
   while (at < length) {
@@ -77,15 +77,55 @@ bool parse(const String &iniText, Extra &out) {
     key.trim();
     key.toLowerCase();
     value.trim();
+    fn(key, value);
+  }
+}
 
+// A folder name: [a-z0-9_-], 1 to CATEGORY_MAX characters, any case in the file. Else "".
+String cleanCategory(const String &value) {
+  if (value.length() == 0 || value.length() > CATEGORY_MAX) return "";
+  String out = value;
+  out.toLowerCase();
+  for (unsigned int i = 0; i < out.length(); ++i) {
+    const char c = out[i];
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-')) return "";
+  }
+  return out;
+}
+
+}  // namespace
+
+bool parse(const String &iniText, Extra &out) {
+  out.permissions = "";
+  out.min_api = MIN_API_DEFAULT;
+  bool ok = true;
+  eachKey(iniText, [&](const String &key, const String &value) {
     if (key == "permissions") {
       out.permissions = cleanList(value);
     } else if (key == "min_api") {
       ok = parseMinApi(value, out.min_api);
       if (!ok) out.min_api = MIN_API_BAD;
     }
-  }
+  });
   return ok;
+}
+
+bool parseLauncher(const String &iniText, Launcher &out) {
+  out.category = "";
+  out.hidden = false;
+  out.countNotes = false;
+  eachKey(iniText, [&](const String &key, const String &value) {
+    if (key == "category") {
+      out.category = cleanCategory(value);
+    } else if (key == "count") {
+      out.countNotes = value == "notes";
+    } else if (key == "hidden") {
+      String flag = value;
+      flag.toLowerCase();
+      out.hidden = flag == "1" || flag == "true";
+    }
+  });
+  return true;
 }
 
 #ifndef VK_HOST_TEST
@@ -95,6 +135,15 @@ bool load(const String &appId, Extra &out) {
   String text;
   if (!app_store::readFile(appId, APP_MANIFEST, text)) return true;   // no app.ini: the defaults
   return parse(text, out);
+}
+
+bool loadLauncher(const String &appId, Launcher &out) {
+  String text;
+  if (!app_store::readFile(appId, APP_MANIFEST, text)) {
+    out = Launcher();
+    return false;
+  }
+  return parseLauncher(text, out);
 }
 #endif
 

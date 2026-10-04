@@ -1,10 +1,7 @@
 -- Home: the knobs. Addresses and the poll period are provisioned settings (rpc_url and
 -- balance_poll_s, read with wallet.config), not values in this file.
 return {
-  -- The apps offered in the menu, in this order. Only the ones installed on the badge are shown
-  -- (badge.system.apps()); Home itself is never listed.
-  menu = {"pay", "request", "contacts", "history", "game", "duel", "inbox", "wallet_settings"},
-
+  -- The menu lists every app the launcher lists (badge.system.launcher_apps()), except Home.
   -- How many menu rows are on screen at once; the menu scrolls to keep the selected one in view.
   menu_rows = 4,
 

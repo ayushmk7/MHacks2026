@@ -40,6 +40,7 @@ and H20 are retired, and no line in the source carries them.
 | H24 | `os.ino` `loop()` | the canvas is sent to the panel through `vk::flush()`, which counts the transfers |
 | H25 | `src/hal/buttons.cpp` `update()` | a key that wakes the dimmed or sleeping screen does nothing else: its edges are dropped until it is up (`vk_screen_filter_buttons`, `src/vk/ui/screen_power.h`) |
 | H26 | `src/hal/buttons.cpp` `update()` | upstream's one log line per key press is not written while the on-screen keyboard is open: a log of the presses would let a reader replay the cursor and recover a typed password (`vk::ui::keyboard::state()`) |
+| H27 | `src/apps/app_store.cpp` `refresh()` | the launcher's app catalogue is rebuilt after a rescan (two sites: the include and the call) |
 
 ## Replaced upstream files
 

@@ -33,4 +33,12 @@ extern const Screen kInstalling;   // dialogs.cpp
 void appDeleteOpen(const String &id, const String &name);   // remembers the app, then push(&kAppDelete)
 void appErrorSet(const String &message);                    // the text kAppError shows
 
+// ---- added for the launcher's folders (2026-10-04); nothing above changes ----
+// What VKSTATE reports about the launcher (launcher.cpp): the open folder ("" at the top level),
+// the cursor, and each cell's key: an app's id, or "folder:<category>" for a folder.
+const char *launcherFolder();
+int launcherCursor();
+int launcherRowCount();
+String launcherRowKey(int index);
+
 }  // namespace vk::shell

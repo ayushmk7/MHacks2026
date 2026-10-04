@@ -15,20 +15,22 @@ person.
 
 import time
 
-from common import assert_screen_lit, launch, on_launcher, provision_test, to_launcher
+from common import assert_screen_lit, launch, lua_apps, on_launcher, provision_test, to_launcher
 
-LUA_APPS = ("home", "history", "pay", "request", "contacts", "game", "evilgame", "duel")
-NATIVE_APPS = ("hello_native", "inbox", "wallet_settings")
+# Every shipped app: the Lua apps push-apps.sh installs for a release (their manifests say which),
+# and every native app the build lists (LIST shows a native app with size 0). Nothing is listed here.
+LUA_APPS = tuple(lua_apps("release"))
 CANCEL_TAPS = 5
 FORCE_QUIT_MS = 1700
 
 
-def _installed(badge):
+def _listed(badge):
+    """LIST as {id: size}."""
     reply = badge.cmd("AUTH " + badge.ok("VKPAIR"))[-1]
     assert reply.startswith("OK"), "AUTH -> %s" % reply
     listing = badge.cmd("LIST")
     assert listing[-1].startswith("OK"), "LIST -> %s" % listing[-1]
-    return {line.split()[1] for line in listing[:-1] if len(line.split()) >= 2}
+    return {line.split()[1]: int(line.split()[2]) for line in listing[:-1] if len(line.split()) >= 3}
 
 
 def _back_by_cancel(badge, app_id):
@@ -59,9 +61,11 @@ def run(badge):
     if badge.info().get("provisioned") != "1":
         provision_test(badge)
     to_launcher(badge)
-    installed = _installed(badge)
-    apps = [a for a in LUA_APPS + NATIVE_APPS if a in installed]
-    missing = [a for a in LUA_APPS + NATIVE_APPS if a not in installed]
+    listed = _listed(badge)
+    installed = set(listed)
+    native_apps = tuple(sorted(a for a, size in listed.items() if size == 0 and a not in LUA_APPS))
+    apps = [a for a in LUA_APPS + native_apps if a in installed]
+    missing = [a for a in LUA_APPS if a not in installed]
     if missing:
         print("T-REL1: not installed, skipped: %s" % ", ".join(missing))
     assert any(a in installed for a in LUA_APPS), "none of the shipped Lua apps is installed: run scripts/push-apps.sh"

@@ -8,8 +8,9 @@ It works because every extensible list is a self-registering registry ([overview
 
 | I want to add… | I write… | Files I touch | Reflash? |
 |---|---|---|---|
-| a Lua app | a folder with `app.ini`, `main.lua`, `config.lua` | only the new folder | no (push it) |
-| a native app | one `.cpp` with `BADGE_APP(...)` | only the new folder | yes |
+| a Lua app | `scripts/new-app.sh <id> "<Name>"` | only the new folder | no (push it) |
+| a native app | `scripts/new-app.sh <id> "<Name>" --native` | only the new folder | yes |
+| a launcher folder | `category=<name>` in the apps' manifests | their `app.ini` | no (push them) |
 | a setting | one `VK_CONFIG_KEY(...)` line | the file that uses it | yes |
 | a payment token | one more entry in the `tokens` config value | none | no (`VKSET`) |
 | a Lua function | one `VK_LUA_FUNCTION(...)` line | the feature's file | yes |
@@ -39,27 +40,39 @@ It works because every extensible list is a self-registering registry ([overview
 
 After any addition or removal: `scripts/build.sh dev` runs the pre-flash checks and the host tests; if they pass, nothing else needs to change.
 
-## Add a Lua app
+## Add an app
 
-1. `apps/<id>/app.ini`:
-   ```ini
-   name=My app
-   version=1.0.0
-   permissions=net
-   min_api=2
-   ```
-2. `apps/<id>/config.lua`: `return { ... }` with every value someone might want to change.
-3. `apps/<id>/main.lua`: define the callbacks you need (`on_start`, `on_update`, `on_draw`, `on_button`, `on_espnow`, `on_stop`). `local vk = require("vk")` for JSON, RPC, payments.
-4. `scripts/push-apps.sh --port <port> dev` (or `vkdev.py push apps/<id>`).
+One command makes an app that runs as it is; one delete removes it.
 
-It appears in the launcher's grid. If it requests `sign` or `request`, the user is asked once on first launch. Reference: [Lua API](../platform/lua-api.md), [app rules](../apps/apps.md#rules-for-every-lua-app). To take a payment, copy the [smallest paying app](../platform/lua-api.md#the-smallest-paying-app).
+```bash
+scripts/new-app.sh my_app "My app" [--category games]            # Lua: apps/my_app/
+scripts/push-apps.sh --port <port> dev                           #   install it (no other edit)
 
-## Add a native app
+scripts/new-app.sh my_app "My app" --native [--category games]   # native: src/native_apps/my_app/my_app.cpp
+scripts/build.sh dev --upload <port>                             #   it registers itself (no other edit)
+```
 
-1. Create `src/native_apps/<id>/<id>.cpp`: a class derived from `badge::App` and one `BADGE_APP(Class, "<id>", "<Name>", "1.0.0", "<permissions>")` line. Start from `hello_native`.
-2. `scripts/build.sh dev --upload <port>`.
+| To remove | Do |
+|---|---|
+| a Lua app | delete `apps/<id>/`; `DEL <id>` (or hold RIGHT on it in the launcher) on a badge that has it |
+| a native app | delete `src/native_apps/<id>/` and reflash |
 
-Rules for native code: [native apps](../platform/native-apps.md#rules-for-native-code).
+`new-app.sh` copies `os/templates/lua_app/` or `os/templates/native_app/`: a small working Receipt-look list (a counter and a reset, CANCEL exits), heavily commented, which you then turn into your app. It checks the id (`[a-z0-9._-]`, at most 32 characters; a native id is `[a-z0-9_]` because it also names the C++ class) and refuses one that is already an app, Lua or native.
+
+Where the app shows up and how it is installed is in its manifest, `app.ini` (for a native app, the last argument of its `BADGE_APP` line, `;` between keys); nothing is listed in a script or in C++ ([app host](../platform/app-host.md#manifest)):
+
+| Key | Example | Meaning |
+|---|---|---|
+| `name` | `name=My app` | what the launcher shows, in capitals |
+| `permissions` | `permissions=sign,net` | what the app may use; `sign` and `request` ask the person once, on the first launch ([permissions](../platform/app-host.md#permissions)) |
+| `min_api` | `min_api=2` | the lowest `badge.api_version` the app runs on |
+| `category` | `category=games` | list it in the launcher folder GAMES; a folder exists because an app names it; one app alone in a folder is opened directly |
+| `hidden` | `hidden=1` | not on the launcher (or in Home's menu); still starts over serial: test fixtures, apps opened from Settings |
+| `count` | `count=notes` | the launcher shows the waiting-notification count on its cell |
+| `profile` | `profile=dev` | `push-apps.sh release` leaves it out |
+| `include` | `include=game` | `push-apps.sh` pushes `apps/game/`'s files with it, except `config.lua`, `app.ini` and files it has itself |
+
+Every knob goes in the app's `config.lua`; a deployment value (an address, a URL, a token) is a config key read with `wallet.config(...)`, never a literal. Reference: [Lua API](../platform/lua-api.md), [app rules](../apps/apps.md#rules-for-every-lua-app), [native apps](../platform/native-apps.md#rules-for-native-code). To take a payment, copy the [smallest paying app](../platform/lua-api.md#the-smallest-paying-app).
 
 ## Add a config key
 

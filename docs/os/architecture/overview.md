@@ -119,11 +119,14 @@ src/vk/
     bank/                          domain "bank" (optional, last)
     devtools/                      dev serial commands (dev profile only); see testing.md
 src/native_apps/
-  inbox/  wallet_settings/  hello_native/
-apps/                              Lua apps: signtest home pay request history contacts game evilgame duel, and the dev test apps
-                                   (upstream's six samples are deleted)
+  inbox/  wallet_settings/  selftest/  nativetest/ (dev only)   one file each, self-registering (BADGE_APP)
+apps/                              Lua apps, one folder each; app.ini says where the launcher lists the app
+                                   (category, hidden) and how push-apps.sh installs it (profile, include).
+                                   No script or C++ file names an app. (upstream's six samples are deleted)
+templates/                         lua_app/ and native_app/: what scripts/new-app.sh copies for a new app
 lib/vk.lua                         shared Lua library (copied into each app when pushed)
-scripts/                           build.sh  preflash-check.sh  push-apps.sh  vkdev.py (serial tool: provision, push, test hooks)
+scripts/                           build.sh  preflash-check.sh  push-apps.sh  push_serial.py  new-app.sh
+                                   vkdev.py (serial tool: provision, push, test hooks)
 test/host/                         host tests (run.sh, test_*.c, vectors.*)
 test/device/                       scripted on-device tests driven by vkdev.py
 ```
@@ -200,7 +203,9 @@ The registries:
 | ESP-NOW route | `VK_ESPNOW_ROUTE(...)` | `host/router.h` | firmware handling for a frame type | [../protocol/espnow.md](../protocol/espnow.md) |
 | Permission | `VK_PERMISSION(...)` | `host/permissions.h` | a permission name apps can request | [../platform/app-host.md](../platform/app-host.md) |
 | Lua function | `VK_LUA_FUNCTION(...)` | `host/lua_registry.h` | one function on a `badge.<module>` table | [../platform/lua-api.md](../platform/lua-api.md) |
-| Native app | `BADGE_APP(...)` | `sdk/badge_sdk.hpp` | a compiled-in app in the launcher | [../platform/native-apps.md](../platform/native-apps.md) |
+| Native app | `BADGE_APP(...)` | `sdk/badge_sdk.hpp` | a compiled-in app in the launcher (its optional last argument names its folder) | [../platform/native-apps.md](../platform/native-apps.md) |
+
+Lua apps are not a C++ registry: an app is a folder under `apps/`, and its own `app.ini` says where the launcher lists it and how it is installed ([app host](../platform/app-host.md#launcher-and-install-keys)). The launcher's folders are not a list either: a folder exists because an app's manifest names its `category`.
 | LED pattern | `VK_LED_PATTERN(...)` | `ui/leds.h` | a named LED animation | [../ui/ui.md](../ui/ui.md) |
 | Settings page | `VK_SETTINGS_PAGE(...)`, `VK_SETTINGS_ACTION(...)` | `shell/page.h` | a row in Settings and, for a page, its screen | [../ui/shell.md](../ui/shell.md#settings-page-registry) |
 | Theme | `VK_THEME(...)` | `ui/theme.h` | a colour theme the Theme setting cycles through | [../ui/ui.md](../ui/ui.md#theme) |

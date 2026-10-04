@@ -2,15 +2,15 @@
 opens the note's app, RIGHT dismisses.
 
 1. A reset empties the inbox (notes live in RAM): VKSTATE notes is 0.
-2. VKNOTE Test|hello|hello_native -> notes 1, and the shell shows the count: the Settings list's
+2. VKNOTE Test|hello|nativetest -> notes 1, and the shell shows the count: the Settings list's
    Inbox row changes (the launcher's inbox cell shows it too, but with many apps installed that
    cell can be scrolled out of sight). The same title and body again within 10 s is ignored.
-3. The Inbox app (native) lists it; SELECT launches hello_native and the note is gone.
+3. The Inbox app (native) lists it; SELECT launches nativetest and the note is gone.
 4. A second note is dismissed with RIGHT: notes 0, the Inbox stays open and shows "Nothing new".
 5. SELECT on a note whose app is not installed removes the note and launches nothing.
 6. A ninth note pushes the oldest out: notes stays 8. RIGHT eight times empties the inbox.
 
-Needs one badge with a dev build that has the native apps inbox and hello_native. No provisioning,
+Needs one badge with a dev build that has the native apps inbox and nativetest. No provisioning,
 no network, no hands. T-REQ5 (a payment request seen over the air raises the note) needs a second
 badge and is not here. The LED pattern `notify` cannot be seen over serial: look at the badge
 while step 2's note waits (a dim breathe in the theme's LED colour, 3 s period).
@@ -29,7 +29,7 @@ SHOTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shots")
 SHOT_BYTES = 320 * 240 * 2
 
 INBOX = "inbox"
-TARGET = "hello_native"
+TARGET = "nativetest"
 MAX_NOTES = 8
 
 
