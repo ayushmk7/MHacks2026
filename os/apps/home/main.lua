@@ -90,7 +90,7 @@ local function fetch(now)
     badge.log("HOME balance ok")
   else
     local reason = tostring(called and why or "error")
-    note = cfg.fetch_text[reason]
+    note = cfg.fetch_text[reason] or vk.reason_text(reason, "short")
     badge.log("HOME balance " .. reason)
   end
 end

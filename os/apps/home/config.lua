@@ -39,7 +39,7 @@ return {
   -- The line under the barcode (or the QR code) after a balance fetch that did not work. A reason that is not
   -- listed shows nothing.
   fetch_text = {
-    no_network = "no network",
+    no_network = "no Wi-Fi: Settings > Wi-Fi",
     timeout = "node not reachable",
     unsupported = "no token account yet",
   },

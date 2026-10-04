@@ -95,16 +95,10 @@ local function fit(line)
   return line:sub(1, LINE_COLUMNS - 2) .. ".."
 end
 
-local function reason_text(reason)
-  reason = tostring(reason or "failed")
-  return cfg.reasons[reason] or reason
-end
+-- The shop's own words first (config.reasons), then the words every app shares.
+local function reason_text(reason) return vk.reason_text(reason, cfg.reasons) end
 
--- An LED flash in a colour of the active theme (RGB565 -> 8-bit components).
-local function flash(spec)
-  local c = ui.color(spec.color)
-  badge.led.pulse((c // 2048) * 255 // 31, ((c // 32) % 64) * 255 // 63, (c % 32) * 255 // 31, spec.ms)
-end
+local function flash(spec) vk.led_pulse(spec.color, spec.ms) end
 
 local function price_text(item)
   if unit == "" then return item.price end
@@ -148,6 +142,7 @@ end
 
 -- The title, or first the result of a purchase that ended while another screen was showing.
 local function enter_title()
+  vk.keep_awake(false)
   if result then
     mode = "buy"
     return
@@ -200,7 +195,7 @@ local function shop_update()
     flow = nil
   elseif state == "failed" then
     badge.log("GAME buy failed " .. tostring(detail))
-    result = {ok = false, line = string.format(text.not_bought, reason_text(detail))}
+    result = {ok = false, line = string.format(text.not_bought, reason_text(flow:reason()))}
     flow = nil
   end
   if result and mode == "title" then mode = "buy" end
@@ -244,6 +239,7 @@ end
 
 local function start_play()
   mode = "play"
+  vk.keep_awake(true)                     -- a run being played does not dim
   px = (ui.W - cfg.player.w) / 2
   blocks = {}
   elapsed, score, spawn_in = 0, 0, 0

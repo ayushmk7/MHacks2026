@@ -8,8 +8,9 @@
 --   3. Settle.  The winner opens a payment request for the stake (wallet.request_open). The loser
 --               finds the request whose payee is the winner's key in wallet.requests() and pays
 --               it with vk.pay: the ordinary payment flow, with the firmware approval.
---   4. Result.  The winner shows PAID only after the payment is confirmed on chain, or "unpaid"
---               when no confirmed RESULT arrives within config.settle_timeout_s.
+--   4. Result.  The winner shows PAID only after vk.receive has fetched the transaction a RESULT
+--               names and the firmware has checked that it pays this request (amount, account,
+--               memo, signature), or "unpaid" when none does within config.settle_timeout_s.
 --
 -- Stated honestly: there is no escrow (the loser can press CANCEL), and reaction times are
 -- self-reported (a modified app could lie). The firmware approval shows the true amount and the
@@ -60,14 +61,6 @@ local TELL = {starting = true, armed = true, flash = true, wait_time = true, rou
 local PLAYING = {starting = true, armed = true, flash = true, wait_time = true, round_result = true,
                  find = true}
 
-local REASONS = {
-  not_provisioned = "badge not set up", no_time = "clock not set", busy = "badge busy",
-  bad_arg = "bad amount", sign_failed = "could not sign", cancelled = "cancelled",
-  timeout = "timed out", unverified = "recipient not verified", revoked = "recipient revoked",
-  expired = "request expired", mismatch = "wrong recipient", bad_proof = "presence check failed",
-  over_cap = "over the limit", undecodable = "not understood", unsupported = "not supported",
-}
-
 local PAY_WORDS = {
   presence = "Checking presence.", record = "Fetching the record.", blockhash = "Building.",
   approve = "Approve on the firmware screen.", submit = "Sending.", confirm = "Confirming.",
@@ -86,13 +79,12 @@ local round, wins_me, wins_them = 0, 0, 0
 local mine, theirs = {}, {}     -- reaction times by round
 local go_at, pause_until = 0, 0
 local last                      -- the round just played: {mine, theirs, verdict}
-local request, result_ref       -- winner: the open request, the signature a RESULT named
+local request, watch            -- winner: the open request and its vk.receive check
 local flow, pay_state           -- loser: the vk.pay flow and its last state
 local outcome = {title = "", lines = {}}
 
 local function now() return badge.millis() end
 local function log(text) badge.log("DUEL " .. text) end
-local function reason_words(reason) return REASONS[reason] or tostring(reason) end
 local function u16(n) return string.char(n // 256, n % 256) end
 
 -- A decimal string without leading or trailing zeros ("05.50" -> "5.5"), or nil if it is not one.
@@ -125,11 +117,7 @@ local function random_between(low, high)
   return low + (bytes:byte(1) * 256 + bytes:byte(2)) % (high - low + 1)
 end
 
--- The LEDs in a theme colour (RGB565 -> 8 bits per channel).
-local function pulse(token, ms)
-  local c = ui.color(token)
-  badge.led.pulse((c // 2048) * 8, ((c // 32) % 64) * 4, (c % 32) * 8, ms)
-end
+local pulse = vk.led_pulse      -- the LEDs in a theme colour
 
 local function send(type_, body, mac)
   local frame = vk.app_frame(type_, body)
@@ -158,13 +146,14 @@ end
 
 local function enter(name, timeout_ms)
   state = name
+  vk.keep_awake(name ~= "title" and name ~= "result")   -- a duel in progress does not dim
   deadline = timeout_ms and now() + timeout_ms or nil
   next_at = 0
 end
 
 local function close_request()
   if request then wallet.request_close(request.req_id) end
-  request, result_ref = nil, nil
+  request, watch = nil, nil
 end
 
 local function to_title(text)
@@ -277,41 +266,36 @@ local function open_request()
   local req, why = wallet.request_open{amount = stake, symbol = cfg.symbol, ttl_s = ttl}
   if not req then
     log("request err " .. tostring(why))
-    unpaid(tostring(why), "Request refused: " .. reason_words(why) .. ".")
+    unpaid(tostring(why), vk.reason_text(why, "request"))
     return
   end
   request = req
+  watch = vk.receive.start{req_id = req.req_id, amount = stake, symbol = cfg.symbol,
+                           every_ms = cfg.confirm_every_s * 1000}
   log("request " .. req.req_id)
   state = "await_pay"                         -- the settle deadline keeps running
 end
 
--- A RESULT frame is unauthenticated: status 0 only starts the look-up on chain.
+-- A RESULT frame is unauthenticated: status 0 only queues its transaction for vk.receive, and
+-- status 1 or 2 is a note, never the end (a stranger could send it). The settle deadline decides.
 local function on_result(result)
-  if state ~= "await_pay" or not request or result.req_id ~= request.req_id then return end
-  log("result " .. result.status)
-  if result.status == vk.RESULT_OK then
-    result_ref = result.ref
-    state = "confirming"
-    next_at = 0
-  elseif result.status == vk.RESULT_REJECTED then
-    unpaid("rejected", "The payer cancelled.")
-  else
-    unpaid("failed", "The payment failed.")
+  if (state ~= "await_pay" and state ~= "confirming") or not watch or result.req_id ~= request.req_id then
+    return
   end
+  log("result " .. result.status)
+  if watch:result(result) then state = "confirming" end
 end
 
 local function confirm_payment()
-  if now() < next_at then return end
-  next_at = now() + cfg.confirm_every_s * 1000
-  local status = vk.confirm(result_ref)       -- nil (no network) counts as not yet
-  next_at = now() + cfg.confirm_every_s * 1000
-  if status == "confirmed" then
-    local sig = vk.short(codec.b58enc(result_ref) or "")
+  local status, detail = watch:update()       -- at most one blocking call
+  if status == "paid" then
+    local sig = vk.short(watch.sig)
     log("paid " .. sig)
     pulse("green", cfg.result_led_ms)
-    show_result("PAID", {"Confirmed on chain.", sig}, true)
+    show_result("PAID", {"Verified on chain.", sig}, true)
   elseif status == "failed" then
-    unpaid("failed", "The payment failed on chain.")
+    log("check failed " .. tostring(detail))
+    state = "await_pay"                       -- wait for another RESULT until the deadline
   end
 end
 
@@ -345,13 +329,14 @@ local function run_payment()
     pulse("green", cfg.result_led_ms)
     show_result("PAID", {"You paid the stake.", vk.short(detail)})
   elseif step == "failed" then
+    local reason = flow:reason()
     log("pay failed " .. tostring(detail))
     if flow.request and not flow.result_sent then
       -- vk.pay tells the payee only about failures from the approval on: tell it of this one too.
       local frame = vk.result_frame(flow.request.req_id, vk.RESULT_FAILED)
       if frame then espnow.send(flow.request.mac, frame) end
     end
-    show_result("NOT PAID", {"Not paid: " .. reason_words(detail) .. "."})
+    show_result("NOT PAID", {"Not paid.", vk.reason_text(reason)})
   end
 end
 
@@ -435,7 +420,7 @@ end
 local function invite()
   local why = not_ready()
   if why then
-    note = "Cannot duel: " .. reason_words(why) .. "."
+    note = vk.reason_text(why)
     log("not ready " .. why)
     return
   end
@@ -449,7 +434,7 @@ local function accept()
   local why = not_ready()
   if why then
     log("not ready " .. why)
-    to_title("Cannot duel: " .. reason_words(why) .. ".")
+    to_title(vk.reason_text(why))
     return
   end
   game, role, stake = offer.game, "guest", offer.stake
