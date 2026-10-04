@@ -12,6 +12,8 @@ Every app BadgeOS ships: what it is for, its permissions, its screens and its fl
 - An app never draws anything that imitates the firmware approval screen.
 - Apps are independent: deleting one app's folder breaks no other app.
 - Every app draws with `vk.ui` (Lua) or the receipt kit (native), in colours from the active theme. No app hard-codes a colour, draws a stamp, or uses a brand colour of upstream's.
+- Every app draws through `vk.ui.frame(draw)`, which calls `draw` only when the screen can have changed ([Lua API](../platform/lua-api.md#drawing-only-when-something-changed)). An app that draws on every pass holds the badge at 20 loop passes a second. Only an animation (the Game's playfield) passes period 0.
+- Every app passes `header = "BADGEOS"` from its `config.lua`.
 - The launcher and the settings are not apps: they are the BadgeOS shell ([shell](../ui/shell.md)). An app that exits returns to the shell's launcher. Upstream's sample apps (`hello`, `dice`, `gallery`, `radar`, `vumeter`, `whosnear`) are not shipped.
 
 | App | Id | Kind | Permissions |
@@ -65,6 +67,13 @@ The landing app (set as upstream's autostart app by provisioning, `--autostart h
 - A menu of the other installed apps (`badge.system.apps()` filtered by the list in `config.lua`); SELECT launches with `badge.system.launch(id)`.
 - CANCEL exits to the launcher.
 
+As built (WP40):
+
+- The screen is the two-column receipt. Left stub: `BALANCE`, the balance and the symbol, then the barcode; on an unprovisioned badge the label reads `SETUP NEEDED`. Body: rows NAME, ADDRESS, KEY (`secure chip` or `software`, worded in `config.lua`), CLOCK (`clock not set` in the warning ink when `time_ok()` is false), a rule, a four-row scrolling menu, a rule, `THANK YOU FOR HACKING`. There is no INBOX row (the count is not readable from Lua; the launcher and Settings show it). The footer's left text is `SELECT open` when the menu is not empty.
+- The menu is the ids of `config.lua` that `badge.system.apps()` reports, minus Home. UP/DOWN move, SELECT launches.
+- The balance is fetched after the first frame is on screen and then every `balance_poll_s` seconds (0: once only). It is skipped when unprovisioned or when Wi-Fi is not connected; a failure only changes one line under the barcode, and the next attempt is a whole period later. `wallet.refresh_balance()` blocks: with a route but a node that does not answer it holds the frame for up to about 6 s per attempt (the badge's own hotspot counts as connected).
+- Log lines: `HOME addr <short>` once, `HOME balance <ok|reason>` per attempted fetch.
+
 ## Pay
 
 1. **List.** `wallet.requests()` sorted by `rssi`, strongest first: claimed name, amount, signal bars. Empty: "No requests nearby". Refreshes every 500 ms.
@@ -73,15 +82,32 @@ The landing app (set as upstream's autostart app by provisioning, `--autostart h
 
 The app shows the request's *claimed* name in the list, labelled as a claim. The verified name appears only on the firmware approval.
 
+As built (WP41):
+
+- **CANCEL during a payment.** Before the approval opens (presence, record, blockhash) CANCEL abandons the payment and returns to the list. From `approve` on it returns to the list while the flow finishes in the background (the payee must get its RESULT), and the result screen appears when it ends.
+- Signal strength is text in the row's subline (`signal |||.`), thresholds in `config.signal_dbm`.
+- The progress and result screen is a single column with no amount stub and no coloured band, so it cannot be taken for the firmware approval. `PAID` is text in the `stamp_ok` colour, `NOT PAID` in `stamp_bad`.
+- Log lines: `PAY list <n>`.
+
 ## Request
 
 1. **Amount.** UP/DOWN change the amount by `config.step` minor units; LEFT/RIGHT by ten steps. SELECT opens the request.
 2. **Waiting.** `wallet.request_open{amount = ...}`; the screen shows the amount, "waiting for payment", seconds left, and `request_status().proofs` as "badges checking: n". CANCEL closes the request.
 3. **Paid.** On a RESULT frame (`vk.result_parse`) for this `req_id` with status 0: `vk.confirm(ref)` until `confirmed` (poll every 2 s, up to 30 s), then the left stub's label reads `PAID` (drawn in the `STAMP_OK` colour) and the LEDs go green. Status 1 or 2: "Payer cancelled" / "Payment failed". A RESULT is never trusted without the on-chain confirmation.
 
+As built (WP41):
+
+- **A RESULT with status 1 or 2 does not end the request.** RESULT is unauthenticated, so a forged frame must not be able to close a request: "Payer cancelled" / "Payment failed" is a line on the waiting screen and the request stays open. The same holds when a status-0 RESULT is not confirmed on chain within 30 s ("Payment not confirmed"). Further RESULT frames are ignored while one is being confirmed.
+- Once a payment is confirmed the app calls `wallet.request_close`, so the badge stops asking.
+- Body rows. Amount: `UP / DOWN`, `LEFT / RIGHT`, `SELECT open`. Waiting: `EXPIRES IN`, `BADGES CHECKING n`, `STATUS on air`, and "waiting for payment" under the rule. Paid: `CONFIRMED on chain`, `REF`, `STATUS closed`; there is no `FROM` row, because a RESULT carries no verified payer.
+- Defaults in `config.lua`: `start = 1000` (10.00) and `step = 50` (0.50). Decimals come from `wallet.tokens()`.
+- With no clock it logs `REQ err no_time` and stays open. Log lines: `REQ amount <text>`, `REQ open <req_id>`, `REQ closed`.
+
 ## History
 
 A scrolling list of `wallet.history(64)`: time, outcome (coloured), amount and symbol, recipient name or short address, app. SELECT on a row shows the full record including the reason and the short signature.
+
+As built (WP42): each list row is the name (or the short address, or the domain's label) and the amount with its symbol, coloured by outcome; the subline is `HH:MM · app · outcome`. A record with no amount (a confirmation, which is what `VKDEMOAPPROVE` writes) shows the label `Confirmation` and the outcome word as the coloured value. The detail screen has nine rows (Time in UTC, Outcome, Reason, Amount, To, Address, App, Domain, Signature short); UP/DOWN step between records; CANCEL goes detail → list → launcher. Cancelled and timed-out records use the warning ink (`tone` in `config.lua`; the simulation uses the faint ink). Log line: `HIST n <count>`.
 
 ## Contacts
 
@@ -92,6 +118,8 @@ A scrolling list of `wallet.history(64)`: time, outcome (coloured), amount and s
   - Both badges do both halves, so each ends up with the other's card.
 - Names here are labelled "self-named"; they are not verified identities.
 
+As built (WP43): `wallet.contacts()` is oldest first; the list shows newest first with the date as `Oct 3` (blank when `added` is 0). The card frame is matched with `vk.T_CONTACT_CARD`. ESP-NOW is left on when swap mode ends. Log lines: `CON list <n>`, `CON swap on`, `CON swap off`.
+
 ## Game
 
 A single-player arcade game with a shop, to show that an ordinary app can take payments safely.
@@ -101,6 +129,14 @@ A single-player arcade game with a shop, to show that an ordinary app can take p
 - On `done` the item (an extra life, a colour) is unlocked and stored.
 
 `config.lua`: `shop.recipient` (address with a registry record), `shop.items`, `speed`, `colors`.
+
+As built (WP44):
+
+- **The title screen is the shop**, as in the simulation: one list with `Play` and one `Buy <item>` row per item, and a separate status screen while a purchase runs. Items: shield and sword (each a life) and green paint (a colour); an owned item cannot be bought again.
+- High score and unlocks are in `badge.storage.kv` (keys `best` and `o<id>`, so an item id is at most 6 characters).
+- **CANCEL during a purchase:** before the approval opens it drops the purchase; after signing it returns to the title and the flow finishes in the background.
+- **`shop.recipient` ships as the placeholder `REPLACE_WITH_SHOP_ADDRESS`.** Nothing fills it in: edit `config.lua` (and `evilgame/config.lua`) before a demo ([build guide](../guides/build-flash-provision.md#before-a-demo)). Until then a purchase ends with "the shop is not set up" and no approval opens.
+- Log lines: `GAME title`, `GAME play`, `GAME score <n>`, `GAME over <n>`, `GAME shop <id> <price>`, `GAME buy failed <reason>`.
 
 ## Evil game
 
@@ -115,6 +151,8 @@ The same game with a dishonest shop, for the demo. `apps/evilgame/` contains onl
 
 The point of the demo: the game's screen lies, the firmware's cannot.
 
+As built (WP44): both evil cases go through `vk.pay.start`, the same code path as an honest purchase, with one option changed: `amount = config.evil_amount`, or `destination = config.evil_recipient`. `evil_recipient` is therefore a **token account** (what `destination` takes), not a wallet address, and ships as the placeholder `REPLACE_WITH_ATTACKER_TOKEN_ACCOUNT`. The lie applies to every item. Neither demo has run: both need the network and a registry record for the shop.
+
 ## Duel
 
 Two badges, one stake.
@@ -125,6 +163,17 @@ Two badges, one stake.
 4. The winner shows PAID after confirming on chain, or "unpaid" if no confirmed RESULT arrives within `config.settle_timeout_s`.
 
 Limits to state honestly: there is no escrow (the loser can press CANCEL), and reaction times are self-reported (a modified app could lie). Frame types 64–71 are reserved for Duel ([protocol](../protocol/espnow.md#type-registry)).
+
+As built (WP45); the frames are specified in [protocol](../protocol/espnow.md#type-registry):
+
+- INVITE and ACCEPT each carry the sender's public key, because the loser must find "the winner's request" and no other frame names the winner's key. A fifth frame, LEAVE (68), ends the other badge's wait at once when a player quits.
+- The opponent's name in "Duel `<name>` for `<stake>`?" comes from `badge.espnow.peers()` by MAC, or is the short address; the screen says it is self-named.
+- GO carries the milliseconds still to wait and is resent until the flash; each badge times itself from its own flash. A press before the flash is sent as 65535 and loses the round. A tied round is replayed; after `config.max_rounds` (9) the duel is a draw with no settlement.
+- The app refuses to invite or accept on a badge that is unprovisioned or has no clock (`DUEL not ready <reason>`), because `request_open` would fail only after the game.
+- The flash is the one screen not drawn with `vk.ui`: the whole screen in the ink colour with `PRESS` in the paper colour (`gfx.clear`, `gfx.text`).
+- If the loser's payment fails before the approval (no network, no record), the app itself sends RESULT failed, so the winner does not wait out `settle_timeout_s`; it reads `flow.result_sent` and `flow.sig` for that ([Lua API](../platform/lua-api.md#vkpay)). A forged RESULT can only make the winner show "unpaid" early; PAID needs the on-chain confirmation.
+- Two badges that invite each other at the same moment both ignore the other's INVITE and time out to the title.
+- Log lines: `DUEL title`, `DUEL stake <text>`, `DUEL invite <id>`, `DUEL invite timeout`, `DUEL request <req_id>`, `DUEL paying <req_id>`, `DUEL paid`, `DUEL unpaid`.
 
 ## Inbox (native)
 

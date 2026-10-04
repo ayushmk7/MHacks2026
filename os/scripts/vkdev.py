@@ -66,7 +66,7 @@ _B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 
 def b58enc(data):
-    """bytes -> base58 text (the Bitcoin alphabet, as Solana uses)."""
+    """bytes -> base58 text (the Bitcoin alphabet, as the Solana blockchain uses)."""
     data = bytes(data)
     number = int.from_bytes(data, "big")
     text = ""
@@ -797,7 +797,7 @@ def selftest():
 # --------------------------------------------------------------------------------------------
 
 def build_parser():
-    parser = argparse.ArgumentParser(description="Badge OS serial tool (see docs/os/testing/testing.md)")
+    parser = argparse.ArgumentParser(description="BadgeOS serial tool (see docs/os/testing/testing.md)")
     parser.add_argument("--port", help="serial port of the badge, e.g. /dev/cu.usbserial-10")
     parser.add_argument("--port2", help="serial port of a second badge (two-badge tests)")
     parser.add_argument("--baud", type=int, default=BAUD)

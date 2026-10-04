@@ -1,4 +1,4 @@
-"""T-HOOK1 and the whosnear check (WP22, ESP-NOW router). Needs two badges with a dev build.
+"""T-HOOK1 (WP22, ESP-NOW router). Needs two badges with a dev build.
 
 Both badges must be on the same ESP-NOW channel: joined to the same hotspot, or neither joined to
 any network. The test reads each badge's channel and says so if they differ.
@@ -10,11 +10,12 @@ frames. The same run checks the router's forwarding rules (protocol/espnow.md, "
   - a VK frame of an app-range type (64) reaches the app (rule 3);
   - CHAL and PROOF (types 2 and 3) never reach the app (rule 2).
 
-whosnear: upstream's ESP-NOW sample still works between two badges. Its roster is only on the
-screen, so the check compares the header's roster count in screenshots: badge 1's count changes
-when badge 2 opens the app, and badge 2's count changes when badge 1 leaves.
+The first app is the pushed fixture "plain" (fixtures/plain). The two helper apps (hookrx, hooktx)
+are written to a temporary folder and pushed by this test. The check that used upstream's
+whosnear sample is gone with the sample (upstream-hooks.md, "Replaced upstream files"); the same
+path, two badges exchanging app frames, is what T-HOOK1 itself exercises.
 
-The two helper apps (hookrx, hooktx) are written to a temporary folder and pushed by this test.
+Both badges must run BadgeOS: its ESP-NOW magic (BDOS, hook H23) differs from upstream's.
 """
 
 import os
@@ -26,9 +27,9 @@ from common import launch, to_launcher
 
 NEEDS = "two-badges"
 
-_APPS = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "apps"))
+_PLAIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "plain")
 
-_INI = "name=%s\nversion=1.0.0\nauthor=Badge OS tests\ndescription=T-HOOK1 helper\npermissions=espnow\n"
+_INI = "name=%s\nversion=1.0.0\nauthor=BadgeOS tests\ndescription=T-HOOK1 helper\npermissions=espnow\n"
 
 # Logs every payload it receives: "hookrx <kind> <mac> <text>". kind is "plain", or "vk<type>" for
 # a VK v1 frame (then <text> is the body after the 4-byte header).
@@ -78,10 +79,6 @@ function on_draw()
 end
 """
 
-# The roster count in whosnear's header: text_right(n, 250, 8, colour, 2). Up to two digits.
-_WIDTH = 320
-_COUNT_BOX = (224, 6, 252, 26)  # x0, y0, x1, y1
-
 
 def _push_helper(badge, app_id, lua):
     with tempfile.TemporaryDirectory() as folder:
@@ -97,36 +94,20 @@ def _channel(badge, app):
     return int(re.search(r"up (?:on channel|ch) (\d+)", line).group(1))
 
 
-def _count_box(badge):
-    pixels = badge.shot()
-    x0, y0, x1, y1 = _COUNT_BOX
-    return b"".join(pixels[(y * _WIDTH + x0) * 2:(y * _WIDTH + x1) * 2] for y in range(y0, y1))
-
-
-def _wait_box_change(badge, before, timeout):
-    deadline = time.monotonic() + timeout
-    while True:
-        if _count_box(badge) != before:
-            return True
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(0.3)
-
-
 def run(badge, badge2):
     to_launcher(badge)
     to_launcher(badge2)
     token = "%08x" % (int(time.time() * 1000) & 0xFFFFFFFF)
 
     # ---- T-HOOK1 ----------------------------------------------------------------------------
-    badge.push(os.path.join(_APPS, "hello"), "hello")
+    badge.push(_PLAIN, "plain")
     _push_helper(badge, "hookrx", _RX_LUA)
     _push_helper(badge2, "hooktx", _TX_LUA.replace("@TOKEN@", token))
 
     # The first app. Upstream cleared the receive handler when it stopped (finding F1).
-    launch(badge, "hello")
+    launch(badge, "plain")
     badge.stop()
-    badge.wait_state(lambda s: s["app"] != "hello", timeout=5)
+    badge.wait_state(lambda s: s["app"] != "plain", timeout=5)
 
     # The second app, the one that listens.
     badge.clear_log()
@@ -155,31 +136,5 @@ def run(badge, badge2):
     badge.stop()
     badge.wait_state(lambda s: s["app"] != "hookrx", timeout=5)
     badge2.wait_state(lambda s: s["app"] != "hooktx", timeout=5)
-    to_launcher(badge)
-    to_launcher(badge2)
-
-    # ---- whosnear ---------------------------------------------------------------------------
-    whosnear = os.path.join(_APPS, "whosnear")
-    badge.push(whosnear, "whosnear")
-    badge2.push(whosnear, "whosnear")
-
-    launch(badge, "whosnear")
-    time.sleep(2.0)
-    alone = _count_box(badge)  # roster count 0: nobody else runs the app
-
-    launch(badge2, "whosnear")
-    assert _wait_box_change(badge, alone, timeout=10), (
-        "badge 1's whosnear roster did not change within 10 s of badge 2 opening the app")
-
-    time.sleep(3.0)  # two of badge 1's hellos, so badge 2 has it in its roster
-    together = _count_box(badge2)
-    badge.stop()
-    badge.wait_state(lambda s: s["app"] != "whosnear", timeout=5)
-    # whosnear drops a peer 6 s after its last hello.
-    assert _wait_box_change(badge2, together, timeout=14), (
-        "badge 2's whosnear roster did not change after badge 1 left: it never listed badge 1")
-
-    badge2.stop()
-    badge2.wait_state(lambda s: s["app"] != "whosnear", timeout=5)
     to_launcher(badge)
     to_launcher(badge2)

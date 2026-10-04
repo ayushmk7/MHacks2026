@@ -7,7 +7,7 @@
 // CANCEL exits.
 //
 // Screen (ui.md, "Screens: any list"), drawn only with the receipt kit:
-//   header   BADGE OS / time and battery
+//   header   BADGEOS / time and battery
 //   title    the page's name, capitals at y 26..36
 //   lines    y 41..202: nine rows (pitch 18, the first at y = 46), or five rows with a subline each
 //            (pitch 31); the same positions as the Inbox app's list
@@ -313,7 +313,7 @@ class WalletSettings final : public badge::App {
     char right[24];
     rc::statusRight(right, sizeof right);
     rc::page();
-    rc::header("BADGE OS", right);
+    rc::header("BADGEOS", right);
     rc::title(PAGE_TITLES[page_], TITLE_Y);
 
     Painter painter(scroll_);

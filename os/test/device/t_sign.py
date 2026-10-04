@@ -99,8 +99,11 @@ def apr1(badge, keys, own, hold, dev):
     print("M2 %s" % badge.wait_log(SIGN_LINE, timeout=3).strip())
     called = log_ms(badge, r"\[app\] CT call (\d+)")
     drawn = log_ms(badge, r"\[vk\] approval first draw at (\d+) ms")
-    if called and drawn:
-        print("M3 begin_solana to first draw, no record: %d ms" % (drawn[0] - called[0]))
+    # The consent prompt of the launch has a "first draw" line too, before the call: take the
+    # first one after it.
+    after = [ms for ms in drawn if called and ms >= called[-1]]
+    if after:
+        print("M3 begin_solana to first draw, no record: %d ms" % (after[0] - called[-1]))
     badge.wait_state(lambda s: not s["modal"] and s["poll"] == "idle", timeout=5)
 
 

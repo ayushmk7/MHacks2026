@@ -24,9 +24,21 @@ Integers are little-endian. A payload that does not start with `VK` + version 1 
 | 1–15 | payments (`features/requests`) | 1 REQ · 2 CHAL · 3 PROOF · 4 RESULT |
 | 16–31 | contacts (`features/contacts`) | 16 CONTACT_HELLO · 17 CONTACT_CARD |
 | 32–63 | reserved for firmware | none |
-| 64–255 | apps | 64–71 Duel · 72–255 free |
+| 64–255 | apps | 64–71 Duel: 64 INVITE · 65 ACCEPT · 66 GO · 67 TIME · 68 LEAVE · 69–71 unused · 72–255 free |
 
 An app picks an unused block in the app range and records it in this table. Only one app runs at a time, so two apps never receive each other's frames; the table exists so two badges running different apps do not misread each other.
+
+Duel's frames (`os/apps/duel/main.lua`; built and matched with `vk.app_frame` and `vk.app_body`, so each starts with the VK header). `game` is 8 random bytes chosen by the inviter and names one duel:
+
+| Type | Name | Body | Sent |
+|---|---|---|---|
+| 64 | INVITE | `game`(8) · the inviter's public key (32) · the stake as text in display units | broadcast, repeated while inviting |
+| 65 | ACCEPT | `game`(8) · the accepter's public key (32) | to the inviter, repeated until the first GO |
+| 66 | GO | `game`(8) · round (1) · milliseconds until the flash (u16, big-endian) | by the inviter, repeated until the flash; each badge times itself from its own flash |
+| 67 | TIME | `game`(8) · round (1) · reaction time in ms (u16; 65535 = pressed before the flash) | to the opponent |
+| 68 | LEAVE | `game`(8) | to the opponent when a player quits: the other badge stops waiting at once |
+
+The public keys are in INVITE and ACCEPT because the loser pays the winner's key and no other frame carries it. None of these frames is signed: they decide who asks whom for money, and the payment itself goes through a signed REQ and the approval screen like any other.
 
 ## Frames
 

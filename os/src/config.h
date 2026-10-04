@@ -12,7 +12,7 @@
 // ============================================================================
 // Firmware identity
 // ============================================================================
-#define SOLANA_OS_NAME     "Solana OS"
+#define SOLANA_OS_NAME     "BadgeOS"  // VK: H23 (was "Solana OS")
 #define SOLANA_OS_VERSION  "0.1.0"
 
 // The Lua SDK reports this. Bump the minor when bindings are added, the major
@@ -136,9 +136,9 @@ constexpr uint16_t BATTERY_POLL_MS      = 500;
 // Networking
 // ============================================================================
 constexpr uint16_t PUSH_SERVER_PORT     = 80;
-constexpr char     DEFAULT_HOSTNAME[]   = "solana-badge";
+constexpr char     DEFAULT_HOSTNAME[]   = "badgeos";  // VK: H23 (was upstream's hostname)
 // SoftAP fallback, used by Settings -> Wi-Fi -> "Start hotspot".
-constexpr char     DEFAULT_AP_PASSWORD[] = "solanabadge";
+constexpr char     DEFAULT_AP_PASSWORD[] = "badgeos-setup";  // VK: H23 (was upstream's hotspot password)
 constexpr uint8_t  ESPNOW_DEFAULT_CHANNEL = 1;
 constexpr uint16_t ESPNOW_BEACON_MS       = 1000;
 // A peer that has not been heard from in this long drops off the radar.
@@ -168,7 +168,7 @@ constexpr uint32_t SE050_IDENTITY_KEY_ID = 0xF0000001;
 // box with no per-badge cert provisioning. Override it in Settings > App store
 // or over the push API to point at another broker (upload a 'broker-ca' cert
 // for a self-hosted https one).
-#define DEFAULT_BROKER_URL "https://broker.solanadefcon.com"
+#define DEFAULT_BROKER_URL ""  // VK: H23 (was upstream's DEF CON broker): the store client is off until an address is set from the web UI
 // How often the badge asks whether anything is waiting for it. Short enough
 // that "send to badge" feels immediate, long enough to be invisible on a
 // conference network with a few hundred badges on it.

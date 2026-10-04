@@ -118,7 +118,7 @@ The engine also serves the config store: at boot it sets `vk::config::confirmCha
 
 ## Screen
 
-320×240, drawn into `display::canvas()` every pass while active, with the receipt kit ([ui](../ui/ui.md#the-receipt-kit)). The layout is one fixed function in `src/vk/ui/approval_screen.cpp`; paper and ink follow the active theme (light or dark), nothing else is configurable. It is declared in `src/vk/ui/approval_screen.h`, in namespace `vk::ui` (the types are the `vk::wallet` ones above):
+320×240, drawn into `display::canvas()` with the receipt kit ([ui](../ui/ui.md#the-receipt-kit)). The engine asks for a frame on every pass while it is active; the firmware's draw hook (`fwDraw` in `approval.cpp`) redraws only when the picture changes: the first frame of an approval, a new phase, the next of 40 steps of the hold bar, the footer blink, the result, and once a second for the header's clock. A frame is about 10 ms of drawing plus a 34 ms transfer to the panel; drawn on every pass, as first built, it held the loop at 23 passes a second for as long as the approval was open, and between frames a pass is now about 1 ms ([measurements](../testing/testing.md#responsiveness)). The layout is one fixed function in `src/vk/ui/approval_screen.cpp`; paper and ink follow the active theme (light or dark), nothing else is configurable. It is declared in `src/vk/ui/approval_screen.h`, in namespace `vk::ui` (the types are the `vk::wallet` ones above):
 
 ```cpp
 // src/vk/ui/approval_screen.h

@@ -209,7 +209,7 @@ bool preLaunch(const String &appId, String &error) {
   } else {
     if (!manifest::load(appId, extra)) return refuse(appId, error, "bad min_api in app.ini");
     if (extra.min_api > (uint32_t)VK_API_VERSION) {
-      return refuse(appId, error, "needs a newer Badge OS (API " + String((unsigned long)extra.min_api) + ")");
+      return refuse(appId, error, "needs a newer BadgeOS (API " + String((unsigned long)extra.min_api) + ")");
     }
   }
 

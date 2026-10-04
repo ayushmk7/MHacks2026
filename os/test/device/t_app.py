@@ -14,7 +14,7 @@ test/device/fixtures/ (noperm, needsign, minapi99, nonet); they stay installed a
           holds `sign` but not `net`. A second launch starts with no prompt.
   T-APP3  needsign is pushed again with permissions=sign,net: the launch asks again; after the hold
           the app holds `net` as well, and the launch after that has no prompt.
-  T-APP4  minapi99 has min_api=99: the launch is refused with "needs a newer Badge OS (API 99)" and
+  T-APP4  minapi99 has min_api=99: the launch is refused with "needs a newer BadgeOS (API 99)" and
           its code never runs.
   T-APP7  nonet has an empty permissions= line and uses badge.http.get: the call raises an error
           naming `net`, caught or not; badge.wifi is closed as well, badge.system is not.
@@ -37,7 +37,7 @@ NOT_GRANTED = "permission '%s' not granted (add it to permissions= in app.ini)"
 NEEDSIGN_INI_SIGN_NET = (
     "name=Needs sign\n"
     "version=1.0.1\n"
-    "author=Badge OS tests\n"
+    "author=BadgeOS tests\n"
     "description=Dev-only test fixture (T-APP3): now asks for sign and net.\n"
     "permissions=sign,net\n"
     "min_api=2\n"
@@ -197,13 +197,13 @@ def app3(badge, hold):
 def app4(badge):
     push_fixture(badge, "minapi99")
     badge.run("minapi99")
-    line = badge.wait_log(r"needs a newer Badge OS", timeout=10)
-    assert "needs a newer Badge OS (API 99)" in line, "T-APP4: the refusal is: %s" % line
+    line = badge.wait_log(r"needs a newer BadgeOS", timeout=10)
+    assert "needs a newer BadgeOS (API 99)" in line, "T-APP4: the refusal is: %s" % line
     time.sleep(0.5)
     state = badge.state()
     assert state["app"] != "minapi99" and not state["modal"], "T-APP4: after the refusal the state is %s" % state
     assert not logged(badge, "M99 start"), "T-APP4: the app's code ran"
-    to_launcher(badge)   # upstream shows the refusal on its error screen
+    to_launcher(badge)   # the shell shows the refusal on its error screen (app_error)
 
 
 def app7(badge):

@@ -18,6 +18,8 @@
 #include "../../core/serial.h"
 #include "../../host/native.h"
 #include "../../host/notify.h"
+#include "../../shell/screens.h"   // ::shell::screenName()
+#include "../../vk.h"              // vk::flushStats()
 #include "../../wallet/reason.h"
 #include "../../wallet/signer.h"
 #include "../../wallet/approval.h"  // last: it removes the Arduino core's DISABLED macro
@@ -223,6 +225,9 @@ void cmdState(const String &, const vk::serial::Reply &reply) {
   jsonString(out, runtime::currentApp().c_str());
   out += ",\"native\":";
   out += vk::host::native::active() ? "true" : "false";
+  out += ",\"screen\":\"";
+  out += ::shell::screenName();            // [a-z_] or empty: nothing to escape
+  out += "\"";
   out += ",\"modal\":";
   out += approval::active() ? "true" : "false";
   out += ",\"phase\":";
@@ -266,6 +271,12 @@ void cmdState(const String &, const vk::serial::Reply &reply) {
   jsonString(out, pollName(approval::peekResult()));
   out += ",\"heap\":";
   out += String((unsigned)ESP.getFreeHeap());
+  // What VKSHOT cannot see: it reads the canvas, not the glass. A backlight at 0, or a canvas that
+  // is drawn but never sent to the panel, is a black screen with a perfect screenshot.
+  out += ",\"backlight\":";
+  out += String((unsigned)display::brightness());
+  out += ",\"flushes\":";
+  out += String((unsigned)vk::flushStats().transfers);   // canvas transfers since boot (hook H24)
   out += '}';
   reply(out);
 }
@@ -401,8 +412,71 @@ void cmdNote(const String &args, const vk::serial::Reply &reply) {
   reply("OK");
 }
 
+// ---------------------------------------------------------------------------
+// VKPERF: main-loop timing (testing.md, "Dev hooks")
+// ---------------------------------------------------------------------------
+// perfTick() runs once per loop pass (from the H17 call at the top of buttons::update()), so the
+// time between two calls is one whole pass: input, radios, services, the shell or the app, and the
+// display transfer. Each window is one second; VKPERF prints the last complete one.
+
+struct PerfWindow {
+  uint32_t passes = 0;
+  uint32_t sumUs = 0;
+  uint32_t worstUs = 0;
+  uint32_t slow = 0;       // passes of 20 ms or more: a pass that drew and sent the canvas
+  uint32_t flushes = 0;    // canvas transfers to the panel (vk::flush, hook H24)
+  uint32_t flushUs = 0;    // time spent in them
+};
+
+constexpr uint32_t PERF_SLOW_US = 20000;
+
+PerfWindow sPerfNow;
+PerfWindow sPerfLast;
+vk::FlushStats sPerfFlushAt = {0, 0};   // vk::flushStats() when sPerfNow began
+uint32_t sPerfPassAt = 0;      // micros() at the last pass; 0 = none yet
+uint32_t sPerfWindowAt = 0;    // millis() when sPerfNow began
+uint32_t sPerfPeakUs = 0;      // the longest pass since the last VKPERF
+
+void perfTick() {
+  const uint32_t nowUs = micros();
+  if (sPerfPassAt != 0) {
+    const uint32_t passUs = nowUs - sPerfPassAt;
+    ++sPerfNow.passes;
+    sPerfNow.sumUs += passUs;
+    if (passUs > sPerfNow.worstUs) sPerfNow.worstUs = passUs;
+    if (passUs >= PERF_SLOW_US) ++sPerfNow.slow;
+    if (passUs > sPerfPeakUs) sPerfPeakUs = passUs;
+  }
+  sPerfPassAt = nowUs == 0 ? 1 : nowUs;
+  const uint32_t nowMs = millis();
+  if (nowMs - sPerfWindowAt >= 1000) {
+    const vk::FlushStats flush = vk::flushStats();
+    sPerfNow.flushes = flush.transfers - sPerfFlushAt.transfers;
+    sPerfNow.flushUs = flush.micros - sPerfFlushAt.micros;
+    sPerfFlushAt = flush;
+    sPerfLast = sPerfNow;
+    sPerfNow = PerfWindow();
+    sPerfWindowAt = nowMs;
+  }
+}
+
+void cmdPerf(const String &, const vk::serial::Reply &reply) {
+  const PerfWindow &w = sPerfLast;
+  char line[200];
+  const uint32_t avgUs = w.passes ? w.sumUs / w.passes : 0;
+  snprintf(line, sizeof line, "OK passes=%u avg_ms=%u.%u worst_ms=%u slow=%u flushes=%u flush_ms=%u peak_ms=%u stack=%u",
+           (unsigned)w.passes, (unsigned)(avgUs / 1000), (unsigned)((avgUs % 1000) / 100),
+           (unsigned)((w.worstUs + 500) / 1000), (unsigned)w.slow, (unsigned)w.flushes,
+           (unsigned)(w.flushes ? (w.flushUs / w.flushes + 500) / 1000 : 0),
+           (unsigned)((sPerfPeakUs + 500) / 1000),
+           (unsigned)uxTaskGetStackHighWaterMark(NULL));   // loop task: least free stack since boot, bytes (M6)
+  sPerfPeakUs = 0;
+  reply(line);
+}
+
 }  // namespace
 
+VK_SERIAL_COMMAND(vkperf, "VKPERF", cmdPerf, "loop passes in the last second: count, average and worst ms, display transfers");
 VK_SERIAL_COMMAND(vkstate, "VKSTATE", cmdState, "one-line JSON snapshot of the badge");
 VK_SERIAL_COMMAND(vkbtn, "VKBTN", cmdBtn, "<up|down|left|right|a|b> <tap|press|release|hold> [ms]");
 VK_SERIAL_COMMAND(vkshot, "VKSHOT", cmdShot, "the screen: run-length RGB565 in base64, then a CRC-32");
@@ -415,6 +489,7 @@ VK_SERIAL_COMMAND(vknote, "VKNOTE", cmdNote, "<title>|<body>|<app> posts a notif
 // and set it in *pressed only on the pass its press begins. On the pass a release is applied the
 // key leaves *down and is set in *released once.
 extern "C" void vk_dev_apply_injected_buttons(uint8_t *down, uint8_t *pressed, uint8_t *released) {
+  perfTick();
   const uint32_t now = millis();
   uint8_t began = 0;
   uint8_t ended = 0;

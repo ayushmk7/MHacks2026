@@ -23,7 +23,7 @@
 #include "../host/lifecycle.h"
 #include "../ui/approval_screen.h"
 #include "../ui/leds.h"
-#include "../ui/statusbar.h"
+#include "../ui/repaint.h"
 #include "signer_internal.h"
 #define VK_APPROVAL_LOG(...) badge_log::tagf("vk", __VA_ARGS__)
 #else
@@ -499,9 +499,32 @@ bool fwSelectDown() { return buttons::down(BTN_A); }
 bool fwCancelDown() { return buttons::down(BTN_B); }
 bool fwAnyKeyDown() { return buttons::downMask() != 0; }
 
-// The screen is drawn every pass while the approval is up; the main loop's display::flush() pushes
-// it only if the canvas was marked changed.
+// The engine asks for a frame on every pass while the approval is up. A frame costs about 10 ms of
+// drawing and a 34 ms display transfer, so the screen is redrawn only when the picture changes:
+// the first frame of an approval, a new phase, the next step of the hold bar, the footer blink, the
+// result, and once a second for the clock in the header. Between those a pass costs about 1 ms, so
+// a key is seen at once.
+constexpr int HOLD_BAR_STEPS = 40;
+constexpr uint32_t APPROVAL_REDRAW_MS = 1000;
+
 void fwDraw(const ApprovalRequest &request, Phase phase, float holdProgress, const ApprovalOutcome *outcome, bool footerBlink) {
+  static Phase drawnPhase = Phase::IDLE;
+  static int drawnStep = -1;
+  static bool drawnBlink = false;
+  static bool drawnOutcome = false;
+  static uint32_t drawnAt = 0;
+
+  const int step = (int)(holdProgress * HOLD_BAR_STEPS);
+  const uint32_t now = (uint32_t)millis();
+  if (!sFirstDraw && phase == drawnPhase && step == drawnStep && footerBlink == drawnBlink &&
+      (outcome != nullptr) == drawnOutcome && (uint32_t)(now - drawnAt) < APPROVAL_REDRAW_MS) {
+    return;
+  }
+  drawnPhase = phase;
+  drawnStep = step;
+  drawnBlink = footerBlink;
+  drawnOutcome = outcome != nullptr;
+  drawnAt = now;
   vk::ui::drawApproval(request, phase, holdProgress, outcome, footerBlink);
   display::touch();
 }

@@ -138,8 +138,11 @@ else:
     routeButtons()                             upstream: buttons to the running app
     runtime::update() or shell::update()       Lua app or native app (hook H8); with no app, the BadgeOS shell (src/vk/shell/)
 runtime::processRequests()                     upstream: launches and stops between frames
-display::flush()                               upstream
+vk::flush()                                    hook H24: upstream's display::flush(), counted. Sends the canvas to the panel
+                                               only if something drew on it during this pass (34 ms); otherwise nothing
 ```
+
+A pass in which nothing draws is about 1 ms. Every screen must therefore draw only when its picture changed: the shell does ([shell](../ui/shell.md#framework)), the approval does ([approval](../wallet/approval.md#screen)), and Lua apps do through `vk.ui.frame` ([Lua API](../platform/lua-api.md#drawing-only-when-something-changed)). Code that draws on every pass holds the whole badge at about 20 passes a second.
 
 Consequences that other documents rely on:
 

@@ -1,4 +1,4 @@
--- lib/vk.lua: the shared Lua library of Badge OS (docs/os/platform/lua-api.md, "lib/vk.lua").
+-- lib/vk.lua: the shared Lua library of BadgeOS (docs/os/platform/lua-api.md, "lib/vk.lua").
 --
 --   local vk = require("vk")
 --
@@ -469,8 +469,11 @@ end
 
 local FRAME_MAGIC = "VK\1"
 local FRAME_MAX = 240
-local T_RESULT, T_CONTACT_HELLO = 4, 16
+local T_RESULT, T_CONTACT_HELLO, T_CONTACT_CARD = 4, 16, 17
 local RESULT_LEN = 77
+
+-- Frame types an app compares vk.frame_type(data) with (the type registry of espnow.md).
+vk.T_RESULT, vk.T_CONTACT_HELLO, vk.T_CONTACT_CARD = T_RESULT, T_CONTACT_HELLO, T_CONTACT_CARD
 
 vk.RESULT_OK, vk.RESULT_REJECTED, vk.RESULT_FAILED = 0, 1, 2
 
@@ -538,7 +541,10 @@ end
 -- States: "presence" (request only) -> "record" -> "blockhash" -> "approve" -> "submit" ->
 -- "confirm" -> "done" (detail: the transaction signature, base58) or "failed" (detail: the
 -- reason: a reason code of reference/reasons.md, or the message of the network call that failed).
--- flow.state, flow.detail and flow.signature (base58, once signed) can be read at any time.
+-- Fields an app may read at any time (lua-api.md, "vk.pay"): flow.state, flow.detail, flow.ready
+-- (true once the first update() has finished its balance step), flow.sig (the 64 signature bytes,
+-- once signed), flow.signature (the same in base58), flow.result_sent (true once a RESULT frame
+-- went to the payee), flow.request and flow.failed_in.
 --
 -- update() makes at most one blocking call (an HTTP request, or opening the approval).
 --   first       wallet.refresh_balance(), only when wallet.token_account() is not known yet
@@ -922,6 +928,43 @@ function ui.text_center(text, cx, y, color)
   draw_centered(columns(text), cx, y, color or ui.color("ink"), 0)
 end
 
+-- ---------------------------------------------------------------------------------------------
+-- Drawing only when the screen changed (docs/os/platform/lua-api.md, "vk.ui.frame")
+-- ---------------------------------------------------------------------------------------------
+-- A full frame costs about 15 ms of drawing and a 34 ms transfer to the panel, and the runtime
+-- calls on_draw() on every loop pass: an app that draws each time runs its loop at 20 passes a
+-- second and feels slow. An app therefore keeps its drawing in one function and writes
+--
+--   local function draw() ... end
+--   function on_draw() vk.ui.frame(draw) end
+--
+-- ui.frame(draw, [period_ms]) calls draw() only when the picture can have changed:
+--   * ui.dirty() was called since the last frame (the app changed something it shows);
+--   * a key is down, or was down on the last pass (key handlers change state; repeats scroll);
+--   * on_draw was not called for ui.pause_ms: an approval was up and the canvas holds its picture;
+--   * period_ms (default ui.frame_ms, 250) passed since the last frame: clocks, countdowns, and a
+--     state change whose code did not call ui.dirty(). Pass 0 for an animation (every pass).
+-- It returns true when it drew. Between frames a pass costs about a millisecond.
+ui.frame_ms = 250
+ui.pause_ms = 150
+
+local frame_dirty, frame_at, frame_seen, frame_keys = true, nil, nil, false
+
+function ui.dirty() frame_dirty = true end
+
+function ui.frame(draw, period_ms)
+  local now = badge.millis()
+  local keys = badge.input.any()
+  local due = frame_dirty or keys or frame_keys or frame_at == nil
+    or now - frame_at >= (period_ms or ui.frame_ms)
+    or now - frame_seen >= ui.pause_ms
+  frame_seen, frame_keys = now, keys
+  if not due then return false end
+  frame_dirty, frame_at = false, now
+  draw()
+  return true
+end
+
 function ui.page()
   badge.gfx.clear(ui.color("paper"))
 end
@@ -1069,12 +1112,12 @@ local TONES = {ok = "stamp_ok", warn = "stamp_warn", bad = "stamp_bad", mut = "f
 -- title, rows, footer. `sel` is the index of the selected row (1-based; nil selects none); the
 -- window scrolls to keep it in view: 5 rows when any row has a subline, else 9. `tone` colours a
 -- row's value: "ok", "warn", "bad" or "mut". The title and the labels are drawn in capitals.
--- Also read: `header` (left header text, default "BADGE OS"), `back` (right footer text, default
+-- Also read: `header` (left header text, default "BADGEOS"), `back` (right footer text, default
 -- "CANCEL back"), `empty` (a line shown when there are no rows).
 function ui.list(model)
   local rows = model.rows or {}
   ui.page()
-  ui.header(model.header or "BADGE OS")
+  ui.header(model.header or "BADGEOS")
   ui.title(tostring(model.title or ""):upper(), ui.TITLE_Y)
 
   local with_sub = false

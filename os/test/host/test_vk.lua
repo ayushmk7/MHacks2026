@@ -1124,9 +1124,9 @@ do
 
   -- header: left at x 10, right ending at x 310, both at y 7; the rule at y 19 from 10 to 310.
   reset_world()
-  ui.header("BADGE OS", "USB")
+  ui.header("BADGEOS", "USB")
   local texts = drawn("text")
-  check(has(texts, "BADGE OS,10,7,2,1"), "the header's left text")
+  check(has(texts, "BADGEOS,10,7,2,1"), "the header's left text")
   check(has(texts, "USB,292,7,2,1"), "the header's right text ends at x 310")
   local rects = drawn("fill_rect")
   check(has(rects, "10,19,3,1,2"), "the header rule starts at x 10")
@@ -1282,7 +1282,7 @@ do
   })
   eq(world.draws[1][1], "clear", "a list starts with the page")
   texts = drawn("text")
-  check(has(texts, "BADGE OS,10,7,2,1"), "the list's header")
+  check(has(texts, "BADGEOS,10,7,2,1"), "the list's header")
   check(has(texts, "P,142,25,2,2"), "the list's title, in capitals")       -- width 3*12 + 2 - 2 = 36
   check(has(texts, "MHACKS MERCH,10,46,2,1"), "the first row at y 46, in capitals")
   check(has(texts, "Gn2G..Ecxq,22,59,4,1"), "the first row's subline at y 59")
@@ -1333,6 +1333,40 @@ do
   eq(#drawn("text"), 0, "a triangle draws no text")
 
   badge.theme = nil
+end
+
+-- ui.frame: draw only when the screen can have changed.
+do
+  local ui = vk.ui
+  local keys_down = false
+  local saved_input = badge.input
+  badge.input = {any = function() return keys_down end}
+  local frames = 0
+  local function draw() frames = frames + 1 end
+  local function pass(ms, period)
+    world.now = world.now + ms
+    return ui.frame(draw, period)
+  end
+
+  world.now = 100000
+  check(pass(0) == true and frames == 1, "the first frame is always drawn")
+  check(pass(1) == false and pass(1) == false and frames == 1, "an unchanged screen is not drawn again")
+  ui.dirty()
+  check(pass(1) == true and frames == 2, "ui.dirty() draws the next frame")
+  check(pass(1) == false and frames == 2, "...once")
+  keys_down = true
+  check(pass(1) == true and pass(1) == true and frames == 4, "a key that is down draws every pass")
+  keys_down = false
+  check(pass(1) == true and frames == 5, "the pass after the release is drawn")
+  check(pass(1) == false and frames == 5, "then nothing")
+  for _ = 1, 24 do pass(10) end
+  check(frames == 5, "nothing for 240 ms")
+  check(pass(10) == true and frames == 6, "the period (250 ms) draws a frame")
+  check(pass(1, 0) == true and pass(1, 0) == true and frames == 8, "period 0 draws every pass")
+  check(pass(1) == false, "back to the default period")
+  check(pass(ui.pause_ms) == true and frames == 9, "a pause between calls (an approval was up) draws")
+
+  badge.input = saved_input
 end
 
 print(string.format("%d checks", checks))

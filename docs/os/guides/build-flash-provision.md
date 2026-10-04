@@ -29,6 +29,16 @@ Batch 2 (WP10, WP11, WP12, WP20, WP22) was flashed to the same badge on 2026-10-
 
 **Design change, 2026-10-03.** The firmware is named BadgeOS and its user interface is its own shell ([shell](../ui/shell.md)); this lands in Batch 5. The log lines quoted above were recorded before it: from Batch 5 on the banner reads `BadgeOS 0.1.0`, the `[vk] registries:` line has `pages=` in place of `status=`, there is no `[boot] splash` line, and boot is about 4 s shorter (the two splash screens took about 2 s each).
 
+Batch 5 (WP37, WP40 to WP45) and the close-out were flashed to the same badge on 2026-10-04:
+
+- The banner reads `BadgeOS 0.1.0`; the boot log has no `[boot] splash` line; `[os] ready` comes about 4.5 s after the reset (it was about 8 s with the two splashes).
+- The registries line is `[vk] registries: services=8 commands=17 lua=37 domains=5 routes=3 permissions=9 patterns=6 native=3 config=17 pages=13` in the dev profile (`commands=9` in the release profile: the eight dev commands are absent).
+- The network names changed with this flash: hostname `badgeos`, hotspot password `badgeos-setup`, ESP-NOW magic `BDOS`. **A badge still on an older build no longer hears this one over ESP-NOW.**
+- Upstream's six sample apps were deleted from this badge's filesystem (`AUTH`, `LIST`, `DEL <id>`); a badge flashed from upstream firmware still has them until that is done.
+- Images: dev 1,991,895 bytes (59.6 % of the 3,342,336-byte slot), release 1,983,131 bytes (59.3 %). The release profile compiled at the first attempt and passes pre-flash check 6; on the badge `VKINFO` says `profile=release` and every dev command (`VKSTATE`, `VKBTN`, `VKSHOT`, `VKTIME`, `VKPAIR`, `VKNOTE`, `VKDEMOAPPROVE`, `VKPERF`) is answered by upstream's push protocol with `ERR not authorised - send AUTH <code>`, never `OK` (T-REL2). The badge was then flashed with the dev profile again.
+- The I²C bus stayed healthy through every flash and the whole regression: `[btn] TCA9534 init ok`, heartbeat `btn=0 int=H`, no `stopped answering` and no `held low` line in any test log.
+- `scripts/push-apps.sh --port … dev` takes about six minutes for the twelve app folders (each carries its own 55 KB copy of `vk.lua`). One run lost its push session part-way through two apps (`ERR not authorised` on a `DATA` line; pushing those two again worked). The cause was not found; if it happens, push the named apps again.
+
 ## Toolchain
 
 ```bash
@@ -141,12 +151,12 @@ arduino-cli upload  --fqbn "$UPLOAD_FQBN" --build-path "$FW/build/<profile>" -p 
 | 4 | no file under `src/native_apps/` or `src/vk/features/` includes anything from `src/identity/` (the badge's own key comes from `vk::wallet::publicKey()`) | a feature or native app reaching for the key |
 | 5 | `test/host/run.sh` passes | the pure code changed behaviour |
 | 6 | release only: `vk_profile.h` defines `VK_PROFILE_DEV 0` | a dev build about to go on a judge badge |
-| 7 | the name grep of [upstream-hooks](../architecture/upstream-hooks.md#checking-the-hooks) prints nothing: no line of code or user-visible text in `os.ino`, `src/`, `tools/badge-push.py` or `README.md` says "Solana" or "SKYRIZZ", apart from the blockchain names and upstream identifiers listed under [Names that stay](../architecture/upstream-hooks.md#names-that-stay) | upstream's brand is about to appear on a screen, a web page or the network |
+| 7 | `python3 scripts/check-names.py` prints nothing: no text a user or the network can see says "Solana" or "SKYRIZZ", apart from the blockchain names and the two upstream protocol texts listed under [Names that stay](../architecture/upstream-hooks.md#names-that-stay) | upstream's brand is about to appear on a screen, a web page or the network |
 
 How the script reads the table:
 
 - Check 1 runs the grep in [upstream-hooks](../architecture/upstream-hooks.md#checking-the-hooks). A row that names a range (H8: H8a–H8f) stands for those ids; a row whose purpose starts with `optional:` (H18) may be absent from the source. Its second half reads the replaced-files table of `UPSTREAM-HOOKS.md`: the first cell of a row holds one or more paths in backquotes, the second cell the kind.
-- Check 7 skips `src/lua/`, `src/vk/features/solana_pay/` and `src/vk/wallet/pure/sol*`, and whole-line comments.
+- Check 7 is `scripts/check-names.py` (Python 3, standard library). It searches string literals only, with every comment removed first (`//` and `/* … */` in C and C++, `--` and `--[[ ]]` in Lua): the compiled sources (`os.ino`, `src/`, which includes the embedded web page), the Lua apps and library (`apps/`, `lib/`) with their `app.ini` files, the tools (`tools/*.py`, `scripts/*.py`), and `README.md` whole. Comments and identifiers are not searched, because no user sees them. `python3 scripts/check-names.py --list` prints every match with `kept` or `FAIL`. After a build, the same question is asked of the image: `strings -a build/<profile>/os.ino.bin | grep -iE 'solana|skyrizz' | sort -u` must list only the six names given in [upstream-hooks](../architecture/upstream-hooks.md#checking-the-hooks).
 - Checks 2 and 3 scan `os.ino` and `src/` only (not `test/`), and ignore text after `//` on a line, so a comment may name these calls. Check 3 also skips the one line that defines the macro, `#define VK_SIGN_DOMAIN(` in `src/vk/wallet/signer.h`.
 - Check 5 can be skipped with `VK_PREFLASH_SKIP_HOST_TESTS=1` when running the script by hand; `scripts/build.sh` never sets it.
 
@@ -163,7 +173,7 @@ For each app folder under `apps/` the script: copies `lib/vk.lua` into a tempora
 
 The pairing code is on the badge under Settings → App push. In the dev profile `vkdev.py` reads it itself (`VKPAIR`). A release build has no `VKPAIR`, so over serial it needs the code too: `--token <code>` is accepted with `--port` and passed to `vkdev.py --code`. With `--host` the code may also come from the environment variable `BADGE_TOKEN`. `--dry-run` lists what would be pushed and pushes nothing. The script exits 0 when every app was pushed, 1 when any push failed, 2 for a usage error.
 
-`vk.lua` (44 KB) goes into every app folder, whether or not the app requires it. `vkdev.py push` sends every file of a folder.
+`vk.lua` (55 KB) goes into every app folder, whether or not the app requires it. `vkdev.py push` sends every file of a folder.
 
 ### Names on the network
 
@@ -189,6 +199,21 @@ python3 os/scripts/vkdev.py --port /dev/cu.usbserial-10 provision \
 ```
 
 Details and the by-hand commands: [../platform/config.md](../platform/config.md#provisioning). The command ends by printing the badge's public key and key location. `--autostart home` (upstream's autostart setting, `VKAUTOSTART`) still works: the Home app then starts at boot, and CANCEL in it returns to the launcher. Without it the badge boots to the launcher.
+
+## Before a demo
+
+Values nothing fills in automatically. Each must be set by hand before the demo, or the feature it belongs to fails quietly:
+
+| What | Where | Until it is set |
+|---|---|---|
+| the shop's address: `REPLACE_WITH_SHOP_ADDRESS` | `os/apps/game/config.lua` **and** `os/apps/evilgame/config.lua`, field `shop.recipient` (the merchant badge's public key, base58) | every purchase in Game and Evil game ends with "the shop is not set up"; no approval opens |
+| the attacker's token account: `REPLACE_WITH_ATTACKER_TOKEN_ACCOUNT` | `os/apps/evilgame/config.lua`, field `evil_recipient` (a **token account**, not a wallet address: it is passed to `vk.pay` as `destination`) | the Evil game's WRONG RECIPIENT demo cannot run |
+| `dashboard/.env`: `HACK_MINT`, the RPC URL, `AUTHORITY_KEYPAIR` | written by `npm run devnet:setup` in `dashboard/`; `HACK_MINT` is empty until it has run | `vkdev.py provision --env dashboard/.env` has no mint and no issuer key to provision |
+| the hotspot's SSID and password | arguments of `vkdev.py provision --wifi "<SSID>" "<password>"` (or `VKWIFI`), per badge | the badge has no network: no clock (amber `CLOCK UNSYNCED`), no balance, no payment |
+| the listener address | `--listener http://<laptop hotspot IP>:8788` of the same command (config key `listener_url`) | no registry record: every payee is red `UNVERIFIED RECIPIENT` |
+| the public keys of the four badges | `dashboard/server/config/badges.json`, then `npm run devnet:setup` again to fund them | the badges hold no tokens |
+
+After editing a `config.lua`, push the apps again (`scripts/push-apps.sh … release`). A badge provisioned by the device tests carries the **test** values (`rpc_url` `http://127.0.0.1:8899`, the test issuer key, `hold_ms` 1000, `approval_tmo_s` 10): reset it (`VKRESET`, hold SELECT) and provision it for real before a demo.
 
 ## Four badges
 

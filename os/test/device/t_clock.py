@@ -3,11 +3,11 @@
 1. Review focus 4: after a reset the badge logs "[os] ready" within 30 s whether or not Wi-Fi is
    there (boot never waits for SNTP), and with Wi-Fi absent VKINFO reports time=none.
 2. VKTIME <now> marks the clock synced: VKINFO time=sntp and VKSTATE "time":"sntp".
-3. Upstream's sample app "hello" still launches and stops now that the router owns the one
-   ESP-NOW receive handler (hooks H3 and H9).
+3. A Lua app (the pushed fixture "plain") still launches and stops now that the router owns the
+   one ESP-NOW receive handler (hooks H3 and H9), and the badge is back on the shell's launcher.
 
 Needs one badge with a dev build. No provisioning, no network, no hands. The SNTP check is in
-t_clock_net.py (NEEDS network); T-HOOK1 and the whosnear check are in t_hook.py (NEEDS two badges).
+t_clock_net.py (NEEDS network); T-HOOK1 is in t_hook.py (NEEDS two badges).
 The test leaves the clock set to the laptop's time, source sntp.
 """
 
@@ -16,7 +16,7 @@ import time
 
 from common import launch, to_launcher
 
-_APPS = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "apps"))
+_PLAIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "plain")
 
 
 def run(badge):
@@ -46,16 +46,17 @@ def run(badge):
     state = badge.state()
     assert state["time"] == "sntp", "after VKTIME, VKSTATE time is %r" % state["time"]
 
-    # 3. An upstream sample app still launches, keeps running, and stops.
-    badge.push(os.path.join(_APPS, "hello"), "hello")
+    # 3. A Lua app still launches, keeps running, and stops.
+    badge.push(_PLAIN, "plain")
     badge.clear_log()
-    launch(badge, "hello")
+    launch(badge, "plain")
     time.sleep(1.0)  # a few dozen frames: an app that errors is stopped by the runtime
     state = badge.state()
-    assert state["app"] == "hello", "hello stopped by itself; state: %s; log: %s" % (state, badge.log()[-5:])
+    assert state["app"] == "plain", "plain stopped by itself; state: %s; log: %s" % (state, badge.log()[-5:])
     badge.stop()
-    badge.wait_state(lambda s: s["app"] != "hello", timeout=5)
-    to_launcher(badge)
+    badge.wait_state(lambda s: s["app"] != "plain", timeout=5)
+    state = to_launcher(badge)
+    assert state["app"] == "" and state["screen"] == "launcher", "not on the launcher: %s" % state
 
     # The clock kept its source across the app's life.
     assert badge.info().get("time") == "sntp", "the clock lost its source while an app ran"

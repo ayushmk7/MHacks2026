@@ -13,7 +13,7 @@ namespace {
 // Frame layout: a 4-byte magic, a type byte, then the payload. The magic keeps
 // badge traffic from being confused with any other ESP-NOW device sharing the
 // channel, and the type byte is what separates presence beacons from app data.
-constexpr uint8_t MAGIC[4] = {'S', 'B', 'D', 'G'};
+constexpr uint8_t MAGIC[4] = {'B', 'D', 'O', 'S'};  // VK: H23 (was SBDG)
 constexpr uint8_t TYPE_BEACON = 0x01;
 constexpr uint8_t TYPE_APP = 0x02;
 constexpr size_t HEADER_LEN = sizeof(MAGIC) + 1;

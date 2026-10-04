@@ -47,7 +47,7 @@ _RP = r"\[app\] RP "
 _LUA_ERROR = r"\[lua\] .*(?:error|stopping)"
 
 _PAYER_INI = (
-    "name=Request payer test\nversion=1.0.0\nauthor=Badge OS tests\n"
+    "name=Request payer test\nversion=1.0.0\nauthor=BadgeOS tests\n"
     "description=t_req.py helper: finds a request, challenges, begins a payment.\n"
     "entry=main.lua\npermissions=sign,espnow\nmin_api=2\n"
 )
@@ -173,7 +173,7 @@ end
 function on_draw()
   gfx.clear(gfx.BG)
   gfx.text("reqpay", 12, 10, gfx.WHITE, 2)
-  gfx.text(stage, 12, 40, gfx.SOLANA_GREEN, 1)
+  gfx.text(stage, 12, 40, gfx.GREEN, 1)
   gfx.text(status:sub(1, 48), 12, 56, gfx.WHITE, 1)
 end
 

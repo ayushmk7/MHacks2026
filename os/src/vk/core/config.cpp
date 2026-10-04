@@ -1,18 +1,17 @@
 // src/vk/core/config.cpp
 // The config store (platform/config.md): NVS namespace "vkconf" through Preferences, the text
-// parsers, provisioning, the config serial commands, the info fields `provisioned` and `wifi`,
-// and the status item `setup`.
+// parsers, provisioning, the config serial commands and the info fields `provisioned` and `wifi`.
 //
 // Host-test seam (test/host/test_config.cpp): with VK_HOST_TEST this file compiles against the
 // shim's Arduino.h and Preferences.h alone. Every upstream call (log, display, Wi-Fi, settings)
-// and the shell repaint (defined in ui/statusbar.cpp, which the suite does not link) is behind
+// and the shell repaint (defined in ui/repaint.cpp, which the suite does not link) is behind
 // #ifndef VK_HOST_TEST.
 #include "config.h"
 
 #include <Preferences.h>
 #include <string.h>
 
-#include "../ui/statusbar.h"
+#include "../ui/repaint.h"
 #include "serial.h"
 
 #ifndef VK_HOST_TEST
@@ -236,7 +235,7 @@ void clearCache() {
   s.tokenCount = 0;
 }
 
-// The SETUP status item appears or disappears: ask upstream's shell to redraw.
+// The launcher's SETUP NEEDED row appears or disappears: ask the shell to redraw.
 void provisioningChanged() {
 #ifndef VK_HOST_TEST
   vk::ui::requestShellRepaint();
@@ -635,22 +634,6 @@ String infoWifi() {
 
 VK_INFO_FIELD(provisioned, "provisioned", infoProvisioned);
 VK_INFO_FIELD(wifi, "wifi", infoWifi);
-
-// Status item `setup` (ui.md, Status bar): SETUP in amber while the badge is unprovisioned.
-int drawSetup(int rightX, int y) {
-  if (provisioned()) return 0;
-#ifndef VK_HOST_TEST
-  static const char LABEL[] = "SETUP";
-  ::display::textRight(LABEL, rightX, y, ::theme::WARN, 1);       // upstream's amber, #FFB020
-  return (int)::display::canvas().textWidth(LABEL);
-#else
-  (void)rightX;
-  (void)y;
-  return 30;                                         // five characters of the 6-pixel font
-#endif
-}
-
-VK_STATUS_ITEM(setup, "setup", 10, drawSetup);
 
 }  // namespace
 

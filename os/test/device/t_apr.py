@@ -6,7 +6,8 @@ hold_ms 1000; other values work, the test reads both). No network, no hands.
 In order:
   1. green, amber, red: VKSTATE of each, a screenshot saved as shots/approval_<severity>_<theme>.png,
      then the select rule of each (press / hold / closed) and the answer the caller gets.
-  2. The launcher is repainted after an approval closes over it (hook H20).
+  2. The launcher is repainted after an approval closes over it (the shell consumes the repaint
+     request; VKSTATE screen stays "launcher" throughout).
   3. T-APR2: SELECT held before the approval opens never approves; the phase stays WAIT_RELEASE.
   4. A pushed STOP and a pushed RUN during the approval are applied only after it closes (hook H4;
      the serial half of T-REQ6).
@@ -29,11 +30,13 @@ Not here:
 import os
 import time
 
-from common import HOLD_MARGIN_MS, hold_ms, launch, to_launcher
+from common import assert_screen_lit, assert_screen_sent, HOLD_MARGIN_MS, hold_ms, launch, to_launcher
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 SHOTS = os.path.join(_HERE, "shots")
-HELLO = os.path.normpath(os.path.join(_HERE, "..", "..", "apps", "hello"))
+# The app steps 3 and 4 run over: the native hello_native, where a SELECT press does nothing and
+# which needs no push (upstream's sample apps are deleted).
+APP = "hello_native"
 
 SHOT_BYTES = 320 * 240 * 2
 
@@ -68,6 +71,12 @@ def open_demo(badge, severity):
 
 def wait_closed(badge, timeout=5):
     return badge.wait_state(lambda s: not s["modal"], timeout=timeout)
+
+
+# The shell and the approval are both Receipt screens on the same paper, so two different screens
+# still share about three quarters of their pixels (measured: launcher against approval 0.745).
+DIFFERENT = 0.9   # two different screens share less than this
+SAME = 0.98       # the same screen drawn again shares more (the header's clock may tick)
 
 
 def same_fraction(first, second):
@@ -108,7 +117,7 @@ def severities(badge, theme, hold):
 
         picture = badge.shot(os.path.join(SHOTS, "approval_%s_%s.png" % (severity, theme)))
         assert len(picture) == SHOT_BYTES, "%s: screenshot is %d bytes" % (severity, len(picture))
-        assert same_fraction(picture, launcher) < 0.5, "%s: the approval is not drawn over the launcher" % severity
+        assert same_fraction(picture, launcher) < DIFFERENT, "%s: the approval is not drawn over the launcher" % severity
 
         if severity == "green":
             # PRESS: one tap of SELECT approves.
@@ -148,22 +157,36 @@ def severities(badge, theme, hold):
 
 def launcher_repaint(badge):
     """Step 2: after an approval closes over the launcher, the launcher is on the screen again."""
-    to_launcher(badge)
+    state = to_launcher(badge)
+    assert state["app"] == "" and state["screen"] == "launcher", "not on the launcher: %s" % state
+    lit = state["backlight"]
+    sent = assert_screen_lit(state, "the launcher before the approval")
     before = badge.shot()
     open_demo(badge, "green")
+    state = badge.state()
+    assert state["modal"] and state["screen"] == "launcher", (
+        "an approval over the launcher must leave screen as it was: %s" % state)
+    sent = assert_screen_sent(badge, sent, "the approval")   # its frame reached the panel
     during = badge.shot()
-    assert same_fraction(during, before) < 0.5, "the approval did not replace the launcher on the screen"
+    assert same_fraction(during, before) < DIFFERENT, "the approval did not replace the launcher on the screen"
     badge.btn("b", "tap")
     wait_closed(badge)
     time.sleep(0.3)
+    state = badge.state()
+    assert state["app"] == "" and state["screen"] == "launcher", (
+        "CANCEL on the approval reached the shell: %s" % state)
+    # The approval saves and restores the backlight; the launcher's repaint must reach the panel.
+    assert state["backlight"] == lit and lit > 0, (
+        "the backlight is %r after the approval closed; it was %r" % (state["backlight"], lit))
+    assert_screen_sent(badge, sent, "the launcher after the approval closed")
     after = badge.shot()
-    assert same_fraction(after, during) < 0.5, "the approval is still on the screen after it closed"
+    assert same_fraction(after, during) < DIFFERENT, "the approval is still on the screen after it closed"
     alike = same_fraction(after, before)
-    assert alike > 0.9, "the launcher was not repainted after the approval closed (%.0f %% as before)" % (alike * 100)
+    assert alike > SAME, "the launcher was not repainted after the approval closed (%.0f %% as before)" % (alike * 100)
 
 
 def fresh_press(badge):
-    """Step 3, T-APR2. Runs over the hello app, where a SELECT press does nothing else."""
+    """Step 3, T-APR2. Runs over hello_native, where a SELECT press does nothing else."""
     badge.btn("a", "press")
     try:
         badge.ok("VKDEMOAPPROVE green")
@@ -186,7 +209,7 @@ def fresh_press(badge):
 def stop_and_run_while_modal(badge):
     """Step 4: a pushed STOP and a pushed RUN wait for the approval to close."""
     state = badge.state()
-    assert state["app"] == "hello" and not state["modal"], "hello is not running: %s" % state
+    assert state["app"] == APP and not state["modal"], "%s is not running: %s" % (APP, state)
 
     # STOP while the approval is up.
     open_demo(badge, "green")
@@ -195,17 +218,18 @@ def stop_and_run_while_modal(badge):
     while time.monotonic() < deadline:
         state = badge.state()
         assert state["modal"], "the approval closed by itself"
-        assert state["app"] == "hello", "STOP was applied while the approval was open (app %r)" % state["app"]
+        assert state["app"] == APP, "STOP was applied while the approval was open (app %r)" % state["app"]
         time.sleep(0.1)
     badge.btn("b", "tap")
     wait_closed(badge)
-    stopped = badge.wait_state(lambda s: s["app"] != "hello", timeout=5)
-    idle_app = stopped["app"]   # "" with upstream's launcher, the home app's id once there is one
+    stopped = badge.wait_state(lambda s: s["app"] != APP, timeout=5)
+    idle_app = stopped["app"]   # "": no app runs, the shell's launcher is showing
+    assert idle_app == "", "after the STOP the app is %r, expected the shell" % idle_app
 
     # RUN while the approval is up.
     time.sleep(0.5)
     open_demo(badge, "green")
-    badge.run("hello")
+    badge.run(APP)
     deadline = time.monotonic() + 1.0
     while time.monotonic() < deadline:
         state = badge.state()
@@ -214,7 +238,7 @@ def stop_and_run_while_modal(badge):
         time.sleep(0.1)
     badge.btn("b", "tap")
     wait_closed(badge)
-    badge.wait_state(lambda s: s["app"] == "hello", timeout=5)
+    badge.wait_state(lambda s: s["app"] == APP, timeout=5)
 
 
 def unanswered(badge):
@@ -240,8 +264,7 @@ def run(badge):
     severities(badge, theme, hold)
     launcher_repaint(badge)
 
-    badge.push(HELLO)
-    launch(badge, "hello")
+    launch(badge, APP)
     try:
         fresh_press(badge)
         stop_and_run_while_modal(badge)

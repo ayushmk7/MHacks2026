@@ -93,7 +93,7 @@ end
 function on_draw()
   gfx.clear(gfx.BG)
   gfx.text("Request test", 12, 10, gfx.WHITE, 2)
-  gfx.text(tostring(config.amount) .. "  x" .. tostring(config.count or 1), 12, 36, gfx.SOLANA_GREEN, 1)
+  gfx.text(tostring(config.amount) .. "  x" .. tostring(config.count or 1), 12, 36, gfx.GREEN, 1)
   gfx.text("status: " .. last_status, 12, 52, gfx.WHITE, 1)
   gfx.text("result: " .. last_result, 12, 66, gfx.WHITE, 1)
   for i, line in ipairs(lines) do

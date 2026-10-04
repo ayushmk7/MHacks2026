@@ -79,13 +79,14 @@ The four functions upstream's `shell.h` declares, as `shell.cpp` implements them
 |---|---|
 | `shell::begin()` | `app_store::refresh()`; the stack becomes `[launcher]`; repaint |
 | `shell::update()` | one pass, below |
-| `shell::onAppStopped()` | `app_store::refresh()`. If `runtime::lastError().length()`: `showError(runtime::lastError())`. Otherwise `home()` and `::leds::playIdle()`. The launcher keeps its cursor (clamped to the new app count); upstream reset it to the first row |
+| `shell::onAppStopped()` | If `runtime::lastError().length()`: `showError(runtime::lastError())`. Otherwise `home()` and `::leds::playIdle()`. The launcher keeps its cursor (clamped to the app count); upstream reset it to the first row. **No `app_store::refresh()`**, which upstream's shell called here: the scan walks every app folder (measured 1.2 s with seventeen Lua apps installed) and froze the badge each time an app exited. The list cannot be stale, because every path that installs or removes an app rescans by itself (serial and BLE push, the web page, the store client, `app_store::removeApp`). What can be stale is an app's `SIZE` in the delete confirmation, by the data the app saved since the last scan |
 | `shell::showError(message)` | `appErrorSet(message)`; the stack becomes `[launcher, app_error]`; `pulseLedBad(700)` |
 | `shell::screenName()` | `runtime::running() ? "" : top()->name` |
 
 One pass of `shell::update()` (the main loop calls it only when no app runs and no approval is up):
 
 ```
+0. if millis() - lastPassEnd >= 300: dirty      (the shell was paused: an app or an approval drew on the canvas)
 1. if broker::hasOffer() and top is neither kOffer nor kInstalling:
        push(&kOffer); pulseLed(900); skip step 2 on this pass
 2. top->update()                      (may push, pop or home; input first, so a switch is drawn on this pass)
@@ -93,7 +94,10 @@ One pass of `shell::update()` (the main loop calls it only when no app runs and 
    every 500 ms: if the header text (receipt::statusRight) or theme::color(PAPER) differs from the last draw: dirty
 4. if vk::ui::consumeShellRepaint(): dirty
 5. if dirty: top->draw(); lastDraw = millis()
+6. lastPassEnd = millis()
 ```
+
+**The shell draws only when something changed.** A draw is about 10 ms and the transfer of the canvas to the panel that follows it is 34 ms; an idle screen costs neither, and a loop pass is then about 1 ms, which is what makes a key press feel immediate ([measurements](../testing/testing.md#responsiveness)). Step 0 is a safety net: every known pause already asks for a repaint (`home()` when an app stops, `requestShellRepaint()` when an approval closes). Its gap is measured from the **end** of the last pass, not its start: measured from the start, a page whose own draw took longer than 300 ms looked like a pause and was redrawn on every pass (Device info did exactly that at three passes a second, before its slow read was moved out of `draw()`).
 
 Step 1 skips input on the pass the offer appears: the button edges of that pass were computed before the prompt existed, and a SELECT meant for the previous screen must not count as consent to install code. Upstream did the same with `sOfferJustRaised`. The offer is not raised over `installing`, so the result of the last install is read before the next offer replaces it; and never while an app runs, because the main loop does not call the shell then: the offer is still waiting when the app exits.
 
@@ -189,8 +193,21 @@ void listDraw(const List &list, const ListRow *rows, int count, int y0 = LIST_Y,
 
 // ---- additions (the shell's owner may add declarations below this line; nothing above changes) ----
 
+// Font0 text whose right edge is at xRight (the "n/N" scroll mark of a list or of the launcher).
+void textRight(int xRight, int y, const char *s, vk::ui::theme::Token token = vk::ui::theme::INK);
+// Swaps the top screen for `screen` and calls its enter() (offer -> installing). On the launcher it pushes.
+void replaceTop(const Screen *screen);
+// The stack becomes [launcher, screen]; calls enter(). The launcher is not re-entered: it keeps its cursor.
+void showOver(const Screen *screen);
+
 }  // namespace vk::shell
 ```
+
+As built:
+
+- `pulseLed(ms)` is `vk::ui::leds::pulseTheme(ms)` (`src/vk/ui/leds.h`), the same function the push code calls through hook H23.
+- `listDraw` draws the value of the selected row in the paper colour, like its label: a status ink on the ink ground would not be readable. With cursor −1 (nothing selectable) and more rows than fit, the `n/N` mark shows the number of the last visible row.
+- `text()` cuts at `maxCols` characters; two pages pass their own value where a line of the specified text is longer than 50 columns from its x (New identity, 52) or starts at x = 22 (App push, 48).
 
 Rules for every screen and page:
 
@@ -211,7 +228,7 @@ Rules for every screen and page:
 | 20 | `wifi` | Wi-Fi | page | `wifi_mgr::statusText()` | `pages/page_wifi.cpp` | 5F |
 | 30 | `bluetooth` | Bluetooth | page | `on` / `off` | `pages/page_bluetooth.cpp` | 5F |
 | 40 | `espnow` | ESP-NOW | page | `off`, or `<n> peer` / `<n> peers` | `pages/page_espnow.cpp` | 5F |
-| 50 | `push` | App push | page | `ready` / `needs wi-fi` | `pages/page_push.cpp` | 5F |
+| 50 | `push` | App push | page | `ready` when `push_server::running()` (so also on the badge's own hotspot), else `needs wi-fi` | `pages/page_push.cpp` | 5F |
 | 60 | `store` | App store | page | `off` when disabled or no address is set; otherwise `broker::stateText()` | `pages/page_store.cpp` | 5G |
 | 70 | `identity` | Identity | page | `identity::badgeId()`, or `not ready` | `pages/page_identity.cpp` | 5G |
 | 80 | `display` | Display | page | backlight as `NN%` | `pages/page_display.cpp` | 5G |
@@ -274,7 +291,9 @@ Layout:
 | checklist title | `receipt::title("CHECKLIST", 28, 233)` |
 | stage rows | `receipt::row(157, 310, 50 + 18 * i, NAME, mark)` for the seven stages |
 
-The seven stages and the percent each one begins at: `STORAGE` 20, `PERIPHERALS` 45, `IDENTITY` 55, `RUNTIME` 65, `WALLET` 75, `RADIOS` 85, `READY` 100. A row's mark is `OK` when its percent is below the current percent, `..` when equal, blank when above; at 100 every row is `OK`. At 0 (the frame `boot::run()` draws) every row is blank. There is no footer and no version text, as in the simulation.
+The seven stages and the percent each one begins at: `STORAGE` 20, `PERIPHERALS` 45, `IDENTITY` 55, `RUNTIME` 65, `WALLET` 75, `RADIOS` 85, `READY` 100. A row's mark is `OK` when its percent is below the current percent, `..` when equal, blank when above; at 100 every row is `OK`. At 0 (the frame `boot::run()` draws) every row is blank. There is no footer and no version text, as in the simulation. (The simulation puts `..` on the stage after the current one; the rule here is the one built: `..` marks the stage that is running.)
+
+The brand line is drawn on a baseline at y = 51, which assumes a capital height of 16 px for `FreeSerifBoldItalic12pt7b`; that figure was not measured. `boot_screen.cpp` includes `../shell/page.h` for `bar()` and `text()`, which need only `theme::color` and the canvas and so are safe before `vk::begin()`.
 
 After drawing: `display::touch()`, `display::flush()`, then `vk::ui::leds::bootProgress(percent)` (one frame of the LED boot bar). Boot stages block, so the screen changes once per stage.
 
@@ -288,7 +307,7 @@ Screen `launcher`: the simulation's MENU screen. It lists every installed app, L
 |---|---|
 | frame | `receipt::page()`, `receipt::header("BADGEOS", statusRight)`, `receipt::title("MENU", 26)` |
 | grid | two columns: left `x0 = 10, x1 = 150`, right `x0 = 170, x1 = 310`; six rows at y = 48, 66, 84, 102, 120, 138. Cell (row r, column c) shows app index `(scrollRow + r) * 2 + c` |
-| cell | `receipt::row(x0, x1, y, "NN NAME", value, selected)`: `NN` is the index + 1 with two digits, `NAME` is `info.name` in upper case (the kit cuts it). Value: `◂` on the selected cell; otherwise, for the app whose id is `inbox`, the waiting-notification count when it is above 0; otherwise empty |
+| cell | `receipt::row(x0, x1, y, "NN NAME", value, selected)`: `NN` is the index + 1 with two digits, `NAME` is `info.name` in upper case, cut to 16 characters so the value always fits the 23-column cell. Value: `◂` on the selected cell; for the app whose id is `inbox`, the waiting-notification count when it is above 0, and `<count> ◂` when that cell is the selected one (the count must not disappear under the cursor); otherwise empty |
 | scroll mark | when there are more than 12 apps: `n/N` (selected index + 1 / count) right-aligned at (310, 28), `FAINT` |
 | rule | `receipt::rule(156)` |
 | balance | `receipt::row(10, 310, 166, "BALANCE", "<amount> <symbol>")`. Unprovisioned (`!vk::config::provisioned()`): `receipt::row(10, 310, 166, "SETUP NEEDED", "provision over USB", false, STAMP_WARN)` |
@@ -297,7 +316,7 @@ Screen `launcher`: the simulation's MENU screen. It lists every installed app, L
 
 Balance text: the default token is the first entry of `vk::config::tokens()`; `vk::wallet::tokenInfoLookup(mint, info)` gives its balance; the amount is formatted with `sol_format_amount` and followed by the symbol. `--` and the symbol when the pointer is null (the balance feature is absent) or the balance is not known yet.
 
-With no app at all (not possible while the native apps are compiled in): `NO APPS INSTALLED` centred at y = 84 and `push one: Settings > App push` at y = 102, `SUB`.
+With no app at all (not possible while the native apps are compiled in): `NO APPS INSTALLED` centred at y = 84 in `INK` and `push one: Settings > App push` at y = 102 in `SUB`.
 
 Buttons:
 
@@ -305,7 +324,7 @@ Buttons:
 |---|---|
 | UP / DOWN | one row up or down (index ∓ 2), with key repeat; wraps between the first and last row, clamped to the last app |
 | LEFT | to the left column |
-| RIGHT, released within 600 ms | to the right column, when an app is there |
+| RIGHT, released within 600 ms | to the right column, when an app is there. A release between 600 and 800 ms does nothing |
 | RIGHT, held 800 ms | **delete**: if the selected app is a Lua app (`!vk::host::native::exists(info.id)`): `appDeleteOpen(info.id, info.name.length() ? info.name : info.id)`. A native app cannot be deleted; nothing happens. The release that follows is ignored |
 | SELECT | `::leds::stopAnimation(); runtime::requestLaunch(info.id);` |
 | CANCEL | `push(&kSettings)` |
@@ -366,6 +385,8 @@ Layout: `frame("WI-FI", <left>)`. Status: `receipt::row(X0, X1, 48, "STATUS", wi
 
 Footer left: `* needs a password: use the hotspot` when the cursor is on a secured result, otherwise `SELECT choose`. Buttons: UP/DOWN `listMove(list, count, 7)`; SELECT as above, then `repaint()`; CANCEL back. Refresh: 250 ms (the scan and the join finish on their own).
 
+As built: only the STATUS value and the hotspot's `on` are coloured (`STAMP_OK`); every other value is ink (upstream's purple for an enterprise network is gone). The list shows at most 59 scan results (64 rows with the five actions). The number of rows changes without input when a scan ends, so the page clamps the cursor and the scroll position at the start of both `update()` and `draw()`.
+
 ### Bluetooth
 
 Screen `bluetooth`, `page_bluetooth.cpp`. `frame("BLUETOOTH", "SELECT toggle")`; three rows from y = 48; `receipt::rule(106)`; `text(10, 116, "Nordic UART service", SUB)`; `text(10, 130, …, SUB)` with `ble_mgr::address()`, or `6e400001-b5a3-f393-e0a9-e50e24dcca9e` when it is empty.
@@ -388,7 +409,7 @@ Screen `espnow`, `page_espnow.cpp`: the radar. `frame("ESP-NOW", "SELECT on/off 
 | LEFT / RIGHT (`buttons::pressed`) | channel ∓ 1 within 1..13: `settings::setEspnowChannel(channel)`; if enabled, `espnow_mgr::end(); espnow_mgr::begin(channel);` (a peer set cannot move across channels) |
 | CANCEL | back |
 
-Refresh: 250 ms. Only badges running BadgeOS appear: the frame magic is `BDOS` ([hook H23](../architecture/upstream-hooks.md#h23--badgeos-names)).
+Refresh: 250 ms. Only badges running BadgeOS appear: the frame magic is `BDOS` ([hook H23](../architecture/upstream-hooks.md#h23--badgeos-names)). The peer rows are drawn with `receipt::row` directly, not `listDraw`: at most six, no scrolling and no `n/N` mark, as upstream.
 
 ### App push
 
@@ -415,7 +436,7 @@ Layout: `frame("APP STORE", "SELECT choose")`; y = 48 `STATE` / `off` when `!bro
 | `App store` | `onOff(broker::enabled())` | `broker::setEnabled(!broker::enabled())` |
 | `Forget registration` | `re-register` when `broker::registered()` | `broker::forget()` |
 
-Refresh: 1000 ms. Removing this file removes the row only; the offer screens stay, because the client can still raise them.
+Refresh: 1000 ms. Removing this file removes the row only; the offer screens stay, because the client can still raise them. Colours the text above does not give: `STATE` `off` is `SUB`; `REGISTERED` is `STAMP_OK` for `yes` and `SUB` for `no`; any other state is ink.
 
 ### Identity
 
@@ -423,7 +444,7 @@ Screen `identity`, `page_identity.cpp`. The badge ID is the one string a strange
 
 Layout: `frame("IDENTITY", "SELECT new identity")`; `receipt::amount(160, 44, "BADGE ID", identity::ready() ? identity::badgeId() : "--------", "")`; `receipt::row(X0, X1, 104, "KEY LIVES IN", identity::sourceName(), false, secure ? STAMP_OK : STAMP_WARN)` where `secure = identity::source() == identity::Source::SecureElement` (the two key paths promise different things; the colour must not hide a dead SE050); `text(10, 120, identity::status(), SUB)`; `text(10, 136, "PUBLIC KEY", SUB)`; `identity::publicKeyBase58()` in lines of 32 characters at y = 148 and 160 (a half-shown key is useless for checking against a wallet); `receipt::row(X0, X1, 190, "New identity", "changes the badge ID", true)`.
 
-Buttons: SELECT pushes the sub-screen `identity_new`; CANCEL back. Refresh: input only.
+Buttons: SELECT pushes the sub-screen `identity_new`; CANCEL back. Refresh: input only. On a badge with no identity the New identity confirmation still opens, with an empty `big`, as upstream allowed.
 
 ### New identity
 
@@ -451,7 +472,7 @@ Upstream regenerated on a single press. BadgeOS holds the wallet key in the same
 
 Screen `display`, `page_display.cpp`. `frame("DISPLAY", "LEFT/RIGHT adjust")`; `receipt::row(X0, X1, 48, "BACKLIGHT", "<settings::brightness() * 100 / 255>%")`; `bar(41, 70, 30, settings::brightness(), 255)`.
 
-LEFT / RIGHT (`buttons::repeated`): value ∓ 8, limited to 8..255 (a floor of 8: a dark screen looks like a crash). On a change: `settings::setBrightness(v); display::setBrightness(v);` and repaint, so the value chosen is the value seen. CANCEL back. Refresh: input only.
+LEFT / RIGHT (`buttons::repeated`): value ∓ 8, limited to 8..255 (a floor of 8: a dark screen looks like a crash). On a change: `settings::setBrightness(v); display::setBrightness(v);` and repaint, so the value chosen is the value seen. A press at either limit changes nothing and writes nothing. CANCEL back. Refresh: input only.
 
 ### LEDs
 
@@ -468,7 +489,7 @@ Action rows, `page_wallet.cpp` and `page_inbox.cpp`. They launch the native apps
 | `Wallet` | `provisioned` or `setup needed` (`vk::config::provisioned()`) | if `app_store::exists("wallet_settings")`: `::leds::stopAnimation(); runtime::requestLaunch("wallet_settings");` |
 | `Inbox` | `vk::host::notify::count()` when above 0 | the same with `"inbox"` |
 
-When the app is not compiled in, the value is `absent` and SELECT does nothing. The app exits to the launcher, like every app.
+When the app is not compiled in, the value is `absent` (for the Inbox row too, whatever the count) and SELECT does nothing. The app exits to the launcher, like every app.
 
 ### Device info
 
@@ -490,6 +511,8 @@ Screen `info`, `page_info.cpp`. `frame("DEVICE INFO", "SELECT re-scan I2C")`; tw
 | `UPTIME` | `<millis() / 1000>s` |
 
 SELECT: `badge_i2c::retry(); buttons::retry(); se050::test(); badge_i2c::scan();` then repaint: the one place a wedged bus can be retried by hand (with hook H21 the last two do nothing). CANCEL back. Refresh: 1000 ms.
+
+The `STORAGE` value is read when the page opens and again on SELECT, not on every repaint: `app_store::usedBytes()` walks the filesystem and takes about 290 ms on the badge. Read in `draw()`, as first built, it held the loop at three passes a second for as long as the page was open.
 
 ### Console
 
@@ -531,7 +554,7 @@ Refresh: 250 ms.
 
 Screen `app_error`, in `dialogs.cpp`: where an app lands when it dies, or when a delete fails.
 
-Layout: `frame("APP STOPPED", "SELECT retry", "CANCEL launcher")`; the message wrapped by hand at 50 characters and at every `\n`, lines at x = 10, y = 48 + 12 × i, at most 13 lines; the first line `STAMP_BAD`, the rest `INK`.
+Layout: `frame("APP STOPPED", "SELECT retry", "CANCEL launcher")`; the message wrapped by hand at 50 characters and at every `\n`, lines at x = 10, y = 48 + 12 × i, at most 13 lines; the first line `STAMP_BAD`, the rest `INK`. Tabs in the message (a Lua traceback indents with them) become two spaces; the kit would draw a tab as `?`.
 
 | Button | Action |
 |---|---|
@@ -570,27 +593,30 @@ One file, `src/vk/shell/pages/page_<id>.cpp`; nothing else is edited.
 
 namespace {
 using namespace vk::shell;
-using namespace vk::ui;
+namespace receipt = vk::ui::receipt;               // not `using namespace vk::ui`: see below
+namespace th = vk::ui::theme;
 
 List sList;
 
-void value(char *out, size_t cap) { snprintf(out, cap, "%s", onOff(true)); }   // shown in the Settings list
-void enter() { sList = List(); }
-void update() {
+void pageValue(char *out, size_t cap) { snprintf(out, cap, "%s", onOff(true)); }   // shown in the Settings list
+void pageEnter() { sList = List(); }
+void pageUpdate() {
   if (back()) return;                              // CANCEL
   const int count = 2;
   listMove(sList, count);
   if (buttons::pressed(BTN_A)) { /* act on sList.cursor */ repaint(); }
 }
-void draw() {
+void pageDraw() {
   frame("MY PAGE", "SELECT choose");
   const ListRow rows[] = {{"First", "on", onOffColor(true)}, {"Second", "", 0}};
   listDraw(sList, rows, 2);
 }
 }  // namespace
 
-VK_SETTINGS_PAGE(mypage, "mypage", 95, "My page", value, enter, update, draw, 0);
+VK_SETTINGS_PAGE(mypage, "mypage", 95, "My page", pageValue, pageEnter, pageUpdate, pageDraw, 0);
 ```
+
+Two rules the shipped pages follow. Do not write `using namespace vk::ui;` in a page: `theme::` and `leds::` would then be ambiguous with upstream's global `::theme` and `::leds` as soon as an upstream header enters the file; use the two aliases above and write `::leds::` in full. Do not name the callbacks `enter`, `update`, `draw` or `value`: a later addition to `vk::shell` with that name would collide; prefix them (`pageDraw`, `wifiDraw`). And keep anything slow out of `draw()` and `value()`: both run on every repaint (the Settings list repaints once a second), so a filesystem walk or a network call there stalls the badge. Read it in `enter()` or on a key.
 
 A row that only acts (no screen) is `VK_SETTINGS_ACTION(ident, "id", order, "Label", value, action);`. Choose an `order` between the neighbours you want, add the row to the [table](#settings-page-registry) and the id to [screen names](#screen-names). To remove a page, delete its file.
 
@@ -598,6 +624,6 @@ A row that only acts (no screen) is `VK_SETTINGS_ACTION(ident, "id", order, "Lab
 
 No host suite: the shell is drawing and upstream calls. Device tests ([testing](../testing/testing.md#acceptance-tests)) navigate by `VKSTATE.screen`, never by comparing screenshots, and save one screenshot per screen and theme as `os/test/device/shots/shell_<screen>_<theme>.png`:
 
-- `t_shell.py`: boot lands on `launcher` with no app; grid navigation; settings and back; an app that exits, an app that errors (`app_error`), the delete confirmation by holding RIGHT.
+- `t_shell.py`: boot lands on `launcher` with no app, with the backlight on and the canvas sent to the panel (`VKSTATE` `backlight` and `flushes`: a screenshot reads the canvas and would pass on a black screen); grid navigation; settings and back; an app that exits, an app that errors (`app_error`), the delete confirmation by holding RIGHT. Its two fixture apps are written to a temporary folder at run time.
 - `t_pages1.py`, `t_pages2.py`: every settings page reached by name, drawn, and left with CANCEL; Theme changes config key `theme`; Wallet and Inbox launch their apps. `identity_new` is only ever left with CANCEL.
 - Not scriptable on one badge: the boot screen (a person), the offer and installing screens (a broker), the Wi-Fi actions (they would drop the test network).

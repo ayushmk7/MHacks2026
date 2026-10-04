@@ -4,7 +4,10 @@
 # The pre-flash checks of docs/os/guides/build-flash-provision.md ("Pre-flash checks").
 # Exits non-zero, which stops scripts/build.sh, if any check fails:
 #
-#   1  hook ids found in upstream files equal the table in UPSTREAM-HOOKS.md
+#   1  hook ids found in upstream files equal the hook table in UPSTREAM-HOOKS.md (H14, H15 and H20
+#      are retired and must be absent; H18 and H22 are optional), and the "Replaced upstream files"
+#      table of the same file holds: a path listed as deleted does not exist, a path listed as
+#      rewritten or edited does
 #   2  the signing calls appear only in src/identity/, src/hal/se050_apdu.cpp, src/vk/wallet/signer.cpp
 #      (Monocypher's own signing functions count as signing calls; the vendored library in
 #      src/vk/wallet/vendor/ defines them and is not searched)
@@ -12,6 +15,10 @@
 #   4  nothing under src/native_apps/ or src/vk/features/ includes anything from src/identity/
 #   5  test/host/run.sh passes (skipped while that file does not exist)
 #   6  release only: src/vk/vk_profile.h defines VK_PROFILE_DEV 0
+#   7  nothing a user or the network can see names upstream's brand: scripts/check-names.py searches
+#      the string literals of the compiled sources (comments removed), of the Lua apps and library
+#      and of the tools, and README.md (upstream-hooks.md, "Checking the hooks"; the names kept on
+#      purpose are listed there under "Names that stay" and in the script's ALLOWED list)
 #
 # Checks 2 and 3 ignore text after "//" on a line, so a comment may name these calls.
 # Works from any directory. VK_PREFLASH_SKIP_HOST_TESTS=1 skips check 5 (for a quick look at the
@@ -84,6 +91,9 @@ check_hooks() {
     fail 1 "UPSTREAM-HOOKS.md holds no hook table"
     return
   fi
+  # H22 is reserved for the loop-task stack size (execution plan, Risk 5). It has no table row
+  # until that fallback is applied, so it is accepted when present and never required.
+  grep -q '^H22 ' "$TMP/table" || echo "H22 optional" >> "$TMP/table"
 
   awk '{ print $1 }' "$TMP/table" | sort -u > "$TMP/allowed"
   awk '$2 == "required" { print $1 }' "$TMP/table" | sort -u > "$TMP/required"
@@ -97,6 +107,45 @@ check_hooks() {
     return
   fi
   pass 1 "hook ids equal the table in UPSTREAM-HOOKS.md"
+}
+
+# The second half of check 1: the "Replaced upstream files" table. Its rows are
+# "| `path`[, `path`...] | kind | what and why |"; the paths are taken from the table, not from a
+# list kept here.
+check_replaced_files() {
+  [ -f UPSTREAM-HOOKS.md ] || return    # check_hooks has already failed
+
+  awk -F'|' '
+    /^\|[ \t]*`/ {
+      kind = $3; gsub(/[ \t]/, "", kind)
+      if (kind != "deleted" && kind != "rewritten" && kind != "edited") next
+      cell = $2
+      while (match(cell, /`[^`]+`/)) {
+        print kind, substr(cell, RSTART + 1, RLENGTH - 2)
+        cell = substr(cell, RSTART + RLENGTH)
+      }
+    }
+  ' UPSTREAM-HOOKS.md > "$TMP/replaced"
+
+  if [ ! -s "$TMP/replaced" ]; then
+    fail 1 "UPSTREAM-HOOKS.md holds no replaced-files table"
+    return
+  fi
+
+  : > "$TMP/replaced-bad"
+  while read -r kind path; do
+    case "$kind" in
+      deleted) [ -e "$path" ] && echo "still exists (listed as deleted): $path" >> "$TMP/replaced-bad" ;;
+      *)       [ -e "$path" ] || echo "missing (listed as $kind): $path" >> "$TMP/replaced-bad" ;;
+    esac
+  done < "$TMP/replaced"
+
+  if [ -s "$TMP/replaced-bad" ]; then
+    fail 1 "the tree differs from the replaced-files table in UPSTREAM-HOOKS.md:"
+    sed 's/^/    /' "$TMP/replaced-bad" >&2
+    return
+  fi
+  pass 1 "replaced upstream files match the table in UPSTREAM-HOOKS.md ($(wc -l < "$TMP/replaced" | tr -d ' ') paths)"
 }
 
 # --- 2: one signing path ----------------------------------------------------------------------
@@ -180,12 +229,33 @@ check_release_profile() {
   fi
 }
 
+# --- 7: the names -----------------------------------------------------------------------------
+# scripts/check-names.py (upstream-hooks.md, "Checking the hooks"): string literals with every
+# comment removed, the Lua apps and library, the tools, README.md. Comments and identifiers are
+# not searched: no user sees them. Anything it prints is a failure.
+check_names() {
+  local py
+  py="$(command -v python3 || true)"
+  if [ -z "$py" ]; then
+    fail 7 "python3 is not on the PATH (scripts/check-names.py needs it)"
+    return
+  fi
+  if "$py" scripts/check-names.py > "$TMP/names" 2>&1; then
+    pass 7 "no user-visible or network-visible text names upstream's brand"
+    return
+  fi
+  fail 7 "upstream's brand is named outside the kept names (upstream-hooks.md, \"Names that stay\"):"
+  sed 's/^/    /' "$TMP/names" >&2
+}
+
 check_hooks
+check_replaced_files
 check_signing_calls
 check_sign_domains
 check_identity_includes
 check_host_tests
 check_release_profile
+check_names
 
 if [ "$FAILED" -ne 0 ]; then
   echo "[preflash] FAILED ($PROFILE)" >&2

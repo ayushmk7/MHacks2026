@@ -12,6 +12,7 @@
 #include "ble_bridge.h"
 #include "cert_store.h"
 #include "wifi_mgr.h"
+#include "../vk/ui/leds.h"  // VK: H23
 
 namespace push_protocol {
 namespace {
@@ -398,7 +399,7 @@ void handleLine(const String &line, const Reply &reply) {
         reply("ERR not a PEM certificate");
         return;
       }
-      leds::pulse(0x99, 0x45, 0xFF, 600);
+      vk::ui::leds::pulseTheme(600);  // VK: H23 (was upstream's brand purple)
       reply("OK " + String((unsigned)total));
       return;
     }
@@ -407,7 +408,7 @@ void handleLine(const String &line, const Reply &reply) {
                     (unsigned)total);
     abortTransfer();
     app_store::refresh();
-    leds::pulse(0x14, 0xF1, 0x95, 600);  // brand green: "landed"
+    vk::ui::leds::pulseTheme(600);  // VK: H23 (was upstream's brand green: "landed")
     reply("OK " + String((unsigned)total));
     return;
   }

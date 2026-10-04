@@ -16,6 +16,7 @@
 #include "cert_store.h"
 #include "espnow_mgr.h"
 #include "wifi_mgr.h"
+#include "../vk/ui/leds.h"  // VK: H23
 
 namespace push_server {
 namespace {
@@ -31,33 +32,32 @@ bool sMdnsUp = false;
 // ---------------------------------------------------------------------------
 const char INDEX_HTML[] PROGMEM = R"HTML(<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Solana Badge</title><style>
-:root{--pu:#9945FF;--gr:#14F195;--bg:#0b0b12;--pa:#16161f;--bo:#2c2c3a;--tx:#e8e8f0;--mu:#9393a8}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);
+<title>BadgeOS</title><style>
+:root{--paper:#F3EFE4;--ink:#1B1A17;--faint:#8A8474;--sub:#6D6759;--ok:#17804F;--bad:#C8321E}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);
 font:15px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:20px}
 .wrap{max-width:760px;margin:0 auto}
-h1{font-size:22px;margin:0 0 4px;background:linear-gradient(90deg,var(--pu),var(--gr));
--webkit-background-clip:text;background-clip:text;color:transparent;display:inline-block}
-.sub{color:var(--mu);font-size:13px;margin-bottom:20px}
-.card{background:var(--pa);border:1px solid var(--bo);border-radius:10px;padding:16px;margin-bottom:14px}
-h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--mu);margin:0 0 12px}
-label{display:block;font-size:12px;color:var(--mu);margin:10px 0 4px}
-input,select,textarea{width:100%;background:#0f0f18;border:1px solid var(--bo);color:var(--tx);
+h1{font-size:22px;margin:0 0 4px;color:var(--ink);display:inline-block}
+.sub{color:var(--sub);font-size:13px;margin-bottom:20px}
+.card{background:var(--paper);border:1px solid var(--faint);border-radius:10px;padding:16px;margin-bottom:14px}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--sub);margin:0 0 12px}
+label{display:block;font-size:12px;color:var(--sub);margin:10px 0 4px}
+input,select,textarea{width:100%;background:var(--paper);border:1px solid var(--faint);color:var(--ink);
 border-radius:7px;padding:9px 11px;font:inherit}
 textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;min-height:190px}
-button{background:linear-gradient(90deg,var(--pu),var(--gr));color:#0b0b12;border:0;border-radius:7px;
+button{background:var(--ink);color:var(--paper);border:0;border-radius:7px;
 padding:9px 16px;font-weight:650;cursor:pointer;font-size:14px}
-button.ghost{background:transparent;color:var(--tx);border:1px solid var(--bo);font-weight:500}
-button.danger{background:transparent;color:#ff6b6b;border:1px solid #52323c;font-weight:500}
+button.ghost{background:transparent;color:var(--ink);border:1px solid var(--faint);font-weight:500}
+button.danger{background:transparent;color:var(--bad);border:1px solid var(--bad);font-weight:500}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .app{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;
-border-bottom:1px solid var(--bo)}.app:last-child{border-bottom:0}
-.app b{font-weight:600}.app small{color:var(--mu);display:block;font-size:12px}
-pre{background:#0f0f18;border:1px solid var(--bo);border-radius:7px;padding:11px;overflow:auto;
+border-bottom:1px solid var(--faint)}.app:last-child{border-bottom:0}
+.app b{font-weight:600}.app small{color:var(--sub);display:block;font-size:12px}
+pre{background:var(--paper);border:1px solid var(--faint);border-radius:7px;padding:11px;overflow:auto;
 font-size:12px;max-height:230px;margin:0;white-space:pre-wrap}
-.ok{color:var(--gr)}.err{color:#ff6b6b}
+.ok{color:var(--ok)}.err{color:var(--bad)}
 </style></head><body><div class="wrap">
-<h1>Solana Badge</h1><div class="sub" id="sub">connecting...</div>
+<h1>BadgeOS</h1><div class="sub" id="sub">connecting...</div>
 
 <div class="card"><h2>Pairing</h2>
 <label>Six-digit code from Settings &rarr; Push</label>
@@ -137,7 +137,7 @@ end
 function on_draw()
   local g = badge.gfx
   g.clear(g.color(11, 11, 18))
-  g.text_center("Hello, Solana", g.width() // 2, 100, g.SOLANA_GREEN, 2)
+  g.text_center("Hello, BadgeOS", g.width() // 2, 100, g.GREEN, 2)
 end
 
 function on_button(key, pressed)
@@ -568,7 +568,7 @@ void handleWriteApp() {
   }
 
   app_store::refresh();
-  leds::pulse(0x14, 0xF1, 0x95, 600);
+  vk::ui::leds::pulseTheme(600);  // VK: H23 (was upstream's brand green)
   badge_log::tagf("push", "http wrote %s/%s (%u bytes)", id.c_str(), path.c_str(),
                   (unsigned)written);
   sendJson(200, "{\"ok\":true,\"bytes\":" + String((unsigned)written) + "}");

@@ -204,4 +204,12 @@ void bootProgress(uint8_t percent) {
 VK_SERVICE(leds, nullptr, serviceUpdate);
 VK_ON_APPROVAL(leds, onApproval);
 
+void pulseTheme(uint16_t ms) {
+  const uint16_t c = vk::ui::theme::color(vk::ui::theme::LED);   // RGB565, from the active theme
+  const uint8_t r = (uint8_t)((((c >> 11) & 0x1F) * 255) / 31);
+  const uint8_t g = (uint8_t)((((c >> 5) & 0x3F) * 255) / 63);
+  const uint8_t b = (uint8_t)(((c & 0x1F) * 255) / 31);
+  ::leds::pulse(r, g, b, ms);
+}
+
 }  // namespace vk::ui::leds

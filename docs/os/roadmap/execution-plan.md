@@ -265,12 +265,25 @@ As changed by the Batch 5 design change (specified; integrator I5 confirms on th
 - Screenshots of shell screens are saved as `test/device/shots/shell_<screen>_<theme>.png`.
 - Never send SELECT on screen `identity_new`: it replaces the badge's key.
 
+As built in Batch 5 and the close-out (integrator I5, confirmed on the badge, 2026-10-04):
+
+- Boot line, dev profile: `[vk] registries: services=8 commands=17 lua=37 domains=5 routes=3 permissions=9 patterns=6 native=3 config=17 pages=13`. The seventeenth command is `VKPERF` (dev only).
+- `VKSTATE` also has `backlight` (0 to 255) and `flushes` (canvas transfers to the panel since boot). A screenshot reads the canvas, not the glass, so tests that care whether the screen is really showing something use `common.assert_screen_lit(state, what)` and `common.assert_screen_sent(badge, since, what)`.
+- Hook list: `… H19 H21 H23 H24`. H24 is `vk::flush()` in `os.ino` (the counted `display::flush()`); H23 now also covers the LED pulse lines in `src/net/push_server.cpp` and `push_protocol.cpp`.
+- The shell and the approval are both Receipt screens on the same paper: two different screens share about 75 % of their pixels. A test that compares screenshots uses `t_apr.py`'s thresholds (`DIFFERENT` 0.9, `SAME` 0.98), not "less than half".
+- The launcher holds 12 cells; with the twelve Lua app folders, the fixtures and the three native apps installed there are 20 apps, so the native apps are on the last rows (UP from the first row wraps to them). The `inbox` cell keeps its count when selected (`1 ◂`).
+- Lua apps draw through `vk.ui.frame`; an idle app's loop pass is about 1 ms. The shell does not rescan the app folders when an app exits (it took 1.2 s).
+- Pre-flash check 7 is `scripts/check-names.py` (string literals only, comments removed), not the `grep` in brief I5.
+- A test's screenshot name takes the theme from `VKGET theme`, with `receipt-light` when the value is empty (after `provision_test`, which resets the config, it is empty).
+- `t_rel1.py` is the scripted T-REL1: every shipped app, CANCEL taps and the 1.7 s hold, each ending on `launcher`.
+- Each app test pushes its app with `lib/vk.lua`, so a full regression leaves every shipped app installed in its current version; `scripts/push-apps.sh` is still needed for `evilgame` and the dev test apps.
+
 ### 5.3 Who registers what
 
 | Kind | Name → owner file |
 |---|---|
 | Config keys | `listener_url`, `display_name`, `rpc_url` → `core/config.cpp` · `ntp_server` → `core/clock.cpp` · `approval_tmo_s`, `hold_ms` → `wallet/approval.cpp` · `theme` → `ui/theme.cpp` · `issuer_key`, `tokens`, `record_ttl_s` → `features/solana_pay/domain_solana.cpp` · `presence_ms`, `req_ttl_s`, `req_period_ms`, `req_max_proofs`, `req_gap_ms`, `pay_app` → `features/requests/` · `balance_poll_s` → `features/balance/` |
-| Serial commands | `VKHELP`, `VKINFO` → `core/serial.cpp` · `VKKEYS`, `VKGET`, `VKSET`, `VKCOMMIT`, `VKRESET`, `VKWIFI`, `VKAUTOSTART` → `core/config.cpp` · `VKSTATE`, `VKBTN`, `VKSHOT`, `VKTIME`, `VKPAIR`, `VKNOTE` → `features/devtools/devtools.cpp` · `VKDEMOAPPROVE` → `features/devtools/demo_approve.cpp` |
+| Serial commands | `VKHELP`, `VKINFO` → `core/serial.cpp` · `VKKEYS`, `VKGET`, `VKSET`, `VKCOMMIT`, `VKRESET`, `VKWIFI`, `VKAUTOSTART` → `core/config.cpp` · `VKSTATE`, `VKBTN`, `VKSHOT`, `VKTIME`, `VKPAIR`, `VKNOTE`, `VKPERF` → `features/devtools/devtools.cpp` · `VKDEMOAPPROVE` → `features/devtools/demo_approve.cpp` |
 | Info fields | `profile`, `api` → `serial.cpp` · `provisioned`, `wifi` → `config.cpp` · `pubkey`, `key`, `selfcheck` → `signer.cpp` · `time` → `clock.cpp` |
 | Signing domains | `store-reg` → `features/store_reg/domain_store_reg.cpp` · `solana` → `features/solana_pay/domain_solana.cpp` · `pay-req`, `pay-proof` → `features/requests/domain_pay_*.cpp` · `contact` → `features/contacts/domain_contact.cpp` · `bank` → `features/bank/domain_bank.cpp` |
 | Lua functions | `wallet.pubkey/address/key_location/provisioned/time_ok/time/tokens/config/begin/poll`, `codec.*` → `wallet/lua_wallet.cpp` · `wallet.check_record/build_transfer/begin_solana/wire_tx` → `features/solana_pay/lua_solana.cpp` · `wallet.request_open/request_close/request_status/requests/challenge/presence` → `features/requests/lua_requests.cpp` · `wallet.history` → `features/history/lua_history.cpp` · `wallet.balance/token_account/refresh_balance` → `features/balance/lua_balance.cpp` · `wallet.contact_hello/contact_card/contact_accept/contacts/contact_remove` → `features/contacts/lua_contacts.cpp` · `theme.name/color` → `ui/lua_theme.cpp` · `wallet.begin_bank` → `features/bank/` |

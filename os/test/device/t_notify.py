@@ -2,8 +2,9 @@
 opens the note's app, RIGHT dismisses.
 
 1. A reset empties the inbox (notes live in RAM): VKSTATE notes is 0.
-2. VKNOTE Test|hello|hello_native -> notes 1, and the launcher's picture changes (the status item
-   "[1]"). The same title and body again within 10 s is ignored.
+2. VKNOTE Test|hello|hello_native -> notes 1, and the shell shows the count: the Settings list's
+   Inbox row changes (the launcher's inbox cell shows it too, but with many apps installed that
+   cell can be scrolled out of sight). The same title and body again within 10 s is ignored.
 3. The Inbox app (native) lists it; SELECT launches hello_native and the note is gone.
 4. A second note is dismissed with RIGHT: notes 0, the Inbox stays open and shows "Nothing new".
 5. SELECT on a note whose app is not installed removes the note and launches nothing.
@@ -12,7 +13,7 @@ opens the note's app, RIGHT dismisses.
 Needs one badge with a dev build that has the native apps inbox and hello_native. No provisioning,
 no network, no hands. T-REQ5 (a payment request seen over the air raises the note) needs a second
 badge and is not here. The LED pattern `notify` cannot be seen over serial: look at the badge
-while step 2's note waits (dim purple breathe, 3 s period).
+while step 2's note waits (a dim breathe in the theme's LED colour, 3 s period).
 
 The test resets the badge, so the clock is unset afterwards.
 """
@@ -20,8 +21,9 @@ The test resets the badge, so the clock is unset afterwards.
 import collections
 import os
 import struct
+import time
 
-from common import launch, to_launcher
+from common import launch, settings_row, to_launcher
 
 SHOTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shots")
 SHOT_BYTES = 320 * 240 * 2
@@ -64,13 +66,17 @@ def run(badge):
     badge.reset()
     to_launcher(badge)
     assert _notes(badge) == 0, "notes is %d right after a reset" % _notes(badge)
-    empty_launcher = badge.shot()
+    settings_row(badge, "inbox")  # the Settings list, cursor on the Inbox row: no count yet
+    empty_list = badge.shot()
 
-    # 2. One note. The count is in the state and on the launcher.
+    # 2. One note. The count is in the state and on the Settings list's Inbox row.
     _post(badge, "Test", "hello", TARGET)
     assert _notes(badge) == 1, "after VKNOTE, notes is %d" % _notes(badge)
-    noted_launcher = badge.shot(os.path.join(SHOTS, "notify_launcher_1.png"))
-    assert noted_launcher != empty_launcher, "the launcher looks the same with a note waiting (no [1])"
+    time.sleep(1.2)  # the inbox asks the shell to repaint; the list also repaints every second
+    noted_list = badge.shot(os.path.join(SHOTS, "notify_settings_1.png"))
+    assert noted_list != empty_list, "the Settings list looks the same with a note waiting (no count on Inbox)"
+    to_launcher(badge)
+    badge.shot(os.path.join(SHOTS, "notify_launcher_1.png"))  # for a person: the inbox cell's count
 
     _post(badge, "Test", "hello", TARGET)
     assert _notes(badge) == 1, "an identical note within 10 s was not ignored: notes is %d" % _notes(badge)

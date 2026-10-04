@@ -10,7 +10,6 @@
 
 #include "../../src/vk/core/config.h"
 #include "../../src/vk/core/serial.h"
-#include "../../src/vk/ui/statusbar.h"
 #include "vectors.h"
 
 using namespace vk::config;
@@ -470,7 +469,7 @@ static void test_commit() {
   missing = "x";
   CHECK(commit(missing) && missing == "");
   CHECK(provisioned());
-  CHECK(hostRepaints == 1);                             // the SETUP item goes away
+  CHECK(hostRepaints == 1);                             // the launcher's SETUP NEEDED row goes away
   CHECK(commit(missing));                               // again: still fine, nothing new to draw
   CHECK(hostRepaints == 1);
 
@@ -704,20 +703,14 @@ static void test_info_and_status() {
   }
   CHECK(infoProvisioned != nullptr && infoWifi != nullptr);
 
-  const vk::ui::statusbar::StatusItem *setup = nullptr;
-  for (auto *item = vk::ui::statusbar::StatusItem::first(); item; item = item->next()) {
-    if (strcmp(item->name, "setup") == 0) setup = item;
-  }
-  CHECK(setup != nullptr);
-  if (infoProvisioned == nullptr || infoWifi == nullptr || setup == nullptr) return;
-  CHECK(setup->order == 10);
+  if (infoProvisioned == nullptr || infoWifi == nullptr) return;
 
+  // The status item `setup` is gone with the status-item registry: the launcher's SETUP NEEDED row
+  // reads provisioned() itself.
   CHECK(infoProvisioned() == "0");
   CHECK(infoWifi() == "0" || infoWifi() == "1");
-  CHECK(setup->draw(300, 7) > 0);                       // SETUP is drawn while unprovisioned
   provision();
   CHECK(infoProvisioned() == "1");
-  CHECK(setup->draw(300, 7) == 0);                      // and takes no room afterwards
 }
 
 int main() {

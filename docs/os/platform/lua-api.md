@@ -153,7 +153,7 @@ Shared, pure Lua. Source: `os/lib/vk.lua`. Upstream's push can write only under 
 | `vk.confirm(sig)` | `net` | `"confirmed"`, `"pending"` or `"failed"` (`getSignatureStatuses`). `sig` is base58, or the 64 raw bytes a RESULT frame's `ref` carries |
 | `vk.record(address)` | `net` | `GET <listener_url>/registry/<address>`; returns `record, sig` (bytes), or `nil, "unverified"` on 404 |
 | `vk.report{payee=, reason=, [req=], [payer=]}` | `net` | `POST <listener_url>/feed/event` (a badge-side refusal for the dashboard feed). `payer` defaults to `wallet.address()`; a raw REQ frame in `req` is sent as base64. Only `unverified`, `revoked`, `expired`, `mismatch` and `bad_proof` are posted ([reasons](../reference/reasons.md)); any other reason gives `nil, "not reported"` and no request |
-| `vk.frame_type(data)` | — | the VK frame type of an ESP-NOW payload, or `nil` |
+| `vk.frame_type(data)` | — | the VK frame type of an ESP-NOW payload, or `nil`. Compare it with `vk.T_RESULT` (4), `vk.T_CONTACT_HELLO` (16) or `vk.T_CONTACT_CARD` (17) |
 | `vk.result_frame(req_id_hex, status, sig_bytes)` | — | RESULT frame bytes |
 | `vk.result_parse(data)` | — | `{req_id, status, ref}` (`req_id` hex, `ref` bytes), or `nil` if not a RESULT frame |
 | `vk.hello_parse(data)` | — | `{address, name}` from a CONTACT_HELLO frame, or `nil` |
@@ -161,6 +161,7 @@ Shared, pure Lua. Source: `os/lib/vk.lua`. Upstream's push can write only under 
 | `vk.app_frame(type, body)` / `vk.app_body(data, type)` | — | build / match an app-range frame |
 | `vk.pay.start(opts)` | `sign`, `net`, `espnow` | starts the whole payer flow; returns a flow object (below) |
 | `vk.ui.page()`, `vk.ui.header(left, right)`, `vk.ui.title(text, y)`, `vk.ui.rule(y)`, `vk.ui.row(y, label, value, selected)`, `vk.ui.subline(y, text, selected)`, `vk.ui.amount(cx, y, label, value, unit)`, `vk.ui.footer(left, right)`, `vk.ui.list(model)` | — | the receipt look for Lua apps, drawn with `badge.gfx` in the active theme's colours; same geometry as the firmware's receipt kit ([ui](../ui/ui.md#the-receipt-kit)). `vk.ui.list{title=, rows={{l=, r=, sub=, tone=}}, sel=, hint=}` draws a whole list screen |
+| `vk.ui.frame(draw, [period_ms])`, `vk.ui.dirty()` | — | draw only when the screen changed (below, "Drawing only when something changed") |
 | `vk.short(text)`, `vk.timeout_ms`, `vk.commitment`, `vk.RESULT_OK` / `RESULT_REJECTED` / `RESULT_FAILED` | — | first 4 + `..` + last 4 of an address; the timeout of one HTTP request (4000); the commitment used for the blockhash, the send preflight and the confirmation (`"confirmed"`); RESULT status 0, 1, 2 |
 
 Every network helper returns `nil, message` on any failure; nothing loops or raises.
@@ -172,6 +173,27 @@ Every network helper returns `nil, message` on any failure; nothing loops or rai
 - Also: `ui.perforation(x, y0, y1)`, `ui.barcode(x, y, w, h, [seed])` (the kit's bars; the seed defaults to `wallet.pubkey()`), `ui.color(token)` (`badge.theme.color` with the Receipt-light values as the fallback when `badge.theme` is absent), `ui.text`, `ui.text_center`, and the layout constants `ui.W`, `MARGIN`, `CONTENT_Y`, `ROW_PITCH`, `SUB_PITCH`, `SPLIT_X`, `STUB_CX`, `TITLE_Y`, `LIST_Y`.
 - `list` draws the title and the labels in capitals, takes a 1-based `sel` (nil selects none) and scrolls to keep it in view, and also reads `header` (left header text), `back` (right footer text, default `CANCEL back`) and `empty` (a line shown when there are no rows). `tone` is `"ok"`, `"warn"`, `"bad"` or `"mut"`. Geometry is the native lists' ([ui](../ui/ui.md#screens)).
 - A title is the built-in font at size 2 (13 px per character, 14 px capitals; the kit's serif title has 11 px capitals): Lua has no access to the kit's fonts.
+- `list` defaults its header to `BADGEOS`.
+
+#### Drawing only when something changed
+
+The runtime calls `on_update` and `on_draw` on every loop pass, with no frame limit. A full frame costs about 15 ms of `vk.ui` drawing and a 34 ms transfer of the canvas to the panel, so an app that draws on every pass holds the loop at about 20 passes a second (measured: 45 to 53 ms a pass), and the badge feels slow. Every shipped app therefore keeps its drawing in one function and lets `vk.ui.frame` decide:
+
+```lua
+local function draw() ... end                       -- the whole screen
+function on_draw() vk.ui.frame(draw) end
+```
+
+`vk.ui.frame(draw, [period_ms])` calls `draw()` and returns true when the picture can have changed, and otherwise returns false without touching the canvas (a pass then costs about 1 ms and nothing is sent to the panel):
+
+| Draws when | Why |
+|---|---|
+| `vk.ui.dirty()` was called since the last frame | the app changed something it shows (a frame arrived, a network step finished) |
+| a key is down, or was down on the last pass (`badge.input.any()`) | key handlers change state; a held key scrolls a list |
+| `on_draw` was not called for `vk.ui.pause_ms` (150) | an approval was up: the canvas holds its picture, not the app's |
+| `period_ms` passed since the last frame; the default is `vk.ui.frame_ms` (250) | clocks and countdowns, and any state change whose code did not call `dirty()` |
+
+`period_ms` 0 draws on every pass: use it for an animation (the Game's playfield does) and for nothing else. A state change that must be on the screen at once calls `vk.ui.dirty()` (Duel does when its state changes, so the flash is not late). An app that calls `on_draw` code directly, without `frame`, still works; it is only slow.
 
 ### `vk.pay`
 
@@ -198,7 +220,21 @@ As built (WP35):
 - Presence: at most 2 challenges, each waited `presence_ms` + 300 ms; with no proof the flow goes on and the approval is amber.
 - No record (404): the flow continues with no record and builds the transfer to the address itself, so the firmware shows red UNVERIFIED RECIPIENT, as the attack table in [protocol](../protocol/espnow.md) describes. With a record the destination is the record's `solana_ata`, read from the record text; `wallet.check_record` is not called (the approval verifies the record itself, and one verification is saved).
 - `begin` answering `busy` is retried 10 times, 300 ms apart; send is tried twice; confirm polls every 2 s for 30 s. The tunables are fields of `vk.pay` (`presence_tries`, `presence_margin_ms`, `begin_tries`, `begin_retry_ms`, `send_tries`, `send_retry_ms`, `confirm_every_ms`, `confirm_for_ms`).
-- On `"failed"` the detail is a reason code, or the message of the network call that failed (`"transaction failed"` and `"not confirmed"` for the chain outcomes). The flow also has `flow.state`, `flow.detail`, `flow.signature` and `flow.failed_in` (the state it failed in).
+- On `"failed"` the detail is a reason code, or the message of the network call that failed (`"transaction failed"` and `"not confirmed"` for the chain outcomes).
+- **Fields of the flow object an app may read** (supported: the shipped apps do). Never write them.
+
+  | Field | Value |
+  |---|---|
+  | `flow.state` | the state `update()` last returned |
+  | `flow.detail` | on `"done"` the transaction signature (base58); on `"failed"` the reason; otherwise nil |
+  | `flow.ready` | false until the first `update()` has run its balance step (`refresh_balance` when the token account is unknown), then true. Game shows "starting" until then |
+  | `flow.sig` | the 64 signature bytes, once the approval signed; nil before. This is what a RESULT frame's `ref` carries |
+  | `flow.signature` | the same signature in base58 (what `vk.confirm` and a block explorer take); nil before signing |
+  | `flow.result_sent` | true once the flow has sent a RESULT frame to the payee (request payments only). An app that abandons a flow early checks it to decide whether to send a RESULT itself (Duel does) |
+  | `flow.request` | the request being paid (`opts.request`), or nil for a shop payment |
+  | `flow.failed_in` | on `"failed"`, the state it failed in |
+
+  `flow.sig` and `flow.signature` are the same signature in two encodings, not two spellings of one field.
 - When paying a request, RESULT is also sent on failure: status 1 (rejected) when the approval did not sign, 2 (failed) when send or the chain failed, and 0 with the signature when the node accepted the transaction but it was not seen confirmed within 30 s (the payee confirms on chain itself).
 - Option `destination` overrides the token account the transfer is built to (the evil game's WRONG RECIPIENT demo).
 - A shop payment (`to=`) never touches `badge.espnow`, so it works for an app without the `espnow` permission.

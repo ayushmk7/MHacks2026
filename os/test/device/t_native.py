@@ -31,9 +31,10 @@ APP = "hello_native"
 APP_NAME = "Hello (C++)"
 DENY_APP = "zz_denytest"
 
-# What hello_native draws: upstream's theme::BG (#0B0B12) and theme::GREEN (#14F195) as RGB565.
-BG = 0x0842
-GREEN = 0x1792
+# What hello_native draws: the compile-time palette's theme::BG and theme::GREEN (src/ui/theme.h),
+# which hold Receipt-light values now: #F3EFE4 (paper) and #17804F, as RGB565.
+BG = 0xF77C
+GREEN = 0x1409
 
 
 def _authed(badge, line):

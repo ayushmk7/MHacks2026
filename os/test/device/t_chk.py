@@ -76,7 +76,9 @@ class Run:
         called = log_ms(self.badge, r"\[app\] CT call (\d+)")
         drawn = log_ms(self.badge, r"\[vk\] approval first draw at (\d+) ms")
         if called and drawn:
-            self.open_ms.append((len(verified), drawn[0] - called[0]))
+            after = [ms for ms in drawn if ms >= called[-1]]   # not the consent prompt's first draw
+            if after:
+                self.open_ms.append((len(verified), after[0] - called[-1]))
         os.makedirs(SHOTS, exist_ok=True)
         self.badge.shot(os.path.join(SHOTS, "chk_%s.png" % name))
         assert state["title"] == "Pay", "%s: title %r" % (name, state["title"])

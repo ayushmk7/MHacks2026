@@ -52,7 +52,7 @@ _CN = r"\[app\] CN "
 _LUA_ERROR = r"\[lua\] .*(?:error|stopping)"
 
 _APP_INI = (
-    "name=Contact test\nversion=1.0.0\nauthor=Badge OS tests\n"
+    "name=Contact test\nversion=1.0.0\nauthor=BadgeOS tests\n"
     "description=t_con.py helper: swaps contact cards and lists the contacts.\n"
     "entry=main.lua\npermissions=contacts,espnow\nmin_api=2\n"
 )
@@ -220,7 +220,7 @@ end
 function on_draw()
   gfx.clear(gfx.BG)
   gfx.text("contest", 12, 10, gfx.WHITE, 2)
-  gfx.text(tostring(case.mode), 12, 40, gfx.SOLANA_GREEN, 1)
+  gfx.text(tostring(case.mode), 12, 40, gfx.GREEN, 1)
   gfx.text(status:sub(1, 48), 12, 56, gfx.WHITE, 1)
 end
 

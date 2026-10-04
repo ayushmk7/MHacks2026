@@ -65,19 +65,19 @@ Conditions the specification implies but that are easy to miss. Each has a test 
 | 34 | Contacts feature | 10, 11, 20, 22, 32 | yes (2) | 33, 35 |
 | 35 | `lib/vk.lua` | 13, 23, 33 | yes | 30–32, 34 |
 | 36 | Wallet settings app | 20, 24, 30, 31, 33 | yes | 4x |
-| 37 | BadgeOS shell rewrite and rebrand: boot screen, launcher, settings pages, dialogs; upstream's shell, splash, sample apps and names removed | 12, 31, 32, 33, 36 | yes | 40–45 |
+| 37 | Batch 5: 5A (shell framework, launcher, dialogs, boot), 5F and 5G (settings pages), 5R (rebrand, test tooling); integrator I5 | 2026-10-04 | fourteen host suites; pre-flash checks 1 to 7 (hook ids `H1 … H21 H23 H24`, 13 replaced paths, check 7 by `scripts/check-names.py`); on the badge, in `receipt-light` and again in `receipt-dark`: `t_shell.py` (T-SHELL1, T-SHELL3, T-SHELL4, T-SHELL5), `t_pages1.py` and `t_pages2.py` (T-SHELL2: every page reached by `VKSTATE.screen`, Theme changes `theme`, Wallet and Inbox launch their apps), `t_apr.py` (the approval over the launcher, T-SHELL6 on the launcher); `t_boot.py` (T-BOOT1, T-BRAND1: no splash line, banner `BadgeOS 0.1.0`, no upstream name in the boot log); `t_rel1.py` (scripted T-REL1, eleven apps); the full regression of 24 device tests passes | code complete. **Gate 3 met on one badge except T-REQ5** (second badge). Boot line `[vk] registries: services=8 commands=17 lua=37 domains=5 routes=3 permissions=9 patterns=6 native=3 config=17 pages=13`. Dev image 1,991,895 bytes. The first Batch 5 build compiled with no error. 38 screenshots `shots/shell_<screen>_<theme>.png` (15 screens in both themes, plus the inbox variants), all read by the integrator: no clipped or overlapping text. Added by the integrator: `scripts/check-names.py` (the name check on string literals; the `grep` of the brief printed about forty invisible lines); hook H23 extended to the LED pulse of the push code; **hook H24** (`vk::flush()`, counted) with `VKSTATE` `backlight` and `flushes` and the dev command `VKPERF`; responsiveness fixes after the product owner reported a slow badge (testing.md, "Responsiveness"): the approval and the Lua apps no longer draw on every pass, Device info no longer reads the filesystem in `draw()`, and the shell no longer rescans the app folders when an app exits (1.2 s). The inbox cell keeps its count when selected. The new network names took effect with this flash (hostname `badgeos`, hotspot password `badgeos-setup`, ESP-NOW magic `BDOS`): **a badge on an older build no longer hears this one over ESP-NOW**. Upstream's six samples were deleted from this badge's filesystem. Deferred: T-LED1 and the boot screen's appearance (a person: it cannot be captured over serial; the log shows every stage, no splash line, and `[os] ready` 4 to 6 s after reset); T-BRAND2 (a person, a browser, a second badge); offer and installing screens (a broker; compiled, never seen); Settings → Wi-Fi actions and the ESP-NOW peer list (network, second badge); Settings → Identity → New identity SELECT (never scripted: it replaces the key). Visual notes for a person: Lua app titles are the built-in font at size 2, blockier than the shell's serif titles; the brand line's height on the boot screen was not measured |
 | | **Gate 3: unpermitted app refused; native app runs; request raises a notification** | | | |
-| 40 | Home | 33, 35 | yes | 41–45 |
-| 41 | Pay and Request | 23, 35 | yes (2) | 40, 42–45 |
-| 42 | History app | 24, 30 | yes | 40–45 |
-| 43 | Contacts app | 34, 35 | yes (2) | 40–45 |
-| 44 | Game and Evil game | 35, 21 | yes | 40–45 |
-| 45 | Duel | 41 | yes (2) | 40–44 |
+| 40 | Batch 5: 5B; integrator I5 | 2026-10-04 | on the badge `t_app_home.py`: pushed with `vk.lua`, `HOME addr` equals the short `VKINFO` key and is logged once, 10 s with no Lua error, CANCEL gives `launcher`; `t_rel1.py` | code complete; device verification of the balance deferred (network). Screenshot `shots/home_receipt-light.png`. `VKAUTOSTART home` is not set on the development badge (tests expect the launcher after a reset) |
+| 41 | Batch 5: 5C; integrator I5 | 2026-10-04 | on the badge `t_app_pay.py` (`PAY list 0`, 10 s with no Lua error, CANCEL gives `launcher`) and `t_app_request.py` (`REQ amount`, `REQ open <req_id>`, the waiting screen, `REQ closed`, `REQ err no_time` with the clock unset); `t_rel1.py` | code complete; device verification of a payment deferred: `t_pay_2.py` needs two badges, the hotspot, the backend with a record for the payee, and tokens. Nothing past "no requests nearby" and "request open" has run. Screenshots `shots/pay_…`, `request_amount_…`, `request_waiting_…`, `request_no_time_receipt-light.png` |
+| 42 | Batch 5: 5B; integrator I5 | 2026-10-04 | on the badge `t_app_history.py`: a `VKDEMOAPPROVE` record appears (`HIST n >= 1`), list and detail differ, CANCEL goes detail → list → `launcher`; `t_rel1.py` | code complete. Screenshots `shots/history_list_…`, `history_detail_receipt-light.png`. Launch takes about half a second (it reads the history file) |
+| 43 | Batch 5: 5D; integrator I5 | 2026-10-04 | on the badge `t_app_contacts.py`: `CON list 0`, SELECT gives `CON swap on` and a changed screen, CANCEL `CON swap off` with the app still running, CANCEL again `launcher`; `t_rel1.py` | code complete; device verification of a swap deferred (second badge: T-CON1, T-CON2, `t_con.py`). `vk.T_CONTACT_CARD` added to `lib/vk.lua` by the integrator |
+| 44 | Batch 5: 5D; integrator I5 | 2026-10-04 | on the badge `t_app_game.py`: `GAME title`, `GAME play`, scores in order, `GAME over <n>`, the shop row gives `GAME shop <id> <price>` then `GAME buy failed <reason>` with the app still running, CANCEL to title and to `launcher`; `t_rel1.py` (also `evilgame`) | code complete; device verification of every purchase deferred (network, a registry record for the shop). **`shop.recipient` and `evil_recipient` are placeholders that a person must fill in** (build guide, "Before a demo"). The two evil demos have never run. The playfield runs at 22 frames a second (one full-canvas transfer per frame) |
+| 45 | Batch 5: 5E; integrator I5 | 2026-10-04 | on the badge `t_app_duel.py`: title, `DUEL stake`, `DUEL invite <id>`, `DUEL invite timeout`, `DUEL title`, CANCEL gives `launcher`; `t_rel1.py` | code complete; device verification of a duel deferred (`t_duel_2.py`: two badges; its paid path also needs the network, the registry and tokens). **Gate 4 is not met**: no part of the demo script (honest payment, impostor, replay, evil game, revoked merchant) can run on one badge with no network. Duel's frames 64 to 68 are in the type registry of espnow.md |
 | | **Gate 4: the demo script runs end to end** | | | |
-| 50 | SE050 bring-up | 13 | yes (an SE050-keyed badge) | 2x–4x |
-| 51 | Measurements and tuning | 23 | yes (2) | 3x, 4x |
-| 52 | Release: four badges, release gate | all shipped | yes (4, hands) | — |
-| 54 | Bank rail (optional) | 23 | yes (2) | — |
+| 50 | integrator I5 (close-out) | 2026-10-04 | none | not run: the connected badge reports `key=software` and never addresses its SE050 (hook H21). T-SE1, T-SE2, U4 and M2 for the SE050 need an SE050-keyed badge |
+| 51 | Batch 4: 4F (Monocypher vendored); integrator I4 (switch, M2); integrator I5 (close-out) | 2026-10-03 | host suite `mono`; on the badge `t_chk.py` and `t_sign.py` with `VK_ED25519_BACKEND 1` | M2: **verify 18 ms** (Monocypher; TweetNaCl was 419 ms), **sign 211 ms** (upstream's TweetNaCl through `identity::sign`). M3: 12 ms with no record, 15 to 33 ms with one verification, 50 ms with two. M4: dev 1,991,895 bytes, release 1,983,131 bytes; heap 179 KB free on the launcher and during an approval; PSRAM 8,015 KB free. M6: 2,272 bytes of loop stack least free after signatures (above 1 KB: hook H22 not applied); not measured with TLS. Responsiveness table in testing.md. **Not measured:** M1 (second badge; `presence_ms` is still its default), M5 (network), M6 under HTTPS (network) |
+| 52 | integrator I5 (close-out), single-badge part | 2026-10-04 | the release profile compiles and passes pre-flash check 6; T-REL2 on the badge (no dev command answers `OK`; `VKINFO` `profile=release`; `commands=9`); T-REL1 scripted (`t_rel1.py`, dev build) | Release image 1,983,131 bytes. The badge was flashed back to the dev profile and left provisioned with the test values. **Not done:** four badges flashed, provisioned, funded, attested and labelled; T-REL1 by hand; T-REL3; T-APR6 |
+| 54 | — | — | — | **not built, cut.** No file under `src/vk/features/bank/` exists and brief 6A was not dispatched. The `bank` row of `test_domains.cpp` and the text of checks.md "Bank rail" remain as the specification |
 
 **Corrections to the dependency table** (from the [execution plan](execution-plan.md), section 1; where they differ from the table or from a package below, these win):
 
@@ -366,7 +366,7 @@ The OS is named **BadgeOS** and its whole user interface is its own: upstream's 
 - [ ] Settings list and the thirteen rows: Theme, Wi-Fi, Bluetooth, ESP-NOW, App push, App store, Identity (New identity behind a hold-SELECT confirmation), Display, LEDs, Wallet, Inbox, Device info, Console. Every upstream call of the old screens is kept ([shell](../ui/shell.md#settings-pages)).
 - [ ] Rebrand: hook H23, the replaced files, the status-item registry removed, `DEFAULT_BROKER_URL` empty.
 - [ ] Tests T-SHELL1 to T-SHELL6, T-BRAND1, T-BRAND2 ([testing](../testing/testing.md#acceptance-tests)); screenshots of every shell screen in both themes kept in `test/device/shots/` as `shell_<screen>_<theme>.png`.
-- [ ] The Solana check prints nothing ([upstream hooks](../architecture/upstream-hooks.md#checking-the-hooks)).
+- [ ] The name check prints nothing: `python3 scripts/check-names.py` ([upstream hooks](../architecture/upstream-hooks.md#checking-the-hooks)).
 
 **Done when (WP37):** the badge boots to the BadgeOS boot screen and the launcher; every settings page is reached by name and drawn in both themes; every app returns to the launcher (`VKSTATE` app empty, `screen` `launcher`); pre-flash checks 1 and 7 pass.
 
@@ -465,3 +465,62 @@ Each app is one folder under `apps/` with `app.ini`, `main.lua`, `config.lua`, w
 | 51 | Batch 4: 4F (Monocypher vendored); integrator I4 (switch, M2) | 2026-10-03 | host suite `mono`; on the badge `t_chk.py` with `VK_ED25519_BACKEND 1` | M2 with Monocypher: **verify 18 ms** (12 samples of one `t_chk.py` run, eleven of them 18 or 19 ms; TweetNaCl was 419 ms). Sign is unchanged at 211 ms (upstream's TweetNaCl through `identity::sign`). `begin_solana` to first draw: 12 ms with no record, 15 to 33 ms with one verification, 50 ms with two. Pre-flash check 2 now also looks for Monocypher's signing functions. Still open: M1, M5, M6 (Monocypher's verification needs about 1.6 KB of stack), SE050 figures |
 | 52 | | | Release | |
 | 54 | | | optional | |
+
+## Deferred verification
+
+What is written and compiled but has not been seen working, as of 2026-10-04, on the one development badge (software key, no network, no second badge). Everything not listed here passed on the badge. Each item names what it needs.
+
+### Needs a second badge (two USB ports; both must run this build: the ESP-NOW magic is `BDOS`)
+
+| What | Test | Also needs |
+|---|---|---|
+| T-HOOK1: a second ESP-NOW app receives frames after the first exits | `t_hook.py` | — |
+| T-REQ1 to T-REQ4: a request is listed, presence is proven, a replay stays pending, the proof cap holds | `t_req.py` | — |
+| T-CHK1: green VERIFIED - PRESENT; Gate 2's "honest payee green" | `t_req.py` | — |
+| T-REQ5: a request seen on the launcher raises a notification and the Inbox opens Pay | no script (`t_notify_2.py`; steps in the WP32 row) | — |
+| T-CON1, T-CON2: contact swap, card replay | `t_con.py` | — |
+| Pay ↔ Request end to end | `t_pay_2.py` | hotspot, backend with a record for the payee, tokens |
+| Duel: invite, rounds, settle, "unpaid" on cancel | `t_duel_2.py` | its paid path: hotspot, backend, tokens |
+| Settings → ESP-NOW with a real peer in the list | by hand | — |
+| M1 (CHAL → PROOF latency, which sets `presence_ms`); U7 and U12 (frames lost while a signature blocks the loop) | `t_req.py` log lines | — |
+
+### Needs the hotspot, the dashboard listener and devnet
+
+| What | Test |
+|---|---|
+| SNTP sync: `time=sntp` within 10 s (U5, U6) | `t_clock_net.py` |
+| T-APR1 on chain: `signtest` against `/badge/pending`, transaction confirmed. **This is Gate 1** | `t_sign_net.py` |
+| `vkdev.py provision --env dashboard/.env` (needs `npm run devnet:setup`: `HACK_MINT` is empty); U9, the authority keypair layout | by hand |
+| Balance: the launcher's BALANCE row and Home's stub, `wallet.token_account()`, `[bal] fetch` (M5) | no script (`t_bal_net.py` to write) |
+| `vk.rpc`, `vk.blockhash`, `vk.send_tx`, `vk.confirm`, `vk.record`, `vk.feed`, `vk.report` against real endpoints; `vk.pay` beyond its failure path | `t_sign_net.py`, `t_pay_2.py` |
+| Game shop purchase (amber); Evil game "amount" and "recipient"; a revoked merchant. First fill in the two placeholders (build guide, "Before a demo") | by hand |
+| Backend routes `/registry`, `/feed/*`, `/health` do not exist yet (backend owner) | — |
+| Store registration through `store-reg`, and the app-store offer and installing screens: need a broker; `DEFAULT_BROKER_URL` is empty. Compiled, never seen | by hand |
+| Settings → Wi-Fi by hand: scan, join an open network, start the hotspot, disconnect, forget. Settings → App push addresses on a real network; the web page's BadgeOS title and Receipt colours in a browser (T-BRAND2) | by hand |
+| `push-apps.sh --host` over Wi-Fi | by hand |
+| M6 with an HTTPS request in flight (loop-task stack; 2,272 bytes free without TLS) | `VKPERF` field `stack` after `t_sign_net.py` |
+
+### Needs a person's hands and eyes
+
+- **The boot screen and the LED boot bar (T-LED1):** it cannot be captured over serial. From the log: every stage is reached, there is no splash line, `[os] ready` comes 4 to 6 s after reset. Whether it looks right, and the height of the `BadgeOS` brand line, need eyes.
+- **T-LED2:** the LED colour for green, amber and red approvals; the `notify` pattern (a dim breathe while a note waits and the badge is idle); the LED pulse when a push lands (now the theme's LED colour).
+- **That the glass shows what the screenshots show.** `VKSTATE` reports `backlight=190` and counted canvas transfers, and every screenshot is of the canvas; nobody has compared the panel with them in this batch. Legibility at arm's length; comparison with the simulation in `docs/design/os-mockups/`.
+- **Responsiveness with real keys.** Measured over serial with injected keys (testing.md, "Responsiveness"); the feel of the real buttons is a person's judgement.
+- **T-REL1 by hand:** every screen of every app, real keys. The scripted half passed.
+- **T-APR6:** a release build never signs a red approval with real buttons (a release build has no test hooks).
+- **T-CFG4:** `VKINFO` over BLE or HTTP is not recognised. **T-REQ6's BLE half.**
+- **Settings → Identity → New identity, SELECT:** it replaces the badge's key and address, so it is never scripted.
+- BOOT1/RST1 recovery if auto-reset ever fails. The SE050 fallback (a new identity).
+
+### Needs an SE050-keyed badge
+
+- T-SE1 (a 214-byte transfer signed by the SE050), T-SE2 (`too_long` for a transfer with a Memo), U4, M2 for the SE050. The development badge's key is a software key and hook H21 keeps its SE050 off the bus; U13 (which SE050 operation latches the I²C clock) is still open.
+
+### Needs four badges
+
+- WP52: release flash, provisioning, funding, attestations and labels for Merchant, Impostor, Judge A and Judge B; T-REL3, the demo script end to end. **Gate 4 and the release gate are not met.**
+
+### Not built
+
+- WP54, the bank rail: cut.
+

@@ -191,7 +191,7 @@ struct InfoField : Registered<InfoField> { const char *name; String (*fn)(); Inf
 | `VKAUTOSTART <id>` | `OK` | sets upstream's autostart app (`settings::setAutostartApp`); empty id clears it |
 | `VKWIFI <ssid>\|<password>` | `OK joining` · `ERR usage` (no `\|`, or an empty SSID) | `OK joining` is sent before the join starts. The SSID is everything before the first `\|` (it may contain spaces), the password everything after. Calls `wifi_mgr::connect(ssid, password, true)`, which saves the network and joins it, as upstream's `JOINWIFI` does |
 
-Dev-profile commands (`VKSHOT`, `VKBTN`, `VKSTATE`, `VKTIME`) are in [../testing/testing.md](../testing/testing.md#dev-hooks).
+Dev-profile commands (`VKSHOT`, `VKBTN`, `VKSTATE`, `VKTIME`, `VKPERF` and the others) are in [../testing/testing.md](../testing/testing.md#dev-hooks).
 
 ## Wi-Fi
 

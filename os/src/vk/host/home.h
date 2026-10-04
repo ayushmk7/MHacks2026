@@ -1,4 +1,5 @@
-// The home service: keeps the launcher app in front (ui.md, "Launcher and settings").
+// "The badge is idle" (ui.md): no app is running, so the shell is showing. There is no home service:
+// when no app runs, the shell (src/vk/shell/) is the launcher.
 #pragma once
 
-namespace vk::host { void showShell(); bool idle(); }
+namespace vk::host { bool idle(); }

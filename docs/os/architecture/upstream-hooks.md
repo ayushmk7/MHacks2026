@@ -17,7 +17,7 @@ BadgeOS is a fork: the runtime, the radios, app push, the store client and the d
    - it compares the hook ids found by `grep -rn "// VK: H" os.ino src | grep -v "^src/vk/"` with the hook table. The exclusion is anchored to the start of the line, which is the file path: the H1 line itself contains the text `src/vk/` and an unanchored exclusion would drop it. A table row whose purpose names a range of sites (H8: "H8a–H8f") stands for those ids; a row whose purpose starts with `optional:` (H18) may be absent from the source;
    - it reads the replaced-files table: every path whose kind is `deleted` must not exist, and every path whose kind is `rewritten` or `edited` must exist.
 5. A new hook needs a new id here first; a new replaced file needs a row here first. Prefer a registry ([overview](overview.md#6-self-registration)) over either: most additions need none. Ids are never reused: H14, H15 and H20 are retired ([Retired hooks](#retired-hooks)), and H22 is reserved for the loop-task stack size (execution plan, Risk 5).
-6. Hooks leave upstream's behaviour unchanged unless this file says otherwise. Two WP01 stubs are not empty: `router::install()` must install a handler that forwards to `runtime::dispatchEspnow`, and `signStoreRegistration()` must forward to the signer. Four hooks change behaviour on purpose: H9 (fixes finding F1), H12 (a larger SE050 limit), H16 (API version 2) and H23 (BadgeOS's names and network identifiers).
+6. Hooks leave upstream's behaviour unchanged unless this file says otherwise. Two WP01 stubs are not empty: `router::install()` must install a handler that forwards to `runtime::dispatchEspnow`, and `signStoreRegistration()` must forward to the signer. Four hooks change behaviour on purpose: H9 (fixes finding F1), H12 (a larger SE050 limit), H16 (API version 2) and H23 (BadgeOS's names, network identifiers and LED colour). H24 only counts: it calls the same `display::flush()`.
 
 Line numbers are for upstream commit `812b8c7`. Upstream's `solana-os.ino` is `os.ino` in the fork; that rename is the one change that is neither a tagged line nor a row in the replaced-files table.
 
@@ -43,7 +43,8 @@ Line numbers are for upstream commit `812b8c7`. Upstream's `solana-os.ino` is `o
 | H18 | `src/identity/identity.cpp` | optional: never use the SE050 for a new key |
 | H19 | `src/lua_sdk/lua_runtime.cpp` `callGlobal()` | no Lua callback runs while the approval is up |
 | H21 | `src/hal/se050.cpp` `test()`, `src/hal/se050_t1.cpp` `begin()`, `src/hal/badge_i2c.cpp` `scan()` | provisional: nothing addresses the SE050 on the I²C bus; the badge behaves as if it had no secure element (button fix, finding F17) |
-| H23 | `src/config.h`, `src/net/espnow_mgr.cpp`, `src/lua_sdk/lib_gfx.cpp` | BadgeOS names: OS name, hostname, hotspot password, broker URL, ESP-NOW magic; upstream's `SOLANA_*` Lua colour constants removed |
+| H23 | `src/config.h`, `src/net/espnow_mgr.cpp`, `src/lua_sdk/lib_gfx.cpp`, `src/net/push_server.cpp`, `src/net/push_protocol.cpp` | BadgeOS names: OS name, hostname, hotspot password, broker URL, ESP-NOW magic; upstream's `SOLANA_*` Lua colour constants removed; the LED pulse when a push lands uses the theme's LED colour, not upstream's brand colours |
+| H24 | `os.ino` `loop()` | the canvas is sent to the panel through `vk::flush()`, which counts the transfers |
 
 ## The edits
 
@@ -363,10 +364,12 @@ Nothing a user can see and no network identifier says "Solana" or "SKYRIZZ" ([sh
 
 ```cpp
 #define SOLANA_OS_NAME     "BadgeOS"  // VK: H23 (was "Solana OS")
-constexpr char     DEFAULT_HOSTNAME[]   = "badgeos";  // VK: H23 (was "solana-badge")
-constexpr char     DEFAULT_AP_PASSWORD[] = "badgeos-setup";  // VK: H23 (was "solanabadge")
+constexpr char     DEFAULT_HOSTNAME[]   = "badgeos";  // VK: H23 (was upstream's hostname)
+constexpr char     DEFAULT_AP_PASSWORD[] = "badgeos-setup";  // VK: H23 (was upstream's hotspot password)
 #define DEFAULT_BROKER_URL ""  // VK: H23 (was upstream's DEF CON broker): the store client is off until an address is set from the web UI
 ```
+
+Upstream's values were `"solana-badge"` and `"solanabadge"`; the tag comments do not repeat them.
 
 `SOLANA_OS_NAME` is what the serial banner, the push protocol's `INFO` reply, `/api/status` and Settings → Device info print. With an empty broker URL upstream's store client stays compiled in and idle: `broker::update()` returns at `url().length() == 0`, so it never registers and never polls; Settings → App store shows `off` ([shell](../ui/shell.md#settings-pages)).
 
@@ -384,11 +387,35 @@ constexpr uint8_t MAGIC[4] = {'B', 'D', 'O', 'S'};  // VK: H23 (was SBDG)
 
 No `gfx.PAPER` or `gfx.INK` is added: the theme ([ui](../ui/ui.md#theme)) is the only source of BadgeOS's colours, and it changes at run time, which a constant cannot.
 
+`src/net/push_server.cpp` and `src/net/push_protocol.cpp`: the LED pulse a wearer sees when a pushed file or certificate lands was upstream's brand green (and purple for a certificate). The three calls become the theme's LED colour, and each file gets one tagged include:
+
+```cpp
+#include "../vk/ui/leds.h"  // VK: H23
+
+  vk::ui::leds::pulseTheme(600);  // VK: H23 (was upstream's brand green)        push_server.cpp, after a file is written over HTTP
+      vk::ui::leds::pulseTheme(600);  // VK: H23 (was upstream's brand purple)   push_protocol.cpp, after a certificate is stored
+    vk::ui::leds::pulseTheme(600);  // VK: H23 (was upstream's brand green: "landed")   push_protocol.cpp, after END
+```
+
+`vk::ui::leds::pulseTheme(ms)` (`src/vk/ui/leds.h`) is `::leds::pulse` in `theme::color(LED)` converted from RGB565; the shell's `pulseLed()` calls the same function. `push_server.cpp` is therefore both a hooked file (these two lines) and a replaced one (its embedded web page, below).
+
 Consequences, accepted:
 
 - A badge running BadgeOS and a badge running upstream Solana OS no longer hear each other's ESP-NOW frames or beacons (different magic). All badges of one deployment must run BadgeOS.
 - The default hostname and the default hotspot password changed. A badge whose settings already store other values keeps them; the device name shown to other badges (ESP-NOW beacon, BLE) is upstream's `badge-XXXX` default and is not changed.
 - A Lua app that uses `gfx.SOLANA_PURPLE` and its three siblings reads `nil`. Upstream's sample apps, which did, are deleted ([Replaced upstream files](#replaced-upstream-files)).
+
+### H24 — counted flush
+
+In `loop()` in `os.ino`, the one statement that sends the canvas to the panel:
+
+```cpp
+  vk::flush();  // VK: H24 (was display::flush();)
+```
+
+`vk::flush()` (`src/vk/vk.cpp`) calls `display::flush()` and, when it returns true (the canvas had changed and was transferred), adds one to a counter and the time taken to a sum; `vk::flushStats()` returns both. Behaviour is unchanged in both profiles. The counter is what the dev commands report: `VKSTATE` has `flushes` (transfers since boot) and `VKPERF` has the transfers of the last second ([testing](../testing/testing.md#dev-hooks)).
+
+Why it exists: a screenshot (`VKSHOT`) reads the canvas, not the glass, so a canvas that is drawn but never sent, or sent on every pass (34 ms each, which caps the loop at about 20 passes a second), passes every screenshot test. The device tests assert that the count grows when the picture changes, and the responsiveness figures in [testing](../testing/testing.md#measurements) are read from it. The boot screen and the approval's "Signing..." frame call `display::flush()` directly and are not counted.
 
 ## Retired hooks
 
@@ -410,7 +437,7 @@ Paths are relative to `os/`. Kinds: **deleted** (the file or folder does not exi
 | `src/ui/boot.cpp` | rewritten | no splash images; `boot::progress()` draws the Receipt boot screen. The complete file is below. `src/ui/boot.h` is untouched (its comment still describes upstream's splash) |
 | `splash_images.h` | deleted | upstream's two splash images (the Solana logo and the SKYRIZZ credit) |
 | `src/ui/theme.h` | edited | the palette constants hold Receipt-light values, so leftover upstream drawing and Lua's named colours match BadgeOS (table below) |
-| `src/net/push_server.cpp` | edited | the embedded web page only: title and heading `BadgeOS`, colours from the Receipt-light palette. No C++ logic changes. A raw string cannot carry a hook tag |
+| `src/net/push_server.cpp` | edited | the embedded web page: title and heading `BadgeOS`, colours from the Receipt-light palette. A raw string cannot carry a hook tag. The only C++ change in the file is the tagged H23 LED line |
 | `tools/badge-push.py` | edited | texts say BadgeOS; the example host is `badgeos.local` |
 | `README.md` | rewritten | short: what BadgeOS is, the credit line "BadgeOS is built on Solana OS by spacemandev.", a pointer to `docs/os/`. Upstream's README is kept as [`docs/os/reference/upstream-readme.md`](../reference/upstream-readme.md) |
 | `apps/dice`, `apps/gallery`, `apps/hello`, `apps/radar`, `apps/vumeter`, `apps/whosnear` | deleted | upstream's six sample apps |
@@ -469,8 +496,11 @@ Only the values change; every name stays, so upstream code that uses them compil
 
 The word "solana" remains in the source in two kinds of place, and neither is the OS brand.
 
-- **Upstream identifiers and protocol texts that no user sees:** the macro names `SOLANA_OS_NAME`, `SOLANA_OS_VERSION` and `SOLANA_OS_API_VERSION`; the store registration text `solana-badge-register:` (upstream's broker protocol, signed only if a broker URL is configured, through signing domain `store-reg`); the identity self-test text `solana-badge identity self test` (signed and verified locally, never shown or sent); upstream's comments. The default device name `badge-XXXX` never said Solana and stays.
-- **The Solana blockchain:** the feature `solana_pay`, the signing domain `solana`, the Lua function `wallet.begin_solana`, the pure files `sol_*.c` and `sol.h`, and `rpc_url` examples such as `https://api.devnet.solana.com`. That is the payment network the badge pays on, not the name of the OS.
+- **Upstream identifiers, comments and protocol texts that no user sees:** every identifier (the macro names `SOLANA_OS_NAME`, `SOLANA_OS_VERSION` and `SOLANA_OS_API_VERSION` among them) and every comment, upstream's and ours: neither reaches a screen, a log or the network, and the check does not search them. Two string literals: the store registration text `solana-badge-register:` (upstream's broker protocol, signed only if a broker URL is configured, through signing domain `store-reg`) and the identity self-test text `solana-badge identity self test` (signed and verified locally, never shown or sent). The default device name `badge-XXXX` never said Solana and stays.
+- **The Solana blockchain,** the payment network the badge pays on, which is not the name of the OS. As identifiers and file names (not searched): the feature folder `solana_pay`, `VK_RAIL_SOLANA`, `vk_check_solana`, `has_solana`, the pure files `sol_*.c` and `sol.h`. As string literals, which the check allows by pattern: the signing domain and rail name `"solana"`; `solana_pay`; `begin_solana` (the Lua function `wallet.begin_solana`); the registry record fields `solana_wallet` and `solana_ata`; the listener route `/feed/solana`; the help text of config key `rpc_url`, `Solana JSON-RPC endpoint`; host names under `solana.com` such as `https://api.devnet.solana.com`; the phrases `Solana blockchain`, `solana domain`, `Solana rail`, `Solana devnet` in messages and tool help; `solana-keygen` (the blockchain's key tool, in `vkdev.py`'s help).
+- **The credit line** in `os/README.md`: `BadgeOS is built on Solana OS by spacemandev.`
+
+The allow-list is the `ALLOWED` table at the top of `os/scripts/check-names.py`; this section and that table say the same thing, and a new allowed name is added to both.
 
 The credit to upstream is in the repository (`os/README.md`, [README](../README.md)) and never on the device.
 
@@ -482,7 +512,7 @@ grep -rn "// VK: H" os.ino src | grep -v "^src/vk/" | sed -E 's/.*VK: (H[0-9]+[a
   | sort -u | sort -t H -k 2n | tr '\n' ' '
 ```
 
-Expected output: `H1 H2 H3 H4 H5 H6 H7 H8a H8b H8c H8d H8e H8f H9 H10 H11 H12 H13 H16 H17 H19 H21 H23`, plus `H18` if used (and `H22` if Risk 5's fallback was applied).
+Expected output: `H1 H2 H3 H4 H5 H6 H7 H8a H8b H8c H8d H8e H8f H9 H10 H11 H12 H13 H16 H17 H19 H21 H23 H24`, plus `H18` if used (and `H22` if Risk 5's fallback was applied).
 
 The replaced files (pre-flash check 1, second half):
 
@@ -496,14 +526,25 @@ for p in src/ui/boot.cpp src/ui/theme.h src/net/push_server.cpp tools/badge-push
 
 Expected output: nothing. The script takes the paths from the table in `UPSTREAM-HOOKS.md`, not from a list of its own.
 
-The names (pre-flash check 7): no line of code or user-visible text names upstream's brand.
+The names (pre-flash check 7): nothing a user or the network can see names upstream's brand.
 
 ```bash
 cd os
-grep -rniE 'solana|skyrizz' os.ino src tools/badge-push.py README.md \
-  | grep -v -e '^src/lua/' -e '^src/vk/features/solana_pay/' -e '^src/vk/wallet/pure/sol' \
-  | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|/\*|\*)' \
-  | grep -vE 'SOLANA_OS_(NAME|VERSION|API_VERSION)|solana_pay|begin_solana|"solana"|solana-badge-register:|solana-badge identity self test|Solana OS by spacemandev'
+python3 scripts/check-names.py            # prints nothing and exits 0
+python3 scripts/check-names.py --list     # every match with its verdict: "kept" (an allowed name) or "FAIL"
 ```
 
-Expected output: nothing. The second filter drops the folders that are about the blockchain, the third drops whole-line comments, and the fourth drops the names listed under [Names that stay](#names-that-stay). A line of code with a trailing comment that names Solana is printed: reword the comment if the file is ours, or add the file's wording to this section if it is upstream's.
+Expected output of the first command: nothing. `scripts/check-names.py` searches only text that can reach a screen, a log, a radio frame or a reader:
+
+- the **string literals** of the compiled sources (`os.ino` and everything under `src/`), after removing every comment, both `//` and `/* … */`. The embedded web page is a raw string literal in `src/net/push_server.cpp`, so it is covered. Identifiers and comments are not text a user sees and are not searched;
+- the string literals of the Lua apps and the library (`apps/`, `lib/`), comments removed, and the `app.ini` files whole;
+- the string literals of the tools (`tools/*.py`, `scripts/*.py`): help texts and messages;
+- `README.md`, whole.
+
+A literal that matches `solana` or `skyrizz` (any case) fails unless what matches is one of the names under [Names that stay](#names-that-stay). The first version of this check was a `grep` over whole lines; it printed some forty lines no user can see (upstream's block comments, identifiers such as `VK_RAIL_SOLANA`), so it could only pass by being switched off. The check that the result is real, on the built image:
+
+```bash
+strings -a build/dev/os.ino.bin | grep -iE 'solana|skyrizz' | sort -u
+```
+
+Expected output, exactly these six (each an allowed name): `Solana JSON-RPC endpoint`, `begin_solana`, `solana-badge identity self test`, `solana-badge-register:`, `solana_ata`, `solana_wallet`. The literal `"solana"` is in the image too, stored as the tail of `begin_solana`. Anything else in that list is upstream branding that reached the binary and must be fixed.

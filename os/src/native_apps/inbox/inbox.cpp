@@ -102,7 +102,7 @@ class Inbox final : public badge::App {
     char right[32];
     receipt::statusRight(right, sizeof right);
     receipt::page();
-    receipt::header("BADGE OS", right);
+    receipt::header("BADGEOS", right);
     receipt::title("INBOX", TITLE_Y);
 
     const size_t count = notify::count();

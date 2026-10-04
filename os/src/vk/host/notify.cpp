@@ -2,8 +2,9 @@
 // relevant app is not open. Eight notes, in RAM, newest first; the oldest is dropped when a ninth
 // arrives and nothing is persisted. Firmware features post; apps cannot.
 //
-// Shown by the status item `inbox` ("[n]" in upstream's bar), by the LED pattern `notify` while a
-// note waits and the badge is idle, and by the native app Inbox (src/native_apps/inbox/).
+// Shown by the shell (the launcher's inbox cell and the Settings list's Inbox row show the count),
+// by the LED pattern `notify` while a note waits and the badge is idle, and by the native app Inbox
+// (src/native_apps/inbox/).
 #include "notify.h"
 
 #include <math.h>
@@ -13,10 +14,10 @@
 #include "../../config.h"        // RGB_LED_COUNT
 #include "../../hal/display.h"
 #include "../../hal/leds.h"
-#include "../../ui/theme.h"      // upstream's palette: the bar is upstream's, and so is the brand purple
 #include "../core/service.h"
 #include "../ui/leds.h"
-#include "../ui/statusbar.h"
+#include "../ui/repaint.h"
+#include "../ui/theme.h"         // vk::ui::theme: the LED colour of the active theme
 #include "../vk.h"               // vk::modalActive
 #include "home.h"                // vk::host::idle
 
@@ -49,22 +50,10 @@ bool isRepeat(const Note &note) {
   return false;
 }
 
-// The bar shows the count, and upstream's shell redraws only when asked (hook H20).
+// The shell shows the count (launcher, Settings list) and redraws only when asked.
 void countChanged() { vk::ui::requestShellRepaint(); }
 
-// ---- status item `inbox` (ui.md, "Status bar"): "[n]" while n notes wait ------------------------
-
-int drawInbox(int rightX, int y) {
-  if (sCount == 0) return 0;
-  char label[8];
-  snprintf(label, sizeof label, "[%u]", (unsigned)sCount);
-  ::display::textRight(label, rightX, y, ::theme::TEXT, 1);
-  return (int)::display::canvas().textWidth(label);
-}
-
-VK_STATUS_ITEM(inbox, "inbox", 30, drawInbox);
-
-// ---- LED pattern `notify` (ui.md, "LED patterns"): dim purple breathe, 3 s period ----------------
+// ---- LED pattern `notify` (ui.md, "LED patterns"): dim breathe in the theme's LED colour, 3 s ----
 
 constexpr uint32_t BREATHE_MS = 3000;
 constexpr float BREATHE_FLOOR = 0.03f;     // never quite dark, so it reads as a breath and not a blink
@@ -82,9 +71,10 @@ bool breathe(uint32_t t_ms) {
   const float phase = (float)(t_ms % BREATHE_MS) / (float)BREATHE_MS;
   const float wave = 0.5f - 0.5f * cosf(phase * 6.2831853f);
   const float level = BREATHE_FLOOR + (BREATHE_PEAK - BREATHE_FLOOR) * wave;
-  const uint8_t r = (uint8_t)(((::theme::BRAND_PURPLE_RGB >> 16) & 0xFF) * level);
-  const uint8_t g = (uint8_t)(((::theme::BRAND_PURPLE_RGB >> 8) & 0xFF) * level);
-  const uint8_t b = (uint8_t)((::theme::BRAND_PURPLE_RGB & 0xFF) * level);
+  const uint16_t led = vk::ui::theme::color(vk::ui::theme::LED);   // RGB565, from the active theme
+  const uint8_t r = (uint8_t)(((((led >> 11) & 0x1F) * 255) / 31) * level);
+  const uint8_t g = (uint8_t)(((((led >> 5) & 0x3F) * 255) / 63) * level);
+  const uint8_t b = (uint8_t)((((led & 0x1F) * 255) / 31) * level);
   for (uint8_t i = 0; i < RGB_LED_COUNT; ++i) ::leds::set(i, r, g, b);
   return true;
 }

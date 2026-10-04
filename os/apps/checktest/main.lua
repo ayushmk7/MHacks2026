@@ -166,7 +166,7 @@ function on_draw()
   local cx = gfx.width() // 2
   gfx.clear()
   gfx.text_center("Check test", cx, 50, gfx.WHITE, 2)
-  gfx.text_center(status, cx, 100, gfx.SOLANA_GREEN, 1)
+  gfx.text_center(status, cx, 100, gfx.GREEN, 1)
   gfx.text_center("tick " .. ticks, cx, 124, gfx.MUTED, 1)
   gfx.text_center("CANCEL to quit", cx, 205, gfx.MUTED, 1)
 end

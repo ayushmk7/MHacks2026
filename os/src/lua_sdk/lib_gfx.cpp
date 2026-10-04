@@ -426,10 +426,7 @@ const luaL_Reg FUNCTIONS[] = {
 };
 
 const Field CONSTANTS[] = {
-    {"SOLANA_PURPLE", theme::PURPLE},
-    {"SOLANA_GREEN", theme::GREEN},
-    {"SOLANA_TEAL", theme::TEAL},
-    {"SOLANA_MAGENTA", theme::MAGENTA},
+    // VK: H23 upstream's SOLANA_* colour constants are removed; apps use badge.theme.color
     {"BLACK", theme::BLACK},
     {"WHITE", theme::WHITE},
     {"BG", theme::BG},

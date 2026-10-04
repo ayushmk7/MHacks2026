@@ -20,9 +20,10 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 SHOTS = os.path.join(_HERE, "shots")
 
 SHOT_BYTES = 320 * 240 * 2
-# The top of the screen, where the launcher draws its bar with the SETUP status item: 30 rows of
-# 320 RGB565 pixels (upstream's bar is 22 rows high).
-TOP_BAND = 320 * 2 * 30
+# The launcher's balance row (ui/shell.md, "Launcher": receipt::row at y = 166, which owns the
+# rows y - 5 .. y + 12): SETUP NEEDED while unprovisioned, BALANCE afterwards. As a byte range of
+# the 320-pixel-wide RGB565 screenshot.
+ROW_BAND = slice(320 * 2 * 158, 320 * 2 * 182)
 
 
 def _keys(badge):
@@ -83,11 +84,11 @@ def run(badge):
     names = _keys(badge)
 
     # ---- T-BOOT2: unprovisioned badge in the launcher --------------------------------------------
-    to_launcher(badge)
-    state = badge.state()
+    state = to_launcher(badge)
+    assert state["app"] == "" and state["screen"] == "launcher", "not on the launcher: %s" % state
     assert state["provisioned"] is False, "VKSTATE provisioned is %r on an unprovisioned badge" % state["provisioned"]
     assert badge.info().get("provisioned") == "0", "VKINFO provisioned is not 0"
-    # The picture is for a person: SETUP in amber, left of the radios in the launcher's bar.
+    # The picture is for a person: the launcher's balance row reads SETUP NEEDED.
     unprovisioned_shot = badge.shot(os.path.join(SHOTS, "cfg_boot2_setup.png"))
     assert len(unprovisioned_shot) == SHOT_BYTES, "screenshot is %d bytes" % len(unprovisioned_shot)
 
@@ -113,13 +114,14 @@ def run(badge):
     assert "rpc_url" in set_keys, "the test provisioning did not set rpc_url"
     assert badge.state()["provisioned"] is True, "VKSTATE provisioned is not true after VKCOMMIT"
 
-    # SETUP leaves the bar when the badge becomes provisioned (the config store asks the shell to
-    # repaint). Compared with the unprovisioned picture, the top of the launcher must differ.
-    to_launcher(badge)
+    # SETUP NEEDED gives way to the balance row when the badge becomes provisioned (the config store
+    # asks the shell to repaint). Compared with the unprovisioned picture, that row must differ.
+    state = to_launcher(badge)
+    assert state["screen"] == "launcher" and state["provisioned"] is True, "after VKCOMMIT: %s" % state
     provisioned_shot = badge.shot(os.path.join(SHOTS, "cfg_boot2_provisioned.png"))
-    assert provisioned_shot[:TOP_BAND] != unprovisioned_shot[:TOP_BAND], (
-        "the top of the launcher looks the same unprovisioned and provisioned: "
-        "SETUP was not drawn, or the shell did not repaint after VKCOMMIT")
+    assert provisioned_shot[ROW_BAND] != unprovisioned_shot[ROW_BAND], (
+        "the launcher's balance row looks the same unprovisioned and provisioned: "
+        "SETUP NEEDED was not drawn, or the shell did not repaint after VKCOMMIT")
 
     badge.reset()
     for key in set_keys:

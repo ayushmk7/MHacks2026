@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Push apps to a Solana Badge over Wi-Fi (HTTP) or BLE.
+Push apps to a BadgeOS badge over Wi-Fi (HTTP) or BLE.
 
 Wi-Fi needs nothing beyond the standard library. BLE needs `bleak`
 (pip install bleak) and is only imported when a BLE transport is asked for, so
@@ -9,7 +9,7 @@ the HTTP path keeps working on a machine without it.
 Examples
 --------
   # push a directory of Lua files and launch it
-  badge-push.py --host solana-badge.local --token 123456 push apps/hello --run
+  badge-push.py --host badgeos.local --token 123456 push apps/hello --run
 
   # single file
   badge-push.py --host 192.168.4.1 --token 123456 push apps/hello/main.lua --id hello
@@ -18,9 +18,9 @@ Examples
   badge-push.py --ble badge-4F2A --token 123456 push apps/hello --run
 
   # housekeeping
-  badge-push.py --host solana-badge.local --token 123456 list
-  badge-push.py --host solana-badge.local --token 123456 rm hello
-  badge-push.py --host solana-badge.local --token 123456 logs
+  badge-push.py --host badgeos.local --token 123456 list
+  badge-push.py --host badgeos.local --token 123456 rm hello
+  badge-push.py --host badgeos.local --token 123456 logs
 
   # WPA2-Enterprise, e.g. DEF CON. Upload this year's CA first, then join.
   badge-push.py --host 192.168.4.1 --token 123456 cert defcon34-wifi.pem
@@ -464,12 +464,12 @@ def command_defcon(badge, args) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Push apps to a Solana Badge.",
+        description="Push apps to a BadgeOS badge.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__.split("Examples")[1] if "Examples" in __doc__ else None,
     )
     transport = parser.add_mutually_exclusive_group()
-    transport.add_argument("--host", help="badge address, e.g. solana-badge.local or 192.168.4.1")
+    transport.add_argument("--host", help="badge address, e.g. badgeos.local or 192.168.4.1")
     transport.add_argument("--ble", metavar="NAME", help="badge BLE name, e.g. badge-4F2A")
     parser.add_argument("--token", default=os.environ.get("BADGE_TOKEN", ""),
                         help="six-digit pairing code (or set BADGE_TOKEN)")

@@ -1,4 +1,4 @@
-// LED patterns and the boot bar (ui.md, "LED patterns"), and the boot screen entry (hook H15).
+// LED patterns and the boot bar (ui.md, "LED patterns"), and the boot screen entry (shell.md, "Boot").
 // Inside namespace vk::ui, `leds::` is this namespace; upstream's LED driver is `::leds::`.
 #pragma once
 
@@ -17,11 +17,12 @@ struct LedPattern : Registered<LedPattern> {
 void play(const char *name);        // replaces whatever is playing; unknown name: logs and does nothing
 void stop();
 bool playing();
-void bootProgress(uint8_t percent); // hook H15
+void bootProgress(uint8_t percent); // one frame of the LED boot bar; called by vk::ui::bootScreen
+void pulseTheme(uint16_t ms);       // ::leds::pulse in the active theme's LED colour (shell, hook H23 sites)
 }
 
 namespace vk::ui {
-// Hook H15, defined in ui/boot_screen.cpp. True when the Receipt boot screen was drawn and flushed,
-// so upstream's own progress drawing is skipped.
+// Defined in ui/boot_screen.cpp and called by src/ui/boot.cpp: draws the Receipt boot screen,
+// flushes it and advances the LED boot bar. Always returns true.
 bool bootScreen(const char *step, const char *detail, uint8_t percent);
 }

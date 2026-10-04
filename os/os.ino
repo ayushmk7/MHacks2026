@@ -305,7 +305,7 @@ void loop() {
     shell::onAppStopped();
   }
 
-  display::flush();
+  vk::flush();  // VK: H24 (was display::flush();)
   heartbeat();
 
   // Yield to the Wi-Fi and BLE tasks. Without this the badge still works but

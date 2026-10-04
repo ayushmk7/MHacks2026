@@ -19,7 +19,7 @@
 #include "../../core/config.h"
 #include "../../core/service.h"
 #include "../../host/home.h"
-#include "../../ui/statusbar.h"
+#include "../../ui/repaint.h"
 #include "../../wallet/approval.h"
 #include "../../wallet/signer.h"
 
@@ -88,20 +88,6 @@ void serviceUpdate() {
 }
 
 VK_SERVICE(balance, serviceBegin, serviceUpdate);
-
-// Status item `balance` (ui.md, Status bar): "12.50 HACK", nothing until a balance is known.
-int drawBalance(int rightX, int y) {
-  vk_token_t token;
-  if (!defaultToken(token) || !sStored || memcmp(sMint, token.mint, 32) != 0) return 0;
-  char amount[24];
-  if (sol_format_amount(sRaw, token.decimals, amount, sizeof amount) == 0) return 0;
-  char label[32];
-  snprintf(label, sizeof label, "%s %s", amount, token.symbol);
-  ::display::textRight(label, rightX, y, ::theme::TEXT, 1);
-  return (int)::display::canvas().textWidth(label);
-}
-
-VK_STATUS_ITEM(balance, "balance", 40, drawBalance);
 
 }  // namespace
 
