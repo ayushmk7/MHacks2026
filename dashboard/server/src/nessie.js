@@ -41,6 +41,13 @@ export function createNessie({ key = () => process.env.NESSIE_KEY || '', base = 
   // Integer dollars only: a fractional amount would be silently rounded or refused by Nessie, so refuse it here first.
   const dollars = amount => (Number.isSafeInteger(amount) && amount > 0 ? amount : fail(400, `amount must be a positive whole number of dollars, got ${amount}`));
 
+  // A deposit or withdrawal record on one account (same body for both). Returns the new record's id.
+  // ponytail: POST /accounts/{id}/withdrawals is UNVERIFIED against the live 2026 API; it is assumed to take the
+  // deposit body ({medium, transaction_date, status, amount, description}). Deposits are verified.
+  const record = async (kind, accountId, { amount, description }) =>
+    createdId(await api('POST', `/accounts/${encodeURIComponent(accountId)}/${kind}s`, {
+      medium: 'balance', transaction_date: today(), status: 'completed', amount: dollars(amount), description }), kind);
+
   return {
     api,
     createCustomer: async ({ first_name, last_name, address }) =>
@@ -58,11 +65,13 @@ export function createNessie({ key = () => process.env.NESSIE_KEY || '', base = 
       const transfer_id = createdId(await api('POST', `/accounts/${encodeURIComponent(fromAccountId)}/transfers`, {
         transaction_date: today(), status: 'completed', amount: dollars(amount), description }), 'transfer');
       try {
-        const deposit_id = createdId(await api('POST', `/accounts/${encodeURIComponent(toAccountId)}/deposits`, {
-          medium: 'balance', transaction_date: today(), status: 'completed', amount, description: `${description} (transfer ${transfer_id})` }), 'deposit');
+        const deposit_id = await record('deposit', toAccountId, { amount, description: `${description} (transfer ${transfer_id})` });
         return { transfer_id, deposit_id };
       } catch (err) { throw Object.assign(err, { transfer_id }); }
     },
+    // Settlement credits a merchant's account, a top-up debits the badge holder's. Neither moves Nessie's balance.
+    deposit: async (accountId, o) => ({ deposit_id: await record('deposit', accountId, o) }),
+    withdrawal: async (accountId, o) => ({ withdrawal_id: await record('withdrawal', accountId, o) }),
   };
 }
 

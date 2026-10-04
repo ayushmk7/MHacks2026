@@ -13,6 +13,20 @@ const keyOf = (resource, params) => {
   const q = new URLSearchParams(params ?? {}).toString();
   return q ? `${resource}?${q}` : resource;
 };
+// Puts `row` into every cached list of `resource` (any query string), newest first; a row with the same `id` field is replaced in place
+// (pending -> settled, rewards pending -> paid). Returns `s` itself when nothing of that resource is cached.
+function upsert(s, resource, field, row, id) {
+  if (row?.[id] == null) return s;
+  let next = s;
+  for (const [k, v] of Object.entries(s)) {
+    const list = v?.data?.[field];
+    if ((k !== resource && !k.startsWith(`${resource}?`)) || !Array.isArray(list)) continue;
+    const merged = [row, ...list.filter(x => x[id] !== row[id])].sort((a, b) => String(b.time).localeCompare(String(a.time)));
+    if (next === s) next = { ...s };
+    next[k] = { ...v, data: { ...v.data, [field]: merged.slice(0, 200) } };
+  }
+  return next;
+}
 const offline = () => Object.assign(new Error('Backend unreachable at 127.0.0.1:8787. Start it with `npm run server`, or switch to DEMO.'), { code: 'offline', status: 0 });
 
 // Errors are always Error objects carrying the server's { code, message } (PLAN 4.4), plus `status` and `gap`.
@@ -90,17 +104,17 @@ export function DataProvider({ children }) {
       refetch('stats', 'stats/db', 'badges');
     } else if (type === 'approval') {
       // Every cached approvals list (any ?limit) gets the row; the same id again (pending -> approved) replaces it in place.
-      setStore(s => {
-        const next = { ...s };
-        for (const [k, v] of Object.entries(s)) {
-          const list = v?.data?.approvals;
-          if (!k.startsWith('approvals') || !list || !data?.id) continue;
-          const merged = [data, ...list.filter(a => a.id !== data.id)].sort((a, b) => String(b.time).localeCompare(String(a.time)));
-          next[k] = { ...v, data: { ...v.data, approvals: merged.slice(0, 200) } };
-        }
-        return next;
-      });
+      setStore(s => upsert(s, 'approvals', 'approvals', data, 'id'));
       refetch('badges'); // bank balances moved
+    } else if (type === 'route') {
+      setStore(s => upsert(s, 'routes', 'routes', data, 'txSig'));
+      refetch('relays/leaderboard', 'badges'); // relay rewards moved HACK
+    } else if (type === 'settlement') {
+      setStore(s => upsert(s, 'settlements', 'settlements', data, 'txSig'));
+      refetch('badges'); // a deposit moved the payee's bank balance
+    } else if (type === 'topup') {
+      setStore(s => upsert(s, 'topups', 'topups', data, 'id'));
+      refetch('badges');
     } else if (type === 'attestation') refetch('attestations', 'badges');
     else if (type === 'attack') refetch('attacks');
     else if (type === 'status') refetch('*');
@@ -148,7 +162,7 @@ export function DataProvider({ children }) {
     setMutating(n => n + 1);
     try {
       const out = await transport[modeRef.current].post(path, body);
-      refetch(path.includes('/attacks') ? 'attacks' : 'attestations', 'badges'); // don't depend on SSE alone
+      refetch(path.includes('/attacks') ? 'attacks' : path.includes('/topups') ? 'topups' : 'attestations', 'badges'); // don't depend on SSE alone
       return out;
     } finally { setMutating(n => n - 1); }
   }, [refetch]);
@@ -177,7 +191,7 @@ export function useStatus() {
 }
 
 /**
- * Gaps from /api/status that the page `page` ('feed'|'badges'|'registry'|'attack') must render itself.
+ * Gaps from /api/status that the page `page` ('feed'|'routes'|'badges'|'registry'|'attack') must render itself.
  * App-wide blockers (database, RPC) are left out: the shell already shows those under the top bar.
  */
 export function useGaps(page) {
@@ -187,7 +201,8 @@ export function useGaps(page) {
 export const isGlobalGap = g => g.severity === 'blocker' && (g.pages?.length ?? 0) >= 4;
 
 /**
- * GET a resource: 'payments' | 'stats' | 'stats/db' | 'badges' | 'attestations' | 'attacks' | 'approvals' (params become the query string).
+ * GET a resource: 'payments' | 'stats' | 'stats/db' | 'badges' | 'attestations' | 'attacks' | 'approvals' | 'routes' | 'relays/leaderboard'
+ * | 'settlements' | 'topups' (params become the query string).
  * Returns { data, loading, error, refetch }. `data` is the response body exactly as in the API contract.
  * loading = nothing to show yet (render skeletons). error with data = stale data, keep rendering it.
  */

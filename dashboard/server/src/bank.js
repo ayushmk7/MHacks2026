@@ -37,11 +37,17 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
 
   setMemo: `UPDATE approvals SET memo_sig = $2 WHERE id = $1`,
 
-  // Nessie never moves a balance, so the ledger is ours: approved debits as payer, approved deposits as payee.
+  // Nessie never moves a balance, so the ledger is ours, in cents. $1 badge pubkey, $2 its Nessie account.
+  // Debits: approved payments as payer + completed top-ups (withdrawals) from the account.
+  // Credits: approved person deposits as payee + settled Capital One settlement deposits into the account.
+  // topups/settlements store HACK base units; HACK has 2 decimals, so amount_raw is cents.
   ledger: `
-SELECT COALESCE(sum(amount_cents) FILTER (WHERE payer = $1), 0)::text AS debits,
-       COALESCE(sum(amount_cents) FILTER (WHERE payee = $1 AND nessie_ids ? 'deposit_id'), 0)::text AS credits
-FROM approvals WHERE rail = 'nessie' AND source = 'backend' AND status = 'approved' AND (payer = $1 OR payee = $1)`,
+SELECT (a.debits + t.debits)::text AS debits, (a.credits + s.credits)::text AS credits
+FROM (SELECT COALESCE(sum(amount_cents) FILTER (WHERE payer = $1), 0) AS debits,
+             COALESCE(sum(amount_cents) FILTER (WHERE payee = $1 AND nessie_ids ? 'deposit_id'), 0) AS credits
+      FROM approvals WHERE rail = 'nessie' AND source = 'backend' AND status = 'approved' AND (payer = $1 OR payee = $1)) a,
+     (SELECT COALESCE(sum(amount_raw), 0) AS debits FROM topups WHERE nessie_account_id = $2 AND status = 'done') t,
+     (SELECT COALESCE(sum(amount_raw), 0) AS credits FROM settlements WHERE nessie_account_id = $2 AND status = 'settled') s`,
 
   // $1 limit, $2 id or NULL.
   approvals: `
@@ -104,10 +110,10 @@ export function createBank({ db = q, nessie = nessieClient, send = sendIxs } = {
     return { customer_id, account_id };
   }
 
-  // Displayed balance = Nessie's static opening balance (dollars) - approved debits + approved deposits (cents).
+  // Displayed balance = Nessie's static opening balance (dollars) - debits + credits (cents), see SQL.ledger.
   async function balance(pubkey) {
     const e = await enrollment(pubkey) ?? fail('not_found', 'badge is not enrolled');
-    const [acct, { rows: [l] }] = await Promise.all([nessie.getAccount(e.nessie_account_id), db(SQL.ledger, [pubkey])]);
+    const [acct, { rows: [l] }] = await Promise.all([nessie.getAccount(e.nessie_account_id), db(SQL.ledger, [pubkey, e.nessie_account_id])]);
     const opening = Math.round(Number(acct?.balance ?? 0) * 100);
     return { usd_cents: opening - Number(l.debits) + Number(l.credits), account_id: e.nessie_account_id };
   }

@@ -111,7 +111,14 @@ async function main() {
   if (merchant) {
     const pda = await attestationPda(merchant.pubkey);
     if ((await fetchEncodedAccount(rpc, pda, { commitment: 'confirmed' })).exists) attested = `already issued (${pda})`;
-    else attested = `issued "MHacks Merch" to badge 1, tx ${(await issue(merchant.pubkey, { name: 'MHacks Merch', kind: 'merchant' })).signature}`;
+    else {
+      // Only Capital One account holders can be verified: the merchant's Nessie id comes from `npm run nessie:seed`.
+      const nessieFile = resolve(ROOT, 'server/config/nessie.json');
+      const nessieRef = existsSync(nessieFile) ? JSON.parse(readFileSync(nessieFile, 'utf8')).merchant?.id : null;
+      attested = nessieRef
+        ? `issued "MHacks Merch" to badge 1, tx ${(await issue(merchant.pubkey, { name: 'MHacks Merch', kind: 'merchant', nessieRef })).signature}`
+        : 'skipped: no Nessie merchant id (run `npm run nessie:seed`, or issue it from the Issuer page)';
+    }
   }
 
   // 8. summary

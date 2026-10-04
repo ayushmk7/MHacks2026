@@ -75,7 +75,7 @@ WHERE source = 'chain' AND ingest_lag_ms IS NOT NULL AND block_time >= now() - I
   badges: `
 SELECT b.id, b.label, b.pubkey, b.token_account, b.key_location, b.stand_in,
        COALESCE(a.status, 'unverified') AS att_status, a.name AS att_name, a.attestation_pda,
-       a.issued_sig, a.revoked_sig, a.expires_at AS att_expires_at, y.kind AS att_kind,
+       a.issued_sig, a.revoked_sig, a.expires_at AS att_expires_at, y.kind AS att_kind, y.settle_mode AS att_settle_mode,
        COALESCE(v.n, 0)::int AS received_n, COALESCE(v.volume_raw, 0)::text AS received_raw
 FROM badges b
 LEFT JOIN attestations a ON a.subject = b.pubkey
@@ -86,7 +86,7 @@ ORDER BY b.id`,
 
   // $1 subject or NULL for all.
   attestations: `
-SELECT a.*, b.id AS badge_id, b.label, y.kind FROM attestations a LEFT JOIN badges b ON b.pubkey = a.subject
+SELECT a.*, b.id AS badge_id, b.label, y.kind, y.settle_mode FROM attestations a LEFT JOIN badges b ON b.pubkey = a.subject
 LEFT JOIN payees y ON y.pubkey = a.subject
 WHERE ($1::text IS NULL OR a.subject = $1)
 ORDER BY a.updated_at DESC`,
@@ -250,7 +250,7 @@ export const toPayment = (r, prevSignature = r.prev_signature ?? null) => ({
 export const toBadge = (r, bal) => ({
   id: r.id, label: r.label, pubkey: r.pubkey, tokenAccount: r.token_account ?? bal?.tokenAccount ?? null,
   keyLocation: r.key_location, standIn: r.stand_in, sol: bal?.sol ?? null, hack: bal?.hack ?? null,
-  attestation: { status: shownStatus(r.att_status, r.revoked_sig, r.att_expires_at), kind: r.att_kind ?? null, name: r.att_name, pda: r.attestation_pda, issuedSig: r.issued_sig, revokedSig: r.revoked_sig },
+  attestation: { status: shownStatus(r.att_status, r.revoked_sig, r.att_expires_at), kind: r.att_kind ?? null, settleMode: r.att_settle_mode ?? null, name: r.att_name, pda: r.attestation_pda, issuedSig: r.issued_sig, revokedSig: r.revoked_sig },
   received: { count: r.received_n, amount: ui(r.received_raw, token.decimals) },
 });
 
@@ -260,7 +260,7 @@ const shownStatus = (status, revokedSig, expiresAt) =>
   (status === 'revoked' && !revokedSig && expiresAt && new Date(expiresAt) <= new Date() ? 'expired' : status);
 
 export const toAttestation = r => ({
-  subject: r.subject, badgeId: r.badge_id ?? null, label: r.label ?? null, name: r.name, kind: r.kind ?? null,
+  subject: r.subject, badgeId: r.badge_id ?? null, label: r.label ?? null, name: r.name, kind: r.kind ?? null, settleMode: r.settle_mode ?? null,
   status: shownStatus(r.status, r.revoked_sig, r.expires_at), pda: r.attestation_pda,
   issuedSig: r.issued_sig, issuedAt: iso(r.issued_at), revokedSig: r.revoked_sig, revokedAt: iso(r.revoked_at), expiresAt: iso(r.expires_at),
 });

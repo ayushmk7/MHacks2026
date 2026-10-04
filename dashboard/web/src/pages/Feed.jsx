@@ -1,4 +1,5 @@
-// Feed: stat tiles, the block-chain strip (one payment = one block), block detail, bank-rail approvals, minute bars, Tiger Data card, ledger.
+// Feed: stat tiles, the block-chain strip (one payment = one block), block detail, Capital One settlements, bank-rail approvals,
+// minute bars, Tiger Data card, ledger. Settlements join the chain rows by txSig.
 import { useLayoutEffect, useRef, useState } from 'react';
 import { useApi, useData, useGaps, useMode, useStatus } from '../data.jsx';
 import { Amount, Bars, Empty, ExplorerLink, GapCard, Page, Pubkey, Skeleton, StatTile, StatusDot, ago, fmt, notBuilt, short, usd, useCopy, useNow } from '../ui.jsx';
@@ -89,7 +90,17 @@ function AttackLine({ p }) {
   );
 }
 
-function Detail({ p, now, onClose }) {
+// Capital One settlement of a payment (payee settles to the bank): settled $X / settling / failed / skipped. HACK is 1:1 with dollars.
+const SETTLE = { settled: 'chip--ok', pending: 'chip--warn', failed: 'chip--bad', skipped: '' };
+const settleText = s => (s.status === 'settled' ? `settled ${usd(Math.round(s.amount * 100))}` : s.status === 'pending' ? 'settling'
+  : s.status === 'skipped' ? (s.reason === 'amount_not_whole_dollars' ? 'skipped · fractional' : 'skipped') : s.status === 'failed' ? 'settle failed' : s.status);
+function SettleChip({ s }) {
+  if (!s) return null;
+  const title = `Capital One settlement: ${s.status}${s.reason ? ` (${settleReason(s.reason)})` : ''}${s.attempts ? `, ${s.attempts} attempt${s.attempts === 1 ? '' : 's'}` : ''}`;
+  return <span className={`chip ${SETTLE[s.status] ?? ''}`} title={title}>{settleText(s)}</span>;
+}
+
+function Detail({ p, now, onClose, settlement }) {
   const [copied, copy] = useCopy();
   if (!p) return <div className="detail detail--empty"><span aria-hidden="true">↑</span> Select a block to inspect its transaction.</div>;
   const kind = kindOf(p);
@@ -121,6 +132,9 @@ function Detail({ p, now, onClose }) {
         <div><dt>Block time</dt><dd className="num">{clock(p.blockTime)}<br /><span className="muted">{ago(p.blockTime, now)} ago</span></dd></div>
         <div><dt>Ingest lag</dt><dd className="num">{p.lagMs == null ? '—' : `${fmt(p.lagMs)} ms`}<br /><span className="muted">chain → database</span></dd></div>
         <div><dt>Source</dt><dd className="num">{p.source}</dd></div>
+        {settlement && <div><dt>Capital One</dt><dd><SettleChip s={settlement} />
+          {settlement.nessieDepositId && <><br /><span className="hash small" title={`Nessie deposit ${settlement.nessieDepositId}`}>deposit {short(settlement.nessieDepositId, 4)}</span></>}
+          {settlement.reason && <><br /><span className="muted small">{settleReason(settlement.reason)}</span></>}</dd></div>}
       </dl>
     </div>
   );
@@ -135,7 +149,9 @@ const REASON = {
   undecodable: 'Request could not be decoded', unverified_hop: 'Unverified relay on the route', route_dropped: 'Route dropped by a relay',
   nessie_error: 'Bank call failed', insufficient_funds: 'Insufficient funds',
 };
+const SETTLE_REASON = { amount_not_whole_dollars: 'Not whole dollars: Nessie only takes whole dollars', nessie_error: 'Bank deposit failed' };
 const reasonText = r => (r ? REASON[r] ?? r.replace(/_/g, ' ') : null);
+const settleReason = r => (r ? SETTLE_REASON[r] ?? reasonText(r) : null);
 const RAIL = { nessie: 'NESSIE', solana: 'SOLANA' };
 // HACK has 2 decimals, so on the Solana rail amountCents is raw base units: 1200 -> 12 HACK.
 const money = (a, symbol) => (a.rail === 'solana' ? `${fmt(a.amountCents / 100)} ${symbol}` : usd(a.amountCents));
@@ -199,6 +215,48 @@ function Approvals({ symbol }) {
   );
 }
 
+function Settlements({ st }) {
+  const rows = st.data?.settlements ?? [];
+  const count = k => rows.filter(s => s.status === k).length;
+  if (notBuilt(st.error) && !st.data) return (
+    <section className="card" aria-label="Capital One settlements">
+      <div className="card-head"><h2>Capital One settlements</h2></div>
+      <p className="muted">This backend has no <code>/api/settlements</code> yet. Payments to payees that settle to Capital One show their dollar deposit here once it ships.</p>
+    </section>
+  );
+  return (
+    <section className="card" aria-label="Capital One settlements">
+      <div className="card-head">
+        <h2>Capital One settlements</h2>
+        <span className="muted">{st.loading ? '' : `${fmt(count('settled'))} settled · ${fmt(count('pending'))} pending · ${fmt(count('failed'))} failed · ${fmt(count('skipped'))} skipped`}</span>
+      </div>
+      {st.loading ? <Skeleton variant="row" lines={4} />
+        : !rows.length ? (st.error ? <Empty icon="×" title={st.error.code === 'offline' ? 'Backend offline' : 'Settlements unavailable'} hint={st.error.message} />
+          : <Empty icon="∅" title="No settlements yet" hint="A payment to a payee that settles to Capital One lands in the bank's settlement wallet, then is deposited as dollars." />)
+        : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead><tr><th>Time</th><th>Payee</th><th>Status</th><th className="r">Amount</th><th>Nessie deposit</th><th className="r">Attempts</th><th>Payment</th></tr></thead>
+              <tbody>
+                {rows.slice(0, 12).map(s => (
+                  <tr key={s.txSig}>
+                    <td className="num" title={s.time}>{clock(s.time)}</td>
+                    <td>{nameOf(s.payee ?? {})}</td>
+                    <td><SettleChip s={s} />{s.reason && <><br /><span className={`small ${s.status === 'failed' ? 't-bad' : 'muted'}`} title={s.reason}>{settleReason(s.reason)}</span></>}</td>
+                    <td className="r num">{usd(Math.round((s.amount ?? 0) * 100))}</td>
+                    <td className="hash">{s.nessieDepositId ? <span title={s.nessieDepositId}>{short(s.nessieDepositId, 6)}</span> : '—'}</td>
+                    <td className="r num">{s.attempts ?? '—'}</td>
+                    <td><ExplorerLink sig={s.txSig} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+    </section>
+  );
+}
+
 function TigerCard({ db }) {
   const now = useNow(5000), d = db.data;
   return (
@@ -237,7 +295,8 @@ function TigerCard({ db }) {
 export default function Feed() {
   const now = useNow();
   const { mode } = useMode(), { status, error: down } = useStatus(), { get } = useApi();
-  const pay = useData('payments'), stats = useData('stats'), db = useData('stats/db');
+  const pay = useData('payments'), stats = useData('stats'), db = useData('stats/db'), st = useData('settlements', { limit: 200 });
+  const settled = new Map((st.data?.settlements ?? []).map(s => [s.txSig, s])); // ponytail: only the latest 200 settlements join the ledger
   const [sel, setSel] = useState(null), [older, setOlder] = useState([]), [more, setMore] = useState('idle'); // idle | loading | end | error
   const detail = useRef(null);
 
@@ -260,7 +319,7 @@ export default function Feed() {
   const inspect = p => { setSel(p); detail.current?.scrollIntoView({ block: 'nearest' }); };
 
   return (
-    <Page title="Payments" subtitle={`Every ${symbol} transfer is a block. Bank-rail approvals and blocked attempts are listed under the chain.`}>
+    <Page title="Payments" subtitle={`Every ${symbol} transfer is a block. Capital One settlements, bank-rail approvals and blocked attempts are listed under the chain.`}>
       <section className="tiles" aria-label="Last 24 hours">
         {stats.loading ? [0, 1, 2, 3].map(i => <Skeleton key={i} variant="card" />) : <>
           <StatTile label="Payments · 24h" value={fmt(s?.payments)} sub={!s ? 'unavailable' : s.seedRows ? `includes ${fmt(s.seedRows)} seeded rows` : 'confirmed on devnet'} />
@@ -294,8 +353,10 @@ export default function Feed() {
       </section>
 
       <section ref={detail} className="detail-slot" aria-label="Selected block" aria-live="polite">
-        {(pay.loading || rows.length > 0) && <Detail p={sel} now={now} onClose={() => setSel(null)} />}
+        {(pay.loading || rows.length > 0) && <Detail p={sel} now={now} onClose={() => setSel(null)} settlement={sel && settled.get(sel.signature)} />}
       </section>
+
+      <Settlements st={st} />
 
       <Approvals symbol={symbol} />
 
@@ -319,7 +380,7 @@ export default function Feed() {
           {pay.loading ? <Skeleton variant="row" lines={6} /> : (
             <div className="table-wrap">
               <table className="table">
-                <thead><tr><th>Time</th><th>Slot</th><th>From</th><th>To</th><th>Status</th><th className="r">Amount</th><th>Signature</th></tr></thead>
+                <thead><tr><th>Time</th><th>Slot</th><th>From</th><th>To</th><th>Status</th>{st.data && <th>Capital One</th>}<th className="r">Amount</th><th>Signature</th></tr></thead>
                 <tbody>
                   {ledger.map(p => (
                     <tr key={p.signature} className={sel?.signature === p.signature ? 'is-sel' : undefined}>
@@ -328,6 +389,7 @@ export default function Feed() {
                       <td>{nameOf(p.payer)}</td>
                       <td>{nameOf(p.payee)}</td>
                       <td>{p.attackId ? <StatusDot status="signed" label="tampered" /> : <StatusDot status={p.payee.status} />}{p.source !== 'chain' && <span className="b-tag"> ~{p.source}</span>}</td>
+                      {st.data && <td>{settled.has(p.signature) ? <SettleChip s={settled.get(p.signature)} /> : <span className="muted">—</span>}</td>}
                       <td className="r"><Amount raw={p.amountRaw} decimals={p.decimals} symbol={p.symbol} /></td>
                       <td><button type="button" className="hash copy" onClick={() => inspect(p)} aria-label={`Inspect transaction ${short(p.signature, 6)}`}>{short(p.signature, 6)}</button></td>
                     </tr>

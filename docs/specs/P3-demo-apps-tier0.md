@@ -164,7 +164,7 @@ The whole routed payment — `CTX_ASK` → `CTX` → approval → `TX` → submi
 | `POST /feed/solana` | `{tx_sig, req}` (req = base64 REQ frame) → `{ok, reason?}` | exists |
 | `POST /feed/event` | `{payer_pubkey, req?, reason}` → `{ok}` | exists |
 | `GET /route/ctx/:payee` | → `{record, sig, blockhash, lastValidBlockHeight}` (one call for the gateway) | **new** — until it exists, use `/registry` + RPC |
-| `POST /feed/route` | `{tx_sig, req, hops:[base58 pubkey…], e2e_proof?:bool}` → `{ok, reason?, rewards?:[{pubkey, sig}]}` | **new** — backend confirms on chain, pays each attested relay 0.01 HACK, settles to Capital One if applicable, draws the route |
+| `POST /feed/route` | `{tx_sig, req, hops:[base58 pubkey…], e2e_proof?:bool}` → `{ok, reason?, rewards?:[{pubkey, state}]}` (state `pending` or `none`; rewards are sent asynchronously) | **new** — backend confirms on chain, pays each attested relay 0.01 HACK, settles to Capital One if applicable, draws the route |
 
 Refusals are HTTP 200 with `{ok:false, reason}`.
 

@@ -8,6 +8,9 @@ import { ingestState, startIngest } from './ingest.js';
 import { registryState, initRegistry, syncAttestations } from './registry.js';
 import { startHttp, broadcast, badgeListener } from './http.js';
 import { getApproval } from './bank.js';
+import { getRoute } from './route.js';
+import { getSettlement, retryPendingSettlements } from './settlement.js';
+import { getTopup } from './topup.js';
 
 const log = tag => err => console.error(`[${tag}]`, errMsg(err));
 const statusChanged = () => broadcast({ type: 'status', data: {} });
@@ -63,16 +66,18 @@ async function tick() {
     }, log('mint'));
   }
   if (dbState.schema) await syncAttestations().catch(log('registry'));
+  if (dbState.schema) await retryPendingSettlements().catch(log('settlement'));
   if (JSON.stringify(gaps()) !== before) statusChanged();
 }
 tick();   // not awaited: the API must come up (and report gaps) even while the first RPC round is slow
 setInterval(tick, 30_000);
 
-// 7. Postgres NOTIFY -> SSE. Payments and approvals are re-read so the SSE payload is the REST shape.
+// 7. Postgres NOTIFY -> SSE. Rows are re-read so the SSE payload is the REST shape.
 listen(async ({ type, id }) => {
-  if (type === 'approval') {
-    const approval = await getApproval(id).catch(log('db'));
-    return approval && broadcast({ type: 'approval', data: approval });
+  const reread = { approval: getApproval, route: getRoute, settlement: getSettlement, topup: getTopup }[type];
+  if (reread) {
+    const data = await reread(id).catch(log('db'));
+    return data && broadcast({ type, data });
   }
   if (type !== 'payment') return broadcast({ type, data: { id } });
   const row = (await q(Q.paymentBySig, [id]).catch(log('db')))?.rows[0];

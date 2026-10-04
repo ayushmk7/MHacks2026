@@ -1,5 +1,5 @@
-// Issuer (Capital One) admin: issue and revoke payee attestations (badge public key -> verified name + kind), each linked to its
-// on-chain transaction, and enroll badges at the bank (Nessie).
+// Issuer (Capital One) admin: issue and revoke payee attestations (badge public key -> verified name + kind + settle mode), each linked
+// to its on-chain transaction, and enroll badges at the bank (Nessie). Only Capital One account holders can be verified.
 import { useState } from 'react';
 import './admin.css';
 import { useApi, useData, useGaps, useStatus } from '../data.jsx';
@@ -9,6 +9,9 @@ import { Empty, ExplorerLink, GapCard, Page, Pubkey, Skeleton, StatusDot, ago, f
 // ponytail: the pubkey check is base58 shape only; the server does the real 32-byte decode.
 const PUBKEY = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/, NAME = /^[\x20-\x7E]{1,32}$/;
 const KINDS = [['merchant', 'Merchant'], ['person', 'Person'], ['relay', 'Relay']];
+// Capital One's settlement role: where a verified merchant or person is paid.
+const SETTLE = [['hack', 'Receive HACK'], ['bank', 'Settle to Capital One']];
+const HOLDER_ONLY = 'Only Capital One account holders can be verified';
 const day = iso => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—');
 
 export default function Registry() {
@@ -17,6 +20,7 @@ export default function Registry() {
   const badges = useData('badges'), atts = useData('attestations');
   const [target, setTarget] = useState(''), [pubkey, setPubkey] = useState(''), [name, setName] = useState('');
   const [kind, setKind] = useState('merchant'), [nessieRef, setNessieRef] = useState(''), [operatorId, setOperatorId] = useState(''), [wallet, setWallet] = useState('');
+  const [settle, setSettle] = useState('hack'), [settleAccount, setSettleAccount] = useState(''); // merchant/person only
   const [busy, setBusy] = useState(''); // 'issue' | the subject being revoked | 'enroll:<pubkey>'
   const [error, setError] = useState(null), [done, setDone] = useState(null); // error: { at, code, message }; done: the POST response
 
@@ -33,19 +37,22 @@ export default function Registry() {
 
   async function send(at, path, body) {
     setError(null); setDone(null); setBusy(at);
-    try { setDone(await post(path, body)); if (at === 'issue') { setName(''); setNessieRef(''); setOperatorId(''); setWallet(''); } }
+    try { setDone(await post(path, body)); if (at === 'issue') { setName(''); setNessieRef(''); setOperatorId(''); setWallet(''); setSettleAccount(''); } }
     catch (err) { setError({ at, code: err.code, message: err.message }); }
     finally { setBusy(''); }
   }
   function issue(e) {
     e.preventDefault(); setDone(null);
     const body = { pubkey: subject, name: name.trim(), kind };
-    // Optional fields go out only when filled, and only for the kind they belong to: a relay has no bank reference.
-    if (!relay && nessieRef.trim()) body.nessieRef = nessieRef.trim();
+    // Fields go out only for the kind they belong to: a relay has no bank reference and no settle mode.
+    if (!relay) { body.nessieRef = nessieRef.trim(); body.settleMode = settle; }
+    if (!relay && settle === 'bank') body.nessieAccountId = settleAccount.trim();
     if (relay && operatorId.trim()) body.operatorId = operatorId.trim();
     if (relay && wallet.trim()) body.solanaWallet = wallet.trim();
     if (!PUBKEY.test(body.pubkey)) return setError({ at: 'issue', code: 'invalid_pubkey', message: 'pubkey must be a base58 32-byte address' });
     if (!NAME.test(body.name)) return setError({ at: 'issue', code: 'invalid_name', message: 'name must be 1 to 32 printable ASCII characters' });
+    if (!relay && !body.nessieRef) return setError({ at: 'issue', code: 'invalid_nessieRef', message: `${HOLDER_ONLY}: enter their Nessie customer or account id` });
+    if (!relay && settle === 'bank' && !body.nessieAccountId) return setError({ at: 'issue', code: 'invalid_settleAccount', message: 'Settling to Capital One needs the Nessie account the dollars are deposited into' });
     if (body.solanaWallet && !PUBKEY.test(body.solanaWallet)) return setError({ at: 'issue', code: 'invalid_wallet', message: 'fee wallet must be a base58 32-byte address' });
     send('issue', '/api/attestations', body);
   }
@@ -114,9 +121,31 @@ export default function Registry() {
           </label>
           {!relay && (
             <label className="field">
-              <span>Nessie reference · optional</span>
-              <input className="input" value={nessieRef} onChange={e => setNessieRef(e.target.value)} placeholder="Nessie customer or account id" spellCheck="false" autoComplete="off" />
-              <small className="muted small">Hashed before it goes on chain: the attestation carries only the hash, the plain id stays in the backend.</small>
+              <span>Nessie reference · required</span>
+              <input className="input" value={nessieRef} onChange={e => setNessieRef(e.target.value)} placeholder="Nessie customer or account id" spellCheck="false" autoComplete="off"
+                aria-invalid={bad('nessieRef') ? 'true' : undefined} required />
+              {bad('nessieRef') ? <small className="field-error" role="alert">{bad('nessieRef')}</small>
+                : <small className="muted small"><b>{HOLDER_ONLY}.</b> Hashed before it goes on chain: the attestation carries only the hash, the plain id stays in the backend.</small>}
+            </label>
+          )}
+          {!relay && (
+            <label className="field">
+              <span>Settlement</span>
+              <select className="select" value={settle} onChange={e => { setSettle(e.target.value); setError(null); }}>
+                {SETTLE.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+              </select>
+              <small className="muted small">{settle === 'bank'
+                ? "Payments go to Capital One's settlement wallet and are deposited as dollars into the Nessie account."
+                : `Payments land in this badge's own wallet as ${status?.token?.symbol ?? 'HACK'}.`}</small>
+            </label>
+          )}
+          {!relay && settle === 'bank' && (
+            <label className="field">
+              <span>Nessie account id · required</span>
+              <input className="input" value={settleAccount} onChange={e => setSettleAccount(e.target.value)} placeholder="account the dollars land in" spellCheck="false" autoComplete="off"
+                aria-invalid={bad('settleAccount') ? 'true' : undefined} required />
+              {bad('settleAccount') ? <small className="field-error" role="alert">{bad('settleAccount')}</small>
+                : <small className="muted small">Kept in the backend only, never on chain.</small>}
             </label>
           )}
           {relay && (
@@ -145,13 +174,13 @@ export default function Registry() {
       <section className="card" aria-label="Attestations">
         <div className="card-head"><h2>Attestations</h2><span className="muted">{!atts.data ? '' : `${rows.filter(a => a.status === 'verified').length} verified · ${rows.filter(a => a.status === 'expired').length} expired · ${rows.length} total`}</span></div>
         <div className="stack">
-          {error && !bad('pubkey') && !bad('name') && !bad('wallet') && (
+          {error && !['pubkey', 'name', 'wallet', 'nessieRef', 'settleAccount'].some(bad) && (
             <div className="note note--bad" role="alert"><b>{error.at === 'issue' ? 'Issue failed.' : 'Revoke failed.'}</b> {error.message}</div>
           )}
           {done && (
             <div className="note note--ok row" role="status">
               <b>{done.attestation?.status === 'revoked' ? 'Revoked' : 'Issued'} “{done.attestation?.name}”{done.attestation?.kind ? ` (${done.attestation.kind})` : ''}</b>
-              <span>{done.attestation?.status === 'revoked' ? 'for' : 'to'} {done.attestation ? who(done.attestation) : '—'}.</span>
+              <span>{done.attestation?.status === 'revoked' ? 'for' : 'to'} {done.attestation ? who(done.attestation) : '—'}{done.attestation?.status !== 'revoked' && done.attestation?.settleMode === 'bank' ? ', settling to Capital One' : ''}.</span>
               <ExplorerLink sig={done.signature}>View transaction</ExplorerLink>
             </div>
           )}
@@ -162,13 +191,16 @@ export default function Registry() {
               <div className="table-wrap">
                 <table className="table">
                   {/* The action sits beside the status so Revoke stays on screen when a narrow window scrolls the table. */}
-                  <thead><tr><th>Badge</th><th>Verified name</th><th>Kind</th><th>Status</th><th>Action</th><th>Issued</th><th>Revoked</th><th>Expires</th></tr></thead>
+                  <thead><tr><th>Badge</th><th>Verified name</th><th>Kind</th><th>Settles</th><th>Status</th><th>Action</th><th>Issued</th><th>Revoked</th><th>Expires</th></tr></thead>
                   <tbody>
                     {rows.map(a => (
                       <tr key={a.subject}>
                         <td>{a.label ?? 'Unknown wallet'}<br /><Pubkey value={a.subject} link /></td>
                         <td><b>{a.name ?? '—'}</b></td>
                         <td>{a.kind ? <span className="chip">{a.kind}</span> : <span className="muted">—</span>}</td>
+                        {/* settleMode absent = a backend that predates it; null = a relay, which is paid rewards, not settled */}
+                        <td>{a.settleMode === 'bank' ? <span className="chip chip--ok" title="Paid into Capital One's settlement wallet, deposited as dollars">Capital One</span>
+                          : a.settleMode === 'hack' ? <span className="chip" title="Paid in HACK into its own wallet">HACK</span> : <span className="muted">—</span>}</td>
                         <td><StatusDot status={a.status} /></td>
                         <td>{a.status === 'verified' && (
                           <button type="button" className="btn btn--danger btn--small" disabled={Boolean(busy)} onClick={() => revoke(a)}
@@ -187,7 +219,7 @@ export default function Registry() {
       </section>
 
       <section className="card" aria-label="Bank enrollment">
-        <div className="card-head"><h2>Bank enrollment</h2><span className="muted">A payer badge needs a Nessie account before it can pay on the bank rail.</span></div>
+        <div className="card-head"><h2>Bank enrollment</h2><span className="muted">A badge needs a Capital One (Nessie) account before it can top up {status?.token?.symbol ?? 'HACK'} or be verified.</span></div>
         <div className="stack">
           {enrollError && <div className="note note--bad" role="alert"><b>Enroll failed for {enrollError.badge.label ?? short(enrollError.badge.pubkey)}.</b> {enrollError.message}</div>}
           {enrolled && (
