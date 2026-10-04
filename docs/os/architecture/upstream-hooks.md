@@ -6,22 +6,22 @@ Every change Badge OS makes to a Solana OS file. This list is complete: if an ed
 
 1. A hook is the smallest edit that hands control to code under `src/vk/`. Logic never goes in an upstream file.
 2. Every changed or added line ends with `// VK: H<n>`.
-3. `firmware/solana-os/UPSTREAM-HOOKS.md` is a copy of the table in this file. `scripts/preflash-check.sh` compares the hook ids found by `grep -rn "// VK: H" solana-os.ino src --include=*.ino --include=*.cpp --include=*.h | grep -v "src/vk/"` with that table and fails on any difference.
+3. `os/UPSTREAM-HOOKS.md` is a copy of the table in this file. `scripts/preflash-check.sh` compares the hook ids found by `grep -rn "// VK: H" os.ino src --include=*.ino --include=*.cpp --include=*.h | grep -v "src/vk/"` with that table and fails on any difference.
 4. A new hook needs a new id here first. Prefer a registry ([overview](overview.md#6-self-registration)) over a new hook: most additions need none.
 5. With the WP01 stubs behind them, the hooks leave upstream's behaviour unchanged, so the fork boots like upstream after work package WP01. Two stubs are not empty: `router::install()` must install a handler that forwards to `runtime::dispatchEspnow`, and `signStoreRegistration()` must forward to the signer. Three hooks change behaviour on purpose: H9 (fixes finding F1), H12 (a larger SE050 limit) and H16 (API version 2).
 
-Line numbers are for upstream commit `812b8c7`.
+Line numbers are for upstream commit `812b8c7`. Upstream's `solana-os.ino` is `os.ino` in the fork; that rename is the one change that is not a tagged line.
 
 ## Table
 
 | Id | File | Purpose |
 |---|---|---|
-| H1 | `solana-os.ino` | include `src/vk/vk.h` |
-| H2 | `solana-os.ino` `setup()` | start Badge OS after the Lua runtime |
-| H3 | `solana-os.ino` `startRadios()` | ESP-NOW frames go to the router |
-| H4 | `solana-os.ino` `loop()` | the approval pauses apps and the shell |
-| H5 | `solana-os.ino` `loop()` | run services every pass |
-| H6 | `solana-os.ino` `pumpSerialConsole()` | our serial commands, USB only |
+| H1 | `os.ino` | include `src/vk/vk.h` |
+| H2 | `os.ino` `setup()` | start Badge OS after the Lua runtime |
+| H3 | `os.ino` `startRadios()` | ESP-NOW frames go to the router |
+| H4 | `os.ino` `loop()` | the approval pauses apps and the shell |
+| H5 | `os.ino` `loop()` | run services every pass |
+| H6 | `os.ino` `pumpSerialConsole()` | our serial commands, USB only |
 | H7 | `src/lua_sdk/lua_bindings.cpp` `openBadge()` | add our Lua functions; drop modules the app was not granted |
 | H8 | `src/lua_sdk/lua_runtime.cpp` | pre-launch check and native apps (six sites, H8a–H8f) |
 | H9 | `src/lua_sdk/lua_runtime.cpp` `stop()` | do not clear the ESP-NOW handler |
@@ -41,7 +41,7 @@ Line numbers are for upstream commit `812b8c7`.
 
 ### H1 — include
 
-After the last upstream `#include` in `solana-os.ino`:
+After the last upstream `#include` in `os.ino`:
 
 ```cpp
 #include "src/vk/vk.h"  // VK: H1
@@ -326,8 +326,8 @@ Upstream's shell redraws only when its private dirty flag is set, so without thi
 ## Checking the hooks
 
 ```bash
-cd firmware/solana-os
-grep -rn "// VK: H" solana-os.ino src | grep -v "src/vk/" | sed -E 's/.*VK: (H[0-9]+[a-g]?).*/\1/' | sort -u
+cd os
+grep -rn "// VK: H" os.ino src | grep -v "src/vk/" | sed -E 's/.*VK: (H[0-9]+[a-g]?).*/\1/' | sort -u
 ```
 
 Expected output: `H1 H2 H3 H4 H5 H6 H7 H8a H8b H8c H8d H8e H8f H9 H10 H11 H12 H13 H14 H15 H16 H17 H19 H20`, plus `H18` if used.

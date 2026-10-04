@@ -1,6 +1,6 @@
 # Apps
 
-Every app Badge OS ships: what it is for, its permissions, its screens and its flow. Lua apps live in `firmware/solana-os/apps/<id>/`; native apps in `firmware/solana-os/src/native_apps/<id>/`.
+Every app Badge OS ships: what it is for, its permissions, its screens and its flow. Lua apps live in `os/apps/<id>/`; native apps in `os/src/native_apps/<id>/`.
 
 ## Rules for every Lua app
 

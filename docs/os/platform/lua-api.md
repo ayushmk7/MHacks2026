@@ -107,7 +107,7 @@ No permission needed. Implemented in `src/vk/wallet/lua_wallet.cpp`.
 
 ## `lib/vk.lua`
 
-Shared, pure Lua. Source: `firmware/solana-os/lib/vk.lua`. Upstream's push can write only under `/apps/<id>/`, so `scripts/push-apps.sh` copies this file into each app's folder as `vk.lua` when it pushes the app; `require` finds it there first. `local vk = require("vk")`.
+Shared, pure Lua. Source: `os/lib/vk.lua`. Upstream's push can write only under `/apps/<id>/`, so `scripts/push-apps.sh` copies this file into each app's folder as `vk.lua` when it pushes the app; `require` finds it there first. `local vk = require("vk")`.
 
 | Function | Permission the app needs | Does |
 |---|---|---|

@@ -14,7 +14,7 @@ Badge OS is Solana OS (the upstream badge firmware: Lua app runtime, launcher, s
 - **features** built on those (payments, payment requests with presence, contacts, history, balance),
 - **apps** (Lua and native) that use the features.
 
-All of our code is under `firmware/solana-os/src/vk/` and a few sibling folders. Upstream files are changed only by single marked hook lines ([upstream-hooks.md](upstream-hooks.md)).
+All of our code is under `os/src/vk/` and a few sibling folders. Upstream files are changed only by single marked hook lines ([upstream-hooks.md](upstream-hooks.md)).
 
 ## 2. The rule
 
@@ -32,16 +32,16 @@ Everything in [../wallet/signing.md](../wallet/signing.md) and [../wallet/approv
 | App host | `src/vk/host/` | Trusted |
 | Wallet core, approval engine | `src/vk/wallet/`, `src/vk/ui/approval_screen.*` | Trusted; smallest possible |
 | Core services | `src/vk/core/` | Trusted |
-| Solana OS | everything else under `src/`, `solana-os.ino` | Trusted, upstream |
+| Solana OS | everything else under `src/`, `os.ino` | Trusted, upstream |
 
 The security claim ("an app cannot sign, and cannot draw over or skip the approval") is a claim about **Lua apps**. Native apps share one address space with the firmware; rules and pre-flash checks stop mistakes there, not malice. Say so when asked.
 
 ## 4. Source tree
 
-Paths are relative to `firmware/solana-os/`.
+Paths are relative to `os/`, the folder at the repository root that holds the whole firmware: the fork of upstream's `firmware/solana-os/` with its main file renamed from `solana-os.ino` to `os.ino` (an Arduino sketch's main file must carry its folder's name).
 
 ```
-solana-os.ino                      upstream + hooks
+os.ino                      upstream + hooks
 partitions.csv                     upstream
 UPSTREAM-HOOKS.md                  generated list of every hook line (see upstream-hooks.md)
 src/                               upstream folders: apps/ hal/ identity/ lua/ lua_sdk/ net/ ui/ ...

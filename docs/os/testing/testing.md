@@ -6,10 +6,10 @@ A work package is done when its tests pass **on a badge**, not when its code is 
 
 ## Host tests
 
-`firmware/solana-os/test/host/`. Plain C99/C++17 compiled with the laptop's compiler; no Arduino, no badge.
+`os/test/host/`. Plain C99/C++17 compiled with the laptop's compiler; no Arduino, no badge.
 
 ```bash
-cd firmware/solana-os && test/host/run.sh        # builds and runs every suite; non-zero exit on any failure
+cd os && test/host/run.sh        # builds and runs every suite; non-zero exit on any failure
 ```
 
 `run.sh` compiles each suite with `cc -std=c99 -Wall -Wextra -Wpedantic -O2 -DSOL_HOST_SHA256 -DVK_HOST_TEST` (C++ suites: `c++ -std=c++17`), plus upstream's `src/identity/tweetnacl.c` with a stub `randombytes` for signature checks. The C suites (`test_sol.c`, `test_record.c`, `test_frames.c`, `test_checks.c`) link only `src/vk/wallet/pure/`. The C++ suites (`test_domains.cpp`, `test_approval.cpp`, `test_config.cpp`, `test_manifest.cpp`, `test_consent.cpp`, `test_stores.cpp`, `test_contacts.cpp`) each link the one firmware `.cpp` under test, compiled with `-DVK_HOST_TEST -Itest/host/shim`. `test/host/shim/` holds a minimal `Arduino.h` (a `String` built on `std::string` with the handful of methods used, `millis()` from a settable fake clock, `strlcpy`) and in-memory stand-ins for the file and NVS calls. A firmware file that is host-tested keeps its hardware calls behind `#ifndef VK_HOST_TEST` or behind function pointers. Each suite prints `all <name> tests passed` and returns 0.
@@ -57,7 +57,7 @@ Dev profile only (`VK_TEST_HOOKS`), in `src/vk/features/devtools/`. They let a s
 
 ## The serial tool
 
-`firmware/solana-os/scripts/vkdev.py` (Python 3, needs `pyserial`). One tool for everything done over USB.
+`os/scripts/vkdev.py` (Python 3, needs `pyserial`). One tool for everything done over USB.
 
 ```bash
 vkdev.py --port P info                       # VKINFO, parsed
@@ -75,7 +75,7 @@ vkdev.py --port P monitor                    # tail the log
 
 Serial push rules, from upstream's protocol: every command is answered by exactly one `OK` or `ERR` line, mixed in with `[tag]` log lines, so wait for it before sending the next; send at most 180 raw bytes per `DATA` line; `AUTH` again before each file and after any `RUN` (upstream drops the session whenever an app stops or a launch fails); a file is limited to 96 KB.
 
-A scripted device test is a Python file with `def run(badge):` that uses `badge.cmd()`, `badge.state()`, `badge.btn()`, `badge.shot()`, `badge.wait_state(predicate, timeout)` and plain `assert`. Tests live in `firmware/solana-os/test/device/`, one file per group below.
+A scripted device test is a Python file with `def run(badge):` that uses `badge.cmd()`, `badge.state()`, `badge.btn()`, `badge.shot()`, `badge.wait_state(predicate, timeout)` and plain `assert`. Tests live in `os/test/device/`, one file per group below.
 
 The unattended loop for an agent: edit → `scripts/build.sh dev --upload <port>` → `vkdev.py wait-ready` → `vkdev.py test ...` → read the result and the log → repeat.
 
@@ -188,7 +188,7 @@ Fill in on hardware; these numbers set config values and decide fallbacks.
 | M3 | `begin_solana` → approval visible | timestamp in the log at `begin` and at first draw | | target under 2 s |
 | M4 | image size; free heap and free PSRAM in the launcher and during an approval | compile output; `VKSTATE.heap`; upstream heartbeat line | | slot is 3,342,336 bytes |
 | M5 | one RPC request over the hotspot | `[bal] fetch <ms> ms` | | `balance_poll_s`, HTTP timeouts |
-| M6 | loop-task stack high-water mark during a signature and during an HTTPS request | `uxTaskGetStackHighWaterMark(NULL)` logged once a minute in the dev profile | | if under 1 KB free, raise the loop stack with `SET_LOOP_TASK_STACK_SIZE(16 * 1024)` in `solana-os.ino` (a new hook) |
+| M6 | loop-task stack high-water mark during a signature and during an HTTPS request | `uxTaskGetStackHighWaterMark(NULL)` logged once a minute in the dev profile | | if under 1 KB free, raise the loop stack with `SET_LOOP_TASK_STACK_SIZE(16 * 1024)` in `os.ino` (a new hook) |
 
 ## What cannot be tested without a person
 

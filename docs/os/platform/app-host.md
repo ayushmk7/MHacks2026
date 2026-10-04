@@ -8,7 +8,7 @@ Upstream already provides the Lua runtime, the sandbox (1 MB heap, 250 ms per ca
 
 | | Lua app | Native app |
 |---|---|---|
-| Lives in | `/apps/<id>/` on the badge's filesystem (source in `firmware/solana-os/apps/<id>/`) | `src/native_apps/<id>/`, compiled into the firmware |
+| Lives in | `/apps/<id>/` on the badge's filesystem (source in `os/apps/<id>/`) | `src/native_apps/<id>/`, compiled into the firmware |
 | Installed by | push over Wi-Fi, USB or BLE; the app store | reflashing |
 | Sandbox | memory cap, time budget, permissions | none; trusted code |
 | API | `badge.*` tables ([Lua API](lua-api.md)) | upstream C++ headers + `vk::` API through `badge_sdk.hpp` ([native apps](native-apps.md)) |

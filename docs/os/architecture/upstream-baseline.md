@@ -27,7 +27,7 @@ Use this instead of guessing an upstream function name. If something you need is
 
 | File | What we use |
 |---|---|
-| `solana-os.ino` | `setup()`, `loop()`, `routeButtons()`, `pumpSerialConsole()`, `startRadios()`. Hook sites H1–H6 |
+| `solana-os.ino` (in our fork: `os.ino`) | `setup()`, `loop()`, `routeButtons()`, `pumpSerialConsole()`, `startRadios()`. Hook sites H1–H6 |
 | `src/config.h` | `SOLANA_OS_API_VERSION` (1), `BTN_UP/LEFT/RIGHT/DOWN/A/B` (0,1,2,3,4,5), `BUTTON_COUNT`, `APP_ESCAPE_HOLD_MS` (1500), `RGB_LED_COUNT` (2), `LCD_WIDTH/HEIGHT`, `ESPNOW_MAX_PAYLOAD` (240), `LUA_CALLBACK_BUDGET_MS` (250), `LUA_CALLBACK_EXTENSION_CAP_MS` (12000), `FS_ROOT` (`"/littlefs"`), `APPS_DIR`, `LIB_DIR`, `APP_MANIFEST` (`"app.ini"`) |
 | `src/hal/display.h` | `display::canvas()` (an `LGFX_Sprite&`), `width()`, `height()`, `touch()`, `flush()`, `invalidate()`, `text()`, `textCentered()`, `textRight()`, `card()`, `statusBar(title)`, `STATUS_BAR_HEIGHT` (22). Nothing paints the panel directly; `flush()` at the end of `loop()` pushes the canvas |
 | `src/hal/buttons.h` | `buttons::down(key)`, `pressed(key)`, `released(key)`, `repeated(key)`, `heldMs(key)`, `downMask()`. Edge masks are valid for the current loop pass |

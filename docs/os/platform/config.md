@@ -119,7 +119,7 @@ The confirmation for a secure change is an approval ([approval](../wallet/approv
 
 ```bash
 # from the repository root, badge on USB, dashboard already set up (`npm run devnet:setup` in dashboard/)
-python3 firmware/solana-os/scripts/vkdev.py --port /dev/cu.usbserial-10 provision \
+python3 os/scripts/vkdev.py --port /dev/cu.usbserial-10 provision \
     --env dashboard/.env \
     --listener http://192.168.4.20:8788 \
     --wifi "<hotspot SSID>" "<password>" \

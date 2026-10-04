@@ -2,7 +2,15 @@
 
 From an empty laptop to four provisioned badges. macOS is shown; Linux differs only in device names.
 
-**Status.** No command here has been run by us yet. The toolchain commands come from upstream's manual; work package WP00 exists to run them once and correct this guide. One observation exists: on 2026-10-03 a badge enumerated on the laptop as a CH340 serial port at `/dev/cu.usbserial-10`.
+**Status.** WP00 was run on 2026-10-03: the toolchain below built unmodified upstream (1,871,707 bytes, about 3 min 40 s for a clean build) and flashed it to a badge at `/dev/cu.usbserial-10`. What that showed:
+
+- USB auto-reset into the bootloader works; no button press was needed.
+- **Upload must use 460800 baud.** At the default 921600 the CH340 link fails after the baud change ("Unable to verify flash chip connection"). Use the FQBN with `,UploadSpeed=460800` for `arduino-cli upload` (`scripts/build.sh` does).
+- The badge boots to `[os] ready` and answers `PING` with `OK pong`. Opening the serial port does not reset the badge.
+- On this badge the SE050 answers its ATR but refuses the applet select (`[se050] link/select failed (no ack on write)`), so the identity is a **software key** (`[id] 5vpmgLuC, software (878 ms)`). Key generation plus one sign and one verify took 878 ms in total, so TweetNaCl is well under a second per operation here.
+- The log showed `[i2c] bus is held low ... recovering` and `[btn] TCA9534 stopped answering ... re-probing` shortly after boot; upstream re-probes by itself. Watch for it if buttons seem dead.
+- The filesystem already held 6 upstream sample apps.
+- Python packages cannot be installed system-wide on this Mac (PEP 668): use the venv at `<repo>/.venv` (`.venv/bin/python`), which has `pyserial` and `esptool`.
 
 ## Toolchain
 
@@ -13,23 +21,24 @@ arduino-cli config add board_manager.additional_urls https://espressif.github.io
 arduino-cli core update-index
 arduino-cli core install esp32:esp32            # must be 3.x
 arduino-cli lib install LovyanGFX
-python3 -m pip install pyserial esptool
+python3 -m venv .venv && .venv/bin/pip install pyserial esptool      # from the repository root
 ```
 
 Record what built, in this table, the first time it works:
 
 | Tool | Version | Date |
 |---|---|---|
-| `arduino-cli` | | |
-| `esp32:esp32` core | | |
-| LovyanGFX | | |
+| `arduino-cli` | 1.5.1 | 2026-10-03 |
+| `esp32:esp32` core | 3.3.12 | 2026-10-03 |
+| LovyanGFX | 1.2.32 | 2026-10-03 |
 
-[UNVERIFIED] which 3.x core version builds upstream cleanly. Fallback: `arduino-cli core install esp32:esp32@<older 3.x>`.
+Core 3.3.12 builds upstream cleanly.
 
 The board settings are carried by one name, used in every command:
 
 ```bash
 FQBN="esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=custom,CDCOnBoot=cdc"
+UPLOAD_FQBN="$FQBN,UploadSpeed=460800"     # for arduino-cli upload
 ```
 
 ## The serial port
@@ -51,7 +60,7 @@ git clone https://github.com/spacemandev-git/solana-defcon-badge-26 /tmp/upstrea
 git -C /tmp/upstream checkout 812b8c7aca5c366d18c0b040fafd2999f7204d84
 cd /tmp/upstream/firmware/solana-os
 arduino-cli compile --fqbn "$FQBN" .
-arduino-cli upload  --fqbn "$FQBN" -p /dev/cu.usbserial-10 .
+arduino-cli upload  --fqbn "$UPLOAD_FQBN" -p /dev/cu.usbserial-10 .
 arduino-cli monitor -p /dev/cu.usbserial-10 -c baudrate=115200
 ```
 
@@ -61,8 +70,8 @@ Expected in the log: the banner, `[lcd] ready 320x240`, an `[id]` line naming `s
 
 ```bash
 # from the repository root
-mkdir -p firmware
-cp -R /tmp/upstream/firmware/solana-os firmware/solana-os
+cp -R /tmp/upstream/firmware/solana-os os
+mv os/solana-os.ino os/os.ino        # an Arduino sketch's main file must be named after its folder
 ```
 
 Then work package WP01 adds `src/vk/` and applies the hooks ([hooks](../architecture/upstream-hooks.md)). The upstream repository has no licence file (finding F9): keep the repository private or ask the author before publishing the fork.
@@ -77,7 +86,7 @@ Two profiles; the only difference is the generated header `src/vk/vk_profile.h`.
 | `release` | 0 | none of that | judge badges, the demo |
 
 ```bash
-cd firmware/solana-os
+cd os
 scripts/build.sh dev                                   # compile only
 scripts/build.sh dev --upload /dev/cu.usbserial-10     # compile, pre-flash checks, upload
 scripts/build.sh release --upload /dev/cu.usbserial-10
@@ -116,7 +125,7 @@ The pairing code is on the badge under Settings → Push. In the dev profile `vk
 After flashing and after `npm run devnet:setup` in `dashboard/` ([backend](../integration/backend.md)):
 
 ```bash
-python3 firmware/solana-os/scripts/vkdev.py --port /dev/cu.usbserial-10 provision \
+python3 os/scripts/vkdev.py --port /dev/cu.usbserial-10 provision \
     --env dashboard/.env --listener http://<laptop hotspot IP>:8788 \
     --wifi "<hotspot SSID>" "<password>" --cap 100.00 --max 1000.00
 ```

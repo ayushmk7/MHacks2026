@@ -33,8 +33,8 @@ Recipes for every kind of addition and removal: [guides/extending.md](guides/ext
 
 ## Status
 
-- **Nothing here has run on a badge yet.** Statements about upstream were verified by reading its source at commit `812b8c7`. Statements marked `[UNVERIFIED]` need hardware and always name a fallback.
-- No firmware source is in the repository yet; `firmware/solana-os/` is created by work package WP01.
+- **Only unmodified upstream has run on a badge so far** (WP00, 2026-10-03: builds, flashes, boots; that badge's key is a software key because its SE050 refused the applet select). Statements about upstream were verified by reading its source at commit `812b8c7`. Statements marked `[UNVERIFIED]` need hardware and always name a fallback.
+- No firmware source is in the repository yet; `os/` is created by work package WP01.
 - Host-tested starting code exists in [`reference/code/`](reference/code/): the Solana message decoder and builder, base58, SHA-256, their test and vectors. From `docs/os/reference/code/`:
   ```bash
   cc -std=c99 -Wall -Wextra -Wpedantic -O2 -DSOL_HOST_SHA256 \
@@ -100,7 +100,7 @@ Everything marked `[UNVERIFIED]`, with the fallback and the package that settles
 
 | # | Item | Fallback | Settled by |
 |---|---|---|---|
-| U1 | The toolchain builds upstream; which 3.x core version | an older 3.x core | WP00 |
+| U1 | ~~The toolchain builds upstream~~ settled: core 3.3.12 builds it | — | WP00, done |
 | U2 | Self-registering statics survive linking | `src/vk/registry_anchor.cpp` | WP01 |
 | U3 | Ed25519 speed on the ESP32-S3 (TweetNaCl) | Monocypher backend | WP51 (M2) |
 | U12 | Upstream's 7-frame ESP-NOW queue loses frames while a signature blocks the loop | re-challenge; amber when presence is unknown | WP51 (M1) |
@@ -110,5 +110,5 @@ Everything marked `[UNVERIFIED]`, with the fallback and the package that settles
 | U7 | Presence round-trip time | `presence_ms` from M1; presence shown amber if unusable | WP51 (M1) |
 | U8 | Loop-task stack is sufficient with TLS + signing | raise it with a new hook | WP51 (M6) |
 | U9 | Authority keypair file is 64 bytes with the public key last | `--issuer <base58>` | WP10 |
-| U10 | USB auto-reset into the bootloader works with this cable | BOOT1/RST1 by hand | WP00 |
+| U10 | ~~USB auto-reset~~ settled: works; upload needs 460800 baud | — | WP00, done |
 | U11 | Upstream's licence | keep the fork private; ask the author | before publishing |

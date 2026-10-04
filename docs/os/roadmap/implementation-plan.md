@@ -4,7 +4,7 @@
 
 **Goal:** Turn Solana OS into Badge OS: a badge that signs payments only through a firmware approval screen, verifies who is being paid, and hosts Lua and native apps on a platform where adding or removing a feature is one file or one folder.
 
-**Architecture:** A fork of Solana OS at `firmware/solana-os/`, changed only by marked one-line hooks. All new code is under `src/vk/`: core services, a wallet core with one signing path and a table of signing domains, a generic approval engine that pauses apps while the user decides, an app host (permissions, native apps, ESP-NOW router, notifications), and self-contained feature folders that register themselves at start-up.
+**Architecture:** A fork of Solana OS at `os/`, changed only by marked one-line hooks. All new code is under `src/vk/`: core services, a wallet core with one signing path and a table of signing domains, a generic approval engine that pauses apps while the user decides, an app host (permissions, native apps, ESP-NOW router, notifications), and self-contained feature folders that register themselves at start-up.
 
 **Tech stack:** Arduino-ESP32 3.x built with `arduino-cli`; C++17 for firmware glue; C99 for the host-tested pure code; Lua 5.4 apps; Python 3 + pyserial for the serial tool; Node (the dashboard's packages) for test vectors.
 
@@ -104,10 +104,10 @@ If time runs out, cut in this order: WP54, WP45, WP43 + WP34, WP36, WP32 inbox (
 
 ### WP01: Fork, skeleton, all hooks
 
-**Goal:** `firmware/solana-os/` exists, contains the `src/vk/` skeleton and every hook, builds, and behaves exactly like upstream.
+**Goal:** `os/` exists, contains the `src/vk/` skeleton and every hook, builds, and behaves exactly like upstream.
 **Read:** [overview](../architecture/overview.md), [upstream-hooks](../architecture/upstream-hooks.md), [upstream-baseline](../architecture/upstream-baseline.md).
 **Files:**
-- Create: `firmware/solana-os/` (copy of upstream), `UPSTREAM-HOOKS.md`, `.gitignore` entry for `src/vk/vk_profile.h`
+- Create: `os/` (copy of upstream), `UPSTREAM-HOOKS.md`, `.gitignore` entry for `src/vk/vk_profile.h`
 - Create: `src/vk/vk.h`, `vk.cpp`, `vk_build.h`, `core/registry.h`, `core/service.h`
 - Create complete: `core/serial.{h,cpp}` (command registry, info-field registry, `handleLine`, `VKHELP`, `VKINFO` with fields `profile` and `api`), `host/lifecycle.{h,cpp}` (`VK_ON_APP_STOP`, `onAppStopping`; `luaPaused()` returns `vk::modalActive()`), `host/lua_registry.{h,cpp}` (everything except permission filtering, which WP30 adds; removes `loadfile`/`dofile`), `ui/statusbar.{h,cpp}` (registry, `draw`, `requestShellRepaint`, `consumeShellRepaint`), `ui/theme.{h,cpp}` (token enum, registry, the default theme `solana` with upstream's colours, `color()`)
 - Create as stubs: full headers exactly as in the spec, with bodies that do nothing, to be filled by the named package: `core/config.{h,cpp}` (WP10; registry declared, accessors return defaults, `provisioned()` false), `core/clock.{h,cpp}` (WP20; source NONE), `host/router.{h,cpp}` (WP22), `host/permissions.{h,cpp}` (WP30; `granted()` true, `preLaunch()` true), `host/manifest.h`, `host/consent.h` (WP30; headers only), `host/native.{h,cpp}` (WP31), `host/notify.{h,cpp}` (WP32; `post()` drops, `count()` 0), `sdk/badge_sdk.hpp` (WP31; complete header, since it only declares), `ui/leds.{h,cpp}` (WP12), `wallet/signer.{h,cpp}`, `wallet/reason.h` (WP11), `wallet/approval.{h,cpp}` (WP12), `features/devtools/devtools.{h,cpp}` (WP03; a no-op `vk_dev_apply_injected_buttons` so hook H17 links)
@@ -118,7 +118,7 @@ If time runs out, cut in this order: WP54, WP45, WP43 + WP34, WP36, WP32 inbox (
 
 Stub behaviour (must equal upstream behaviour): `modalActive()` false; `router::install()` installs `espnow_mgr::onReceive([](const uint8_t *m, const uint8_t *d, size_t n, int8_t r) { if (runtime::running()) runtime::dispatchEspnow(m, d, n, r); })`; `preLaunch` returns true; `native::*` report no apps; `leds::bootProgress` does nothing; `signStoreRegistration(message)` returns `identity::signBase64(message)` from inside `signer.cpp`; `onAppStopping` calls its (so far empty) listener list. `reason.h` needs `pure/vk_reason.h`: WP01 creates that one pure header and its `.c` (the enum and names from the signing document); WP02 owns the rest of `pure/`.
 
-- [ ] Copy upstream into `firmware/solana-os/`; commit it unmodified first (one commit, so the hooks are a reviewable diff).
+- [ ] Copy upstream into `os/`; commit it unmodified first (one commit, so the hooks are a reviewable diff).
 - [ ] Write `registry.h` and `service.h` exactly as in the overview. Write `vk.cpp`: `begin()` runs every service's `begin`, then logs `[vk] registries: services=<n> commands=<n> lua=<n> status=<n> domains=<n> routes=<n> permissions=<n> patterns=<n> native=<n> config=<n>`; `update()` runs every service's `update`.
 - [ ] Write the stubs. Write `build.sh` and `preflash-check.sh`.
 - [ ] Apply hooks H1–H17, H19 and H20 exactly as written. Copy the hook table to `UPSTREAM-HOOKS.md`.
@@ -412,7 +412,7 @@ Each app is one folder under `apps/` with `app.ini`, `main.lua`, `config.lua`, w
 
 | WP | Owner | Started | Tests passed | Notes |
 |---|---|---|---|---|
-| 00 | | | | |
+| 00 | orchestrator | 2026-10-03 | upstream builds, flashes at 460800 baud, boots, `PING` ok | badge key is software (SE050 select failed) |
 | 01 | | | | |
 | 02 | | | | |
 | 03 | | | | |
