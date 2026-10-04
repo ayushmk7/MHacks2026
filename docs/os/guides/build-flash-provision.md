@@ -19,6 +19,14 @@ WP01 to WP03 were run on the same badge on 2026-10-03, with the fork (all hooks,
 - The boot log has `[vk] registries: services=0 commands=8 lua=0 status=0 domains=0 routes=0 permissions=0 patterns=0 native=0 config=1` and `[id] 5vpmgLuC, software (1 ms)`. With hook H21 it has no `[se050]` line and no `[i2c] scanning bus` line.
 - The I²C clock line was still held low at this flash (`[btn] bus not idle at first probe - recovering`, `[btn] TCA9534 init FAILED (will keep re-probing)`, then `[i2c] bus is held low (error 2: NACK on address) - recovering`). H21 does not release a bus that is already held: **remove power once** (USB out, battery off, a few seconds). After that the expected lines are `[btn] TCA9534 init ok` and no later `stopped answering`.
 
+Batch 2 (WP10, WP11, WP12, WP20, WP22) was flashed to the same badge on 2026-10-03, after it had been power-cycled:
+
+- Image 1,928,819 bytes. A build after a source change takes 65 to 85 s, the upload about 35 s, and `[os] ready` comes about 8 s after the reset.
+- **The I²C bus is healthy**: `[btn] TCA9534 @0x20 ready, input=0x3F`, `[btn] TCA9534 init ok`, and in a 200 s log no `stopped answering` and no `bus is held low`. The heartbeat line reads `[os] up 30s  heap 192KB  psram 7922KB  batt 100%  btn=0 int=H  …` (`btn=` is the pressed-key mask in hex; `--` would mean the expander is not answering). Presses on the real keys appear as `[btn] P3 DOWN down (raw=0x37)`.
+- The boot log has `[id] 5vpmgLuC, software (1 ms)`, `[vk] selfcheck ok` and `[vk] registries: services=4 commands=16 lua=0 status=1 domains=1 routes=0 permissions=0 patterns=5 native=0 config=7`.
+- `VKINFO` on the unprovisioned badge: `OK time=none wifi=0 provisioned=0 profile=dev api=2 pubkey=5vpmgLuCfbV7Lp2hTNFz7w75ibhVkc56G1mR6weQedvj key=software selfcheck=1`.
+- The device tests leave the badge provisioned with the test values of [testing](../testing/testing.md) (`rpc_url`, `approval_tmo_s` 10, `hold_ms` 1000). `VKRESET` and a hold on the badge returns it to unprovisioned.
+
 ## Toolchain
 
 ```bash

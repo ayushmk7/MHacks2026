@@ -1,5 +1,6 @@
-// Theme registry and colour lookup. WP01 ships one theme, "solana", carrying upstream's colours;
-// WP12 replaces it with receipt-light and receipt-dark.
+// Theme registry and colour lookup (ui.md, "Tokens and modes"): the Receipt design in a light and a
+// dark mode. A theme changes paper and ink only; the approval's severity colours are constants in
+// approval_screen.cpp and are not tokens.
 #include "theme.h"
 
 #include <string.h>
@@ -8,11 +9,13 @@
 
 namespace vk::ui::theme {
 
-VK_CONFIG_KEY(theme, "theme", vk::config::Type::STR, "", vk::config::F_NONE, 0, 24, "active theme name; empty = the default theme");
+VK_CONFIG_KEY(theme, "theme", vk::config::Type::STR, "", vk::config::F_NONE, 0, 24,
+              "active theme: receipt-light (also when empty) or receipt-dark");
 
-// Upstream's palette (src/ui/theme.h), token by token:
-//                        PAPER=BG  INK=TEXT  FAINT=BORDER SUB=MUTED STAMP_OK=GREEN STAMP_WARN=WARN STAMP_BAD=ERR LED=PURPLE
-VK_THEME(solana, "solana", 0x0B0B12, 0xE8E8F0, 0x3A3A4E, 0x9393A8, 0x14F195, 0xFFB020, 0xFF4545, 0x9945FF);
+// STAMP_OK, STAMP_WARN, STAMP_BAD: the status inks (signed, warning, blocked text in lists).
+//                                     PAPER     INK       FAINT     SUB       STAMP_OK  STAMP_WARN STAMP_BAD LED
+VK_THEME(receipt_light, "receipt-light", 0xF3EFE4, 0x1B1A17, 0x8A8474, 0x6D6759, 0x17804F, 0xB56A00, 0xC8321E, 0xFFE2AA);
+VK_THEME(receipt_dark,  "receipt-dark",  0x15140F, 0xECE6D6, 0x7D7868, 0xA39C8A, 0x4FD69A, 0xFFC35A, 0xFF7B6E, 0xFFC478);
 
 Theme::Theme(const char *n, std::initializer_list<uint32_t> rgb888) : name(n), colors{} {
   size_t i = 0;
@@ -25,7 +28,11 @@ Theme::Theme(const char *n, std::initializer_list<uint32_t> rgb888) : name(n), c
 
 namespace {
 
+constexpr char DEFAULT_THEME[] = "receipt-light";
+constexpr uint32_t RESOLVE_EVERY_MS = 500;
+
 const Theme *sActive = nullptr;
+uint32_t sResolvedAt = 0;
 
 const Theme *find(const char *name) {
   if (name == nullptr || name[0] == '\0') return nullptr;
@@ -35,12 +42,24 @@ const Theme *find(const char *name) {
   return nullptr;
 }
 
-// Resolved on first use, not in a begin(): color() is called during boot, before vk::begin().
-// An empty or unknown stored name means the default theme.
+// An empty or unknown stored name means receipt-light. If that theme's line was deleted, any
+// registered theme serves.
+const Theme *resolve() {
+  const Theme *t = find(vk::config::text("theme").c_str());
+  if (t == nullptr) t = find(DEFAULT_THEME);
+  if (t == nullptr) t = Theme::first();
+  return t;
+}
+
+// Resolved on first use, not in a begin(): color() is called by the boot screen, before vk::begin()
+// (the config accessors initialise lazily). The config key is the truth, so it is read again twice
+// a second: a `VKSET theme <name>` over serial then shows without a reboot, and a colour lookup
+// stays a table read.
 const Theme *active() {
-  if (sActive == nullptr) {
-    sActive = find(vk::config::text("theme").c_str());
-    if (sActive == nullptr) sActive = Theme::first();
+  const uint32_t now = millis();
+  if (sActive == nullptr || (uint32_t)(now - sResolvedAt) >= RESOLVE_EVERY_MS) {
+    sActive = resolve();
+    sResolvedAt = now;
   }
   return sActive;
 }
@@ -71,8 +90,10 @@ const char *activeName() {
 void setActive(const char *name) {
   const Theme *t = find(name);
   if (t == nullptr) return;                 // unknown name: no change
+  vk::config::set("theme", t->name);
+  // Shown at once. If the write was refused the stored name wins again at the next resolve.
   sActive = t;
-  vk::config::set("theme", t->name);        // persisted once the config store exists (WP10)
+  sResolvedAt = millis();
 }
 
 size_t count() {

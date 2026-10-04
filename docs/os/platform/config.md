@@ -52,6 +52,19 @@ struct ResetListener : Registered<ResetListener> { void (*fn)(); explicit ResetL
 
 (`ConfigKey` needs a constructor taking its seven fields in declaration order; the macro's first argument is only the C++ identifier.) Every NVS write's result is checked: the NVS partition is small (20 KB) and shared with upstream's settings and with apps' `badge.storage.kv`, so it can fill up.
 
+Details of the store, as built (WP10):
+
+- **Before `begin()`.** Every accessor calls `begin()` itself the first time (it is idempotent), because the boot screen reads the theme before `vk::begin()` runs.
+- **Stored text that no longer validates** (the range of a key changed between firmware versions) is ignored: the accessors return the default, and a required key in that state counts as missing.
+- **Length.** A value longer than 255 characters is refused as invalid, whatever the key's own range.
+- **Empty values** can be stored (a key with a non-empty default, such as `home_app`, can be set to empty). `Preferences::putString` reports 0 bytes for an empty string whether or not it was written, so an empty value is checked by reading it back.
+- **The provisioned flag** is the NVS key `_provisioned` (one byte) in `vkconf`. `commit()` returns false with `missing` empty when writing it fails.
+- **`set()` on a provisioned badge, secure key:** `UNAVAILABLE` while `confirmChange` is null, and also when `confirmChange` returns false because another approval is on screen (a change already waiting for its confirmation is kept). Otherwise `PENDING`.
+- **`requestReset()`** uses the same pointer, called as `confirmChange("(reset)", "", "", done)`, so `core/` includes no wallet header. The confirmation is raised whether or not the badge is provisioned.
+- **Parsers.** `parseStr`, `parseU32`, `parseKey32`, `parseTokens` and `validate` are pure functions declared in `config.h` and covered by `test_config`. `find(name)` returns the registered key.
+- **Cache.** 32 slots; keys beyond that still work but are read from NVS on every call.
+- Avoid `CHANGE`, `RISING`, `FALLING` and `DISABLED` as enumerator names anywhere: the Arduino core defines them as macros.
+
 Type text forms:
 
 | Type | Text form | Example |
@@ -72,7 +85,7 @@ Each key is registered by the code that uses it. This table is the complete list
 | `rpc_url` | STR | — | required | 8–128 | `core` | Solana JSON-RPC endpoint (used by the balance feature and by `vk.rpc` in apps) |
 | `listener_url` | STR | (empty) | | 0–128 | `core` | base URL of the backend's badge listener, e.g. `http://192.168.4.20:8788` |
 | `display_name` | STR | (empty) | | 0–32 | `core` | name this badge claims in requests and contact cards; empty means upstream's device name |
-| `ntp_server` | STR | `pool.ntp.org` | | 3–64 | `core` (clock) | SNTP host |
+| `ntp_server` | STR | `pool.ntp.org` | | 3–64 | `core` (clock) | SNTP host. Read once, when Wi-Fi first connects: a change takes effect at the next boot |
 | `approval_tmo_s` | U32 | 45 | secure | 10–120 | approval | approval timeout; keep below the ~60 s blockhash lifetime |
 | `hold_ms` | U32 | 3000 | secure | 1000–10000 | approval | hold-SELECT duration |
 | `record_ttl_s` | U32 | 30 | secure | 5–3600 | `solana_pay` | maximum age of a registry record under SNTP |
@@ -95,12 +108,12 @@ Text form: entries separated by `,`; each entry is `mint:decimals:symbol:cap:max
 | Field | Form |
 |---|---|
 | `mint` | base58 mint address |
-| `decimals` | 0–9 |
+| `decimals` | 0–9 (exactly one digit) |
 | `symbol` | 1–4 characters of `[A-Z0-9]` (it must fit a REQ frame's 4-byte currency field) |
 | `cap` | display units (`100.00`); above this SELECT becomes a hold; `0` = no cap |
 | `max` | display units; above this the payment is blocked; `0` = no max |
 
-Example for one token: `9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin:2:HACK:100.00:1000.00`. The first entry is the default token (balance in the status bar, default in apps).
+Example for one token: `9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin:2:HACK:100.00:1000.00`. The first entry is the default token (balance in the status bar, default in apps). The parser does not check for a mint or a symbol listed twice.
 
 ## Provisioning
 
@@ -113,7 +126,7 @@ A badge is **unprovisioned** until every required key is set and `VKCOMMIT` succ
 
 Why first provisioning needs no confirmation: it is possible only over the USB cable, on a badge that cannot sign anything yet.
 
-The confirmation for a secure change is an approval ([approval](../wallet/approval.md)): title `Change setting`, headline `SECURITY SETTING`, big = the key name, lines `Old` and `New` (values shortened to 35 characters, keys to first 4 + `..` + last 4), amber, hold. `VKRESET` raises the same kind of confirmation with headline `ERASE WALLET CONFIG`; on approval it erases `vkconf` and calls every `VK_ON_RESET` listener (the consent store registers one and erases itself). It does not touch the device key, the history or the contacts.
+The confirmation for a secure change is an approval ([approval](../wallet/approval.md)): title `Change setting`, headline `SECURITY SETTING`, big = the key name, lines `Old` and `New`, amber, hold. Values are shortened for the screen: a `KEY32` value (the type is looked up in the config registry) to first 4 + `..` + last 4, any other value longer than 35 characters to its first 33 + `..`, and an empty old value is shown as `(none)`. `VKRESET` raises the same kind of confirmation: title `Change setting`, headline `ERASE WALLET CONFIG`, big `RESET` (one word, so the screen does not split it into an amount and a unit), lines `Erases` = `all wallet settings` and `Keeps` = `key, history, contacts`, amber, hold; on approval it erases `vkconf` and calls every `VK_ON_RESET` listener (the consent store registers one and erases itself). It does not touch the device key, the history or the contacts.
 
 ### With the tool
 
@@ -170,14 +183,14 @@ struct InfoField : Registered<InfoField> { const char *name; String (*fn)(); Inf
 | Command | Reply | Notes |
 |---|---|---|
 | `VKHELP` | one `+ <name> <help>` line per command, then `OK <count>` | |
-| `VKINFO` | `OK` followed by one `name=value` pair per registered info field, space-separated. With everything built: `profile=<dev\|release> api=2 provisioned=<0\|1> pubkey=<base58> key=<se050\|software\|none> selfcheck=<0\|1> time=<none\|floor\|sntp> wifi=<0\|1>` | each module adds its own fields with `VK_INFO_FIELD(ident, "name", fn)` where `fn` returns a `String`; order is not guaranteed, so parse by name |
-| `VKKEYS` | one `+ <name> <type> <flags> <help>` line per config key, then `OK <count>` | |
+| `VKINFO` | `OK` followed by one `name=value` pair per registered info field, space-separated. With everything built: `profile=<dev\|release> api=2 provisioned=<0\|1> pubkey=<base58> key=<se050\|software\|none> selfcheck=<0\|1> time=<none\|floor\|sntp> wifi=<0\|1>` | each module adds its own fields with `VK_INFO_FIELD(ident, "name", fn)` where `fn` returns a `String`; order is not guaranteed, so parse by name. `pubkey=` is empty when the badge has no identity. `wifi=1` means station mode and connected |
+| `VKKEYS` | one `+ <name> <type> <flags> <help>` line per config key, then `OK <count>` | `<type>` is `STR`, `U32`, `KEY32` or `TOKENS`; `<flags>` is one word: `-`, `secure`, `required` or `secure,required` |
 | `VKGET <key>` | `OK <value>` or `ERR unknown_key` | all values are public |
-| `VKSET <key> <value>` | `OK` · `OK pending` (confirmation shown on the badge) · `ERR unknown_key` · `ERR invalid` · `ERR unavailable` (a secure key on a firmware without the approval engine) · `ERR nvs_full` (the write failed) | the value is the rest of the line; keep the whole line under 250 characters |
-| `VKCOMMIT` | `OK provisioned` or `ERR missing <key>` | |
-| `VKRESET` | `OK pending` | confirmation on the badge |
+| `VKSET <key> <value>` | `OK` · `OK pending` (confirmation shown on the badge) · `ERR unknown_key` · `ERR invalid` · `ERR unavailable` (a secure key on a firmware without the approval engine, or while another approval is on screen) · `ERR nvs_full` (the write failed) | the value is the rest of the line: blanks after the key are skipped, nothing is trimmed from the end, and `VKSET <key>` alone sets the empty string. Keep the whole line under 250 characters |
+| `VKCOMMIT` | `OK provisioned` · `ERR missing <key>` · `ERR nvs_full` (writing the flag failed) | with several required keys missing, `<key>` is the first in alphabetical order, so the reply does not depend on registration order |
+| `VKRESET` | `OK pending` · `ERR unavailable` (no approval engine, or another approval is on screen) | confirmation on the badge, raised whether or not the badge is provisioned |
 | `VKAUTOSTART <id>` | `OK` | sets upstream's autostart app (`settings::setAutostartApp`); empty id clears it |
-| `VKWIFI <ssid>\|<password>` | `OK joining` | the SSID is everything before the first `\|` (it may contain spaces), the password everything after. Calls `wifi_mgr::connect(ssid, password, true)`, which saves the network and joins it, as upstream's `JOINWIFI` does |
+| `VKWIFI <ssid>\|<password>` | `OK joining` · `ERR usage` (no `\|`, or an empty SSID) | `OK joining` is sent before the join starts. The SSID is everything before the first `\|` (it may contain spaces), the password everything after. Calls `wifi_mgr::connect(ssid, password, true)`, which saves the network and joins it, as upstream's `JOINWIFI` does |
 
 Dev-profile commands (`VKSHOT`, `VKBTN`, `VKSTATE`, `VKTIME`) are in [../testing/testing.md](../testing/testing.md#dev-hooks).
 

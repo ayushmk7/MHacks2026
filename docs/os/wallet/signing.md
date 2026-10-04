@@ -147,14 +147,19 @@ begin(domain, bytes, len, ctx, app_id)
   an approval is open or a result is waiting to be polled -> VK_BUSY
   len == 0 or len > domain->max_len       -> VK_TOO_LONG
   strlen(prefix) + len > maxSignBytes()   -> VK_TOO_LONG
+  bytes == nullptr                        -> VK_BAD_ARG
   domain->decode(bytes, len, ctx, request) returns a reason != VK_OK -> that reason
   copy bytes; approval::open(request)     -> VK_OK         (see approval.md)
+  approval::open returns false            -> VK_BUSY
+
+A button domain whose `permission` is nullptr skips the permission check.
 
 on SELECT in the approval:
   signRaw(domain, bytes, len) -> result stored for poll()
 
 signAuto(domain, bytes, len, sig)
   domain unknown or needs_button          -> VK_UNSUPPORTED
+  len == 0 or len > domain->max_len       -> VK_TOO_LONG
   !domain->validate(bytes, len)           -> VK_BAD_ARG
   signRaw(domain, bytes, len)
 
@@ -162,7 +167,11 @@ signRaw(domain, bytes, len, sig)          // static, the only caller of identity
   !selfCheckOk()                          -> VK_SIGN_FAILED
   buffer = prefix ‖ bytes
   identity::sign(buffer, n, sig) ? VK_OK : VK_SIGN_FAILED
-  log: [vk] sign <domain> <n> bytes <ms> ms
+  log: [vk] sign <domain> <n> bytes <ms> ms        (on failure, a second line: [vk] sign <domain> FAILED)
+
+signRaw checks both length rules again itself, and builds prefix ‖ bytes in one static 1248-byte
+buffer, not on the stack. signForApproval (the approval engine's entry) returns VK_UNSUPPORTED for a
+null or non-button domain.
 ```
 
 Calls from inside a Lua callback (`signAuto` through `request_open` or `contact_card`) first call `runtime::extendDeadline(2500)`: a software signature can take about a second (finding F7).
@@ -179,13 +188,13 @@ Calls from inside a Lua callback (`signAuto` through `request_open` or `contact_
 `vk::begin()` verifies this over the registered rows before anything can sign:
 
 1. names are unique;
-2. every non-empty prefix is 2–15 characters of `[a-z-]` followed by `:`;
-3. no non-empty prefix is a prefix of another;
+2. every non-empty prefix is 2–15 characters of `[a-z-]`, the first of them a letter, followed by `:`;
+3. no non-empty prefix is a prefix of another (given rule 2, every prefix ends at its only `:`, so this can only fail for two equal prefixes; the code makes the general comparison anyway);
 4. at most one button domain has an empty prefix;
 5. every auto domain has a `validate` function, every button domain a `decode` function;
 6. no prefix equals a reserved prefix. The reserved list is `registry:` (signed by the issuer, never by a badge).
 
-On failure it logs `[vk] DOMAIN TABLE INVALID: <rule> <name>`, `selfCheckOk()` stays false, and every signature fails with `sign_failed`. The host test `test_domains` runs the same function over a copy of the table.
+On success it logs `[vk] selfcheck ok`. On failure it logs `[vk] DOMAIN TABLE INVALID: <rule> <name>`, where `<rule>` is the number of the first broken rule in the list above (for example `[vk] DOMAIN TABLE INVALID: 6 t-bad`), `selfCheckOk()` stays false, and every signature fails with `sign_failed`. The check is the pure function `int checkDomainTable(const DomainRow *rows, size_t count, const char **bad_name)` in `signer.h` (0 when valid, else the rule number), run from the `signer` service's begin function; the host test `test_domains` runs the same function over a copy of the table.
 
 ## Crypto backend
 

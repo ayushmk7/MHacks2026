@@ -4,6 +4,7 @@
 
 #include "../badge_log.h"
 #include "../config.h"
+#include "../vk/vk_build.h"  // VK: H21
 
 namespace badge_i2c {
 namespace {
@@ -308,6 +309,7 @@ bool readReg(uint8_t address, uint8_t reg, uint8_t *buffer, size_t length) {
 }
 
 void scan() {
+  if (VK_SE050_QUARANTINE) return;  // VK: H21 (the scan probes every address, 0x48 included)
   // The line states matter as much as the device list: "nothing answered" and
   // "nothing could answer, a line is clamped" look identical in a bare count
   // and have completely different causes. digitalRead works here without

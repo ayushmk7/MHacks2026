@@ -80,5 +80,40 @@ void update();                         // one pass; called by vk::modalUpdate()
 Phase phase();
 const ApprovalRequest *current();      // nullptr when IDLE
 void appStopping(const char *app_id);  // drop an open approval or an un-polled result owned by that app
+
+// --- Added with the engine (WP12) --------------------------------------------------------------
+
+constexpr uint32_t RESULT_SHOW_MS = 800;     // how long the RESULT screen stays (and until every key is up)
+constexpr uint32_t RESULT_KEEP_MS = 60000;   // an un-polled result is dropped this long after its screen closed
+constexpr uint32_t FOOTER_BLINK_MS = 200;    // the footer blink after SELECT under rule DISABLED
+
+// Everything the state machine reads or drives outside itself. The firmware fills these from the
+// engine's VK_SERVICE begin function; the host test fills them with fakes. A null pointer is safe:
+// keys read as up, the signer as VK_SIGN_FAILED, the rest is skipped. Without `now`, open() and
+// confirm() return false.
+struct Hooks {
+  uint32_t (*now)();                           // millis()
+  bool (*selectDown)();                        // SELECT held on this pass
+  bool (*cancelDown)();                        // CANCEL held on this pass
+  bool (*anyKeyDown)();                        // any of the six keys held on this pass
+  uint32_t (*configU32)(const char *key);      // vk::config::u32: "approval_tmo_s", "hold_ms"; read once per approval
+  Reason (*sign)(const SignDomain *domain, const uint8_t *bytes, size_t len, uint8_t sig[64]);   // signForApproval
+  void (*draw)(const ApprovalRequest &, Phase, float holdProgress, const ApprovalOutcome *outcome, bool footerBlink);
+  void (*flush)();                             // push the frame to the panel now (before the blocking signature)
+  void (*ledPlay)(const char *name);
+  void (*ledStop)();
+  uint8_t (*backlight)();                      // the backlight level now
+  void (*setBacklight)(uint8_t value);
+  uint8_t (*userBacklight)();                  // the user's saved level
+  void (*repaint)();                           // vk::ui::requestShellRepaint
+};
+extern Hooks hooks;
+
+#ifdef VK_HOST_TEST
+// Host tests only. The dev override is a compile-time switch in the firmware (VK_DEV_ALLOW_UNVERIFIED);
+// the host build has it on, and this flag lets a test see the release behaviour as well.
+extern bool hostDevAllowUnverified;
+void hostReset();                              // back to IDLE with no stored result; hooks are kept
+#endif
 }  // namespace approval
 }  // namespace vk::wallet

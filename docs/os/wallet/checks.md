@@ -82,15 +82,17 @@ enum class Source : uint8_t { NONE, FLOOR, SNTP };
 Source source();
 uint32_t now();                 // unix seconds; meaningful only when source() != NONE
 bool ok();                      // source() != NONE
-void raiseTo(uint32_t unix_s);  // from a verified record's issued_at: if unix_s > now(), set the clock; NONE becomes FLOOR
+void raiseTo(uint32_t unix_s);  // from a verified record's issued_at: with no SNTP, if unix_s > now(), set the clock; NONE becomes FLOOR
 #if VK_TEST_HOOKS
 void devSet(uint32_t unix_s);   // dev profile only, for the VKTIME command: stores the time and sets the source to SNTP
 #endif
 }
 ```
 
-- **SNTP**: when Wi-Fi first connects, the service calls `configTime(0, 0, <ntp_server>)` and marks `SNTP` from the sync callback (`sntp_set_time_sync_notification_cb`). [UNVERIFIED] that the callback exists in the installed Arduino core; fallback: poll `sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED` once a second.
-- **FLOOR**: with no SNTP, a record whose issuer signature verified raises the clock to its `issued_at`. The clock never goes backwards.
+- **SNTP**: when Wi-Fi first connects, the service calls `configTime(0, 0, <ntp_server>)` once per boot, never waits for the answer, and marks `SNTP` from the sync callback (`sntp_set_time_sync_notification_cb`) and also from a poll of `sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED` once a second. Both functions are declared in the installed core 3.3.12's `esp_sntp.h` and both paths are compiled; each logs once per boot (`[vk] clock: sntp <unix> (sync callback)` or `(status poll)`), so the log shows which one fired. Not yet seen on a network (deferred, U5). The callback runs on the lwIP task and only records the time under a spinlock; the loop task applies it. The core delays the first SNTP request by a random time of up to 5 s, so "synced within 10 s of Wi-Fi" can fail now and then without a firmware fault.
+- **Own time base.** The service keeps unix seconds at a `millis()` reference and rebases it hourly, so `now()` survives the 49-day `millis()` wrap.
+- **FLOOR**: with no SNTP, a record whose issuer signature verified raises the clock to its `issued_at`. The clock never goes backwards. Once the source is `SNTP`, `raiseTo` does nothing: otherwise a record with a future `issued_at` would move a synced clock before the freshness check could refuse it. If an SNTP answer is earlier than the current (floor) time, the source becomes `SNTP` and the later time is kept.
+- **`devSet`** (dev profile) sets the time exactly as given, backwards too, because tests move the clock both ways. A real SNTP sync after a `VKTIME` in the past moves the clock forward to real time.
 - Time is never taken from an unsigned source (an HTTP header, an app).
 
 What each source allows:

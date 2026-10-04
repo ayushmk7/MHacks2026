@@ -121,7 +121,7 @@ The unattended loop for an agent: edit → `scripts/build.sh dev --upload <port>
 | Id | Procedure | Pass | How |
 |---|---|---|---|
 | T-CFG1 | `provision`, reboot, `VKGET` each key | values survive; `provisioned=1` | auto |
-| T-CFG2 | provisioned: `VKSET approval_tmo_s 30` | `OK pending`; `VKSTATE` shows a `Change setting` confirmation, amber, hold; `btn a hold 3200` writes it; `btn b tap` leaves it unchanged | auto |
+| T-CFG2 | provisioned: `VKSET approval_tmo_s 30` | `OK pending`; `VKSTATE` shows a `Change setting` confirmation, amber, hold; `btn a hold 3200` writes it; `btn b tap` leaves it unchanged. `t_cfg.py` runs under the test provisioning (`hold_ms` 1000), so it sets 12 with a hold of `hold_ms` + 300 ms and then tries 14 with CANCEL; it puts `approval_tmo_s` back to 10 for `t_apr.py` | auto |
 | T-CFG3 | `VKSET tokens garbage` | `ERR invalid`; value unchanged | auto |
 | T-CFG4 | send `VKINFO` over BLE or the HTTP push API | not recognised (commands are USB only) | hands |
 
@@ -208,7 +208,7 @@ Fill in on hardware; these numbers set config values and decide fallbacks.
 |---|---|---|---|---|
 | M1 | CHAL → PROOF round trip, 50 samples | log line `[req] proof <ms> ms` on the payer | p50 = , p95 = | `presence_ms` = p95 × 1.5 |
 | M2 | one Ed25519 verify; one sign (software key; SE050 key) | log lines `[vk] verify <ms> ms`, `[vk] sign <domain> <n> bytes <ms> ms` | | if verify > 400 ms, switch `VK_ED25519_BACKEND` to 1 |
-| M3 | `begin_solana` → approval visible | timestamp in the log at `begin` and at first draw | | target under 2 s |
+| M3 | `begin_solana` → approval visible | timestamp in the log at `begin` and at first draw | engine part only (WP12, `VKDEMOAPPROVE`): `[vk] approval open … at <ms>` to `[vk] approval first draw at <ms>` is 11 ms. The decode and verification before it are measured in Batch 3 | target under 2 s |
 | M4 | image size; free heap and free PSRAM in the launcher and during an approval | compile output; `VKSTATE.heap`; upstream heartbeat line | WP01 dev build (2026-10-03): 1,882,539 bytes, 56 % of the slot (unmodified upstream: 1,871,707); globals 77,504 bytes. Launcher: heap 197 to 202 KB free, PSRAM 7,971 KB free. During an approval: not yet measured | slot is 3,342,336 bytes |
 | M5 | one RPC request over the hotspot | `[bal] fetch <ms> ms` | | `balance_poll_s`, HTTP timeouts |
 | M6 | loop-task stack high-water mark during a signature and during an HTTPS request | `uxTaskGetStackHighWaterMark(NULL)` logged once a minute in the dev profile | | if under 1 KB free, raise the loop stack with `SET_LOOP_TASK_STACK_SIZE(16 * 1024)` in `os.ino` (a new hook) |

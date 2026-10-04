@@ -25,15 +25,15 @@ void bootProgress(uint8_t percent); // hook H15
 }
 ```
 
-A service calls the current pattern's `frame` every loop and then `::leds::show()`. Upstream's own `leds::update()` also runs every loop and redraws whenever one of *its* animations is set (the idle breath restarts whenever the launcher comes back), so on **every frame it draws** the service first calls `::leds::stopAnimation()`. When a pattern finishes or is stopped, the LEDs are turned off and, if the badge is idle (`vk::host::idle()`), upstream's idle animation resumes (`::leds::playIdle()`). While an app runs and no pattern is playing, the LEDs belong to the app.
+A service calls the current pattern's `frame` and then `::leds::show()`, at most once every 16 ms (as upstream does: `::leds::show()` is a blocking transfer); the first frame of a pattern is drawn at once. Upstream's own `leds::update()` also runs every loop and redraws whenever one of *its* animations is set (the idle breath restarts whenever the launcher comes back), so on **every frame it draws** the service first calls `::leds::stopAnimation()`. When a pattern finishes or is stopped, the LEDs are turned off and, if the badge is idle (`vk::host::idle()`), upstream's idle animation resumes (`::leds::playIdle()`). While an app runs and no pattern is playing, the LEDs belong to the app.
 
 | Name | When | Look | Ends |
 |---|---|---|---|
 | `approve_green` | approval open, green | slow green pulse, 1.5 s period | when the approval closes |
 | `approve_amber` | approval open, amber | amber pulse, 1 s period | when the approval closes |
 | `approve_red` | approval open, red | solid red | when the approval closes |
-| `signed` | approval result: signed or approved | three quick green flashes | after 600 ms |
-| `refused` | approval result: cancelled, timeout, blocked, failed | one red blink | after 400 ms |
+| `signed` | approval result: signed or approved | three quick green flashes (100 ms on, 100 ms off) | after 600 ms |
+| `refused` | approval result: cancelled, timeout, blocked, failed | one red blink (on for 250 ms) | after 400 ms |
 | `notify` | a notification is waiting and the badge is idle (`vk::host::idle()`) | dim purple breathe, 3 s period | when the inbox is empty or an app starts |
 
 Colours are the approval's fixed severity colours ([approval](../wallet/approval.md#screen)) and upstream's brand purple.
@@ -64,7 +64,7 @@ for each LED i:
 ::leds::show()
 ```
 
-Boot stages block, so the flash is advanced from `boot::progress` (hook H15) and from upstream's `tick()` calls during waits; a long stage may hold one flash state, which is acceptable. The upstream splash animation still plays during the two splash screens, before the first stage. The colour is the active theme's accent ([Theme](#theme)).
+Boot stages block, so the bar is drawn only inside `bootProgress()`, once per stage, from `boot::progress` (hook H15): no service runs during `setup()`, and upstream's `tick()` is its own `leds::update()`, which never reaches Badge OS code. A stage therefore holds one flash state until the next stage begins, which is acceptable. The boot bar is not a registered pattern. The upstream splash animation still plays during the two splash screens, before the first stage. The colour is the active theme's accent ([Theme](#theme)).
 
 ### Adding a pattern
 
@@ -138,7 +138,7 @@ One `VK_STATUS_ITEM` line and a draw function that returns the width it used. Ad
 
 **Decided: the Receipt design, in a light and a dark mode.** Reference: `docs/design/os-mockups/index.html`, a live simulation of every screen (serve the folder with `python3 -m http.server 8765`, open `http://127.0.0.1:8765`; keys 1 and 2 switch mode). When this document and the simulation disagree about a pixel, the simulation wins; when they disagree about behaviour, this document wins.
 
-The idea: every screen is a printed ticket. Monospace text, dotted leaders between a label and its value, dashed tear rules, amounts in a bold serif, a barcode, and a rubber stamp for the verdict. Screens that show an amount are split into a left stub (the amount) and a right body (the details) by a dashed vertical perforation. No owner name appears in any header.
+The idea: every screen is a printed ticket. Monospace text, dotted leaders between a label and its value, dashed tear rules, amounts in a bold serif, and a barcode. The verdict is carried by a coloured band alone. Screens that show an amount are split into a left stub (the amount) and a right body (the details) by a dashed vertical perforation. No owner name appears in any header.
 
 ### Tokens and modes
 
@@ -153,7 +153,7 @@ struct Theme : Registered<Theme> {
 };
 #define VK_THEME(ident, name, ...) static vk::ui::theme::Theme vk_theme_##ident(name, {__VA_ARGS__})
 uint16_t color(Token token);         // from the active theme
-uint16_t blend(Token a, Token b, uint8_t amount);   // a towards b, 0..255; used for the faded stamp
+uint16_t blend(Token a, Token b, uint8_t amount);   // a towards b, 0..255
 const char *activeName();
 void setActive(const char *name);    // writes config key `theme`; unknown name: no change
 size_t count();  const Theme *at(size_t i);
@@ -166,12 +166,14 @@ size_t count();  const Theme *at(size_t i);
 | `INK` | text, rules, barcode, selected-row fill | `#1B1A17` | `#ECE6D6` |
 | `FAINT` | dotted leaders, hold-bar track | `#8A8474` | `#7D7868` |
 | `SUB` | second line of a list row | `#6D6759` | `#A39C8A` |
-| `STAMP_OK` | stamp ink and "signed" text | `#17804F` | `#4FD69A` |
-| `STAMP_WARN` | stamp ink for amber | `#B56A00` | `#FFC35A` |
-| `STAMP_BAD` | stamp ink and "blocked" text | `#C8321E` | `#FF7B6E` |
+| `STAMP_OK` | status ink: "signed", "paid" and other good-outcome text in lists | `#17804F` | `#4FD69A` |
+| `STAMP_WARN` | status ink: warning text in lists (cancelled, timed out, unsynced) | `#B56A00` | `#FFC35A` |
+| `STAMP_BAD` | status ink: "blocked" and "failed" text in lists | `#C8321E` | `#FF7B6E` |
 | `LED` | boot bar and idle LED colour | `#FFE2AA` | `#FFC478` |
 
-The config key `theme` holds the active theme's name; empty means `receipt-light`. A selected row is drawn inverted: `INK` fill, `PAPER` text. The three **severity colours are not tokens**: green `#1FBF75`, amber `#FFB020`, red `#FF4545` in both modes, with black text on them ([approval](../wallet/approval.md#screen)).
+The three `STAMP_*` tokens keep the names of the first design; nothing draws a stamp. They colour text (through `row`'s `valueColor`, for example), never a band.
+
+The config key `theme` holds the active theme's name; empty or an unknown name means `receipt-light`. `color()` works before `vk::begin()` (the config accessors start the store themselves) and re-reads the key every 500 ms, so `VKSET theme receipt-dark` shows on the next frame without a reboot. If `setActive`'s write is refused, the stored name wins again at the next read. A selected row is drawn inverted: `INK` fill, `PAPER` text. The three **severity colours are not tokens**: green `#1FBF75`, amber `#FFB020`, red `#FF4545` in both modes, with black text on them ([approval](../wallet/approval.md#screen)).
 
 Adding a theme is one `VK_THEME(...)` line with eight colours; it then appears in the Theme setting. Removing one is deleting that line.
 
@@ -183,11 +185,10 @@ All from the graphics library (LovyanGFX), no font files to ship:
 |---|---|---|
 | body, labels, header, footer | `fonts::Font0` | 6×8 px per character, 53 columns |
 | band headline, section titles (`MENU`, `PAY`) | `fonts::FreeMonoBold9pt7b` | about 11 px per character |
-| amounts | `fonts::FreeSerifBold24pt7b`; `FreeSerifBold18pt7b` when the text is wider than 136 px | |
+| amounts | `fonts::FreeSerifBold24pt7b`; `FreeSerifBold18pt7b` when the text is wider than 136 px; then `FreeSerifBold9pt7b`, then `Font0`, so that an amount is never cut and never crosses the perforation | |
 | brand line "Badge OS" on the boot screen | `fonts::FreeSerifBoldItalic12pt7b` | |
-| stamp | `fonts::FreeSerifBold9pt7b` | |
 
-All five names exist in the installed LovyanGFX 1.2.32 (`lgfx_fonts.hpp`), as do `LGFX_Sprite::pushRotateZoom` and `textWidth`. If a later library version drops one, fall back to the numbered fonts `Font4` (amounts) and `Font2` (titles).
+All the names exist in the installed LovyanGFX 1.2.32 (`lgfx_fonts.hpp`), as does `textWidth`. `FreeSerifBold9pt7b` is also used, for wrapped text in the approval's left stub and as the third amount size. If a later library version drops one, fall back to the numbered fonts `Font4` (amounts) and `Font2` (titles).
 
 ### The receipt kit
 
@@ -206,15 +207,23 @@ void row(int x0, int x1, int y, const char *label, const char *value, bool selec
 void subline(int x0, int x1, int y, const char *text, bool selected = false);   // SUB colour, indented 12 px
 void amount(int cx, int y, const char *label, const char *value, const char *unit);   // label, big serif value, unit; centred on cx
 void barcode(int x, int y, int w, int h, const uint8_t *seed, size_t seedLen);       // bars derived from the bytes
-void stamp(int cx, int cy, const char *text, theme::Token ink);                      // rotated -13 degrees, double border, faded
 void holdBar(float progress);                             // y 204..209, x 40..280
 void footer(const char *left, const char *right);         // dashed rule at y=216, text at y=224
+void headerText(const char *left, const char *right);     // header() without its rule: the approval's band sits directly under it
+void title(const char *text, int y, int cx);              // title() centred on cx (the body column of a two-column screen is centred on 233)
 }
 ```
 
-Layout constants (pixels): margins 10; list row pitch 18; subline 13 below its row; two-column split at x = 146 (left stub 0..145, body 147..319); content starts at y = 24 under the header. The barcode's bars come from the badge's public key, so each badge prints its own.
+Conventions every kit function follows (also in the comment at the top of `receipt.h`):
 
-The stamp is drawn once into a small off-screen sprite (text plus a double rectangle), then pushed rotated with `pushRotateZoom`. "Faded" is not transparency: the ink colour is `theme::blend(ink, PAPER, 140)`.
+- A `y` is the top of the capital letters. A row at `y` owns y-5 to y+12; a selected row fills x0-10 to x1+10. A subline goes at y+13 and owns the 13 px below it.
+- Text that does not fit its space is cut and ends in `..`.
+- Body text is `Font0`. Three characters outside ASCII are drawn by hand, one column wide, when written as UTF-8: the middle dot `·` (U+00B7) and the triangles `◂` (U+25C2) and `▸` (U+25B8); LovyanGFX's own string drawing cannot reach them. Any other byte outside `0x20`–`0x7E` is drawn as `?`. `display::text` does not do this: text with a middle dot must go through the kit.
+- `statusRight` separates its parts with that middle dot (`14:32 · 87% · [2]`). The time is UTC (there is no timezone key) and is left out when the clock has no source; `[n]` is left out when the inbox is empty.
+- Upstream never sets a font on the canvas, so every kit function leaves it on `Font0`, size 1, top-left datum. Code that sets a font on the canvas must put it back.
+- The footer clears its strip to `PAPER` first and its rule runs edge to edge (x 0..319), as in the simulation. The hold bar is 240 px wide (x 40..279) over a half-tone `FAINT` track. Sublines and `sub` are not bold (`Font0` has no bold).
+
+Layout constants (pixels): margins 10; list row pitch 18; subline 13 below its row; two-column split at x = 146 (left stub 0..145, body 147..319); content starts at y = 24 under the header. The barcode's bars come from the badge's public key, so each badge prints its own.
 
 ### Screens
 
@@ -225,9 +234,9 @@ The stamp is drawn once into a small off-screen sprite (text plus a double recta
 | Home | left stub: `BALANCE` amount, barcode; body: rows ADDRESS, KEY, CLOCK, INBOX; a rule; `THANK YOU FOR HACKING` |
 | Any list (Pay, History, Contacts, Inbox, Wallet, settings, shop) | header; title; rows with optional sublines (5 rows with sublines or 9 without); footer with the action and `CANCEL back` |
 | Approval | [approval](../wallet/approval.md#screen) |
-| Request | left stub: amount with label `PAY ME`, `WAITING` or `RECEIVED`, barcode; body: title `REQUEST`, three rows; stamp `PAID` when confirmed |
+| Request | left stub: amount with label `PAY ME`, `WAITING` or `RECEIVED`, barcode; body: title `REQUEST`, three rows. When the payment is confirmed the left stub's label reads `PAID`, drawn in the `STAMP_OK` colour |
 
-Lua apps get the same look through `lib/vk.lua`'s `vk.ui` helpers (`vk.ui.header`, `row`, `title`, `amount`, `footer`, `rule`, `stamp`), which draw with `badge.gfx` using colours from `badge.theme.color(name)`; `badge.theme.color` and `badge.theme.name()` are registered Lua functions with no permission.
+Lua apps get the same look through `lib/vk.lua`'s `vk.ui` helpers (`vk.ui.header`, `row`, `title`, `amount`, `footer`, `rule`), which draw with `badge.gfx` using colours from `badge.theme.color(name)`; `badge.theme.color` and `badge.theme.name()` are registered Lua functions with no permission.
 
 ### Launcher and settings
 

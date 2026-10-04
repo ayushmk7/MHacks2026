@@ -13,7 +13,7 @@
 ## Global constraints
 
 - Upstream base: `firmware/solana-os/` of <https://github.com/spacemandev-git/solana-defcon-badge-26> at commit `812b8c7aca5c366d18c0b040fafd2999f7204d84`.
-- Every edit to an upstream file is a hook listed in [upstream-hooks.md](../architecture/upstream-hooks.md), tagged `// VK: H<n>`. All hooks (H1–H17, H19, H20, and the provisional H21) are applied in WP01; later work packages do not touch upstream files (exceptions are named in the package).
+- Every edit to an upstream file is a hook listed in [upstream-hooks.md](../architecture/upstream-hooks.md), tagged `// VK: H<n>`. All hooks (H1–H17, H19, H20, and the provisional H21) are applied in WP01 (H21 was moved from `os.ino` into three `src/hal/` functions in Batch 2); later work packages do not touch upstream files (exceptions are named in the package).
 - All new firmware code lives under `src/vk/`, `src/native_apps/`, `apps/`, `lib/`, `scripts/`, `test/`.
 - The only caller of `identity::sign` / `identity::signBase64` is `src/vk/wallet/signer.cpp`.
 - `VK_SIGN_DOMAIN(` appears only in `src/vk/features/*/domain_*.cpp`.
@@ -185,11 +185,11 @@ Stub behaviour (must equal upstream behaviour) is the last column of that table.
 **Files:** Fill `src/vk/core/config.{h,cpp}`; create `test/host/test_config.cpp`; add `provision` to `scripts/vkdev.py`; `test/device/t_cfg.py`. Core keys registered here: `listener_url`, `display_name`, `rpc_url`. Status item `setup`.
 **Interfaces produced:** everything in `vk::config`; commands `VKINFO`, `VKKEYS`, `VKGET`, `VKSET`, `VKCOMMIT`, `VKRESET`, `VKWIFI`, `VKAUTOSTART`.
 
-- [ ] Host tests first: token-table text parser (valid, bad mint, bad decimals, 5 entries, cap > max), `KEY32` base58, `U32` ranges, `STR` length. Implement the parsers as pure functions in `config.cpp` behind `VK_HOST_TEST`.
-- [ ] NVS layer (`Preferences`, namespace `vkconf`); `set` returns `INVALID` if the NVS write fails (review focus 3).
-- [ ] Commands, registered from `config.cpp`, and info fields `provisioned`, `wifi`. A secure change on a provisioned badge calls `confirmChange`; while that pointer is null (until WP12) it answers `ERR unavailable`. No edit to this file is needed when WP12 lands.
-- [ ] `vkdev.py provision` as specified.
-- [ ] Device: T-CFG1, T-CFG3; T-BOOT2. `tokens` and `issuer_key` are registered by `solana_pay` (WP13), so until then `VKSET tokens garbage` answers `ERR unknown_key`: at WP10, T-CFG3 runs against `rpc_url` (`VKSET rpc_url x` → `ERR invalid`); from WP13 on it runs against `tokens`. `t_cfg.py` reads `VKKEYS` and picks accordingly.
+- [x] Host tests first: token-table text parser (valid, bad mint, bad decimals, 5 entries, cap > max), `KEY32` base58, `U32` ranges, `STR` length. Implement the parsers as pure functions in `config.cpp` behind `VK_HOST_TEST`.
+- [x] NVS layer (`Preferences`, namespace `vkconf`); `set` returns `STORAGE` (`VKSET` answers `ERR nvs_full`) if the NVS write fails (review focus 3).
+- [x] Commands, registered from `config.cpp`, and info fields `provisioned`, `wifi`. A secure change on a provisioned badge calls `confirmChange`; while that pointer is null (until WP12) it answers `ERR unavailable`. No edit to this file is needed when WP12 lands.
+- [x] `vkdev.py provision` as specified (written in WP03; not yet run against a real `dashboard/.env`, whose `HACK_MINT` is empty).
+- [x] Device: T-CFG1, T-CFG3; T-BOOT2. `tokens` and `issuer_key` are registered by `solana_pay` (WP13), so until then `VKSET tokens garbage` answers `ERR unknown_key`: at WP10, T-CFG3 runs against `rpc_url` (`VKSET rpc_url x` → `ERR invalid`); from WP13 on it runs against `tokens`. `t_cfg.py` reads `VKKEYS` and picks accordingly.
 
 **Done when:** a badge can be provisioned with one command and the values survive a reboot.
 
@@ -197,12 +197,12 @@ Stub behaviour (must equal upstream behaviour) is the last column of that table.
 
 **Read:** [signing](../wallet/signing.md).
 **Files:** Fill `src/vk/wallet/signer.{h,cpp}`; create `signer_internal.h`, `crypto.{h,cpp}`, `features/store_reg/domain_store_reg.cpp`, `test/host/test_domains.cpp`.
-**Interfaces produced:** `SignDomain`, `VK_SIGN_DOMAIN`, `findDomain`, `signAuto`, `begin` (returns `VK_UNSUPPORTED` for button domains until WP12 provides `approval::open`), `poll`, `keyLocation`, `maxSignBytes`, `publicKey`, `addressBase58`, `selfCheckOk`, `signStoreRegistration`, `signForApproval`, `presenceLookup` and `tokenInfoLookup` (both null), `vk::wallet::verify`, `vk::wallet::randomBytes`, `vk_verify_c`.
+**Interfaces produced:** `SignDomain`, `VK_SIGN_DOMAIN`, `findDomain`, `signAuto`, `begin` (complete: it decodes and calls `approval::open`), `poll`, `keyLocation`, `maxSignBytes`, `publicKey`, `addressBase58`, `selfCheckOk`, `signStoreRegistration`, `signForApproval`, `presenceLookup` and `tokenInfoLookup` (both null), `vk::wallet::verify`, `vk::wallet::randomBytes`, `vk_verify_c`.
 
-- [ ] Host test first: the self-check function (pure, takes an array of rows) accepts the shipped table and rejects each of the five rule violations and the reserved `registry:` prefix.
-- [ ] `signRaw` with the timing log; `signAuto`; `store-reg` validator (copy upstream's `isSafeNonce` character set); `signStoreRegistration` now goes through `signAuto`.
-- [ ] The self-check runs from a `VK_SERVICE` begin function in `signer.cpp` (no edit to `vk.cpp`) and logs the result; info fields `pubkey`, `key`, `selfcheck` are registered here.
-- [ ] Device: T-BOOT3; boot log shows `selfcheck ok`; with the app store enabled and a broker URL set, registration still succeeds (or is unchanged if no broker is reachable); pre-flash check 2 passes.
+- [x] Host test first: the self-check function (pure, takes an array of rows) accepts the shipped table and rejects each of the five rule violations and the reserved `registry:` prefix.
+- [x] `signRaw` with the timing log; `signAuto`; `store-reg` validator (copy upstream's `isSafeNonce` character set); `signStoreRegistration` now goes through `signAuto`.
+- [x] The self-check runs from a `VK_SERVICE` begin function in `signer.cpp` (no edit to `vk.cpp`) and logs the result; info fields `pubkey`, `key`, `selfcheck` are registered here.
+- [x] Device: T-BOOT3; boot log shows `selfcheck ok`; pre-flash check 2 passes. Deferred (network): with the app store enabled and a broker URL set, registration still succeeds.
 
 **Done when:** one signing path exists, the self-check runs at boot, and nothing else in the tree can sign.
 
@@ -212,12 +212,12 @@ Stub behaviour (must equal upstream behaviour) is the last column of that table.
 **Files:** Fill `src/vk/wallet/approval.{h,cpp}`, `src/vk/ui/leds.{h,cpp}`; fill `src/vk/ui/theme.{h,cpp}` (tokens, `receipt-light`, `receipt-dark`, `blend`, config key `theme`); create `src/vk/ui/receipt.{h,cpp}`, `src/vk/ui/approval_screen.{h,cpp}`, `src/vk/features/devtools/demo_approve.cpp`, `test/host/test_approval.cpp`, `test/device/t_apr.py`. Config keys `approval_tmo_s`, `hold_ms`.
 **Interfaces produced:** `ApprovalRequest`, `approval::open/confirm/active/update/phase/current/appStopping`, `VK_ON_APPROVAL`, `VK_LED_PATTERN`, `leds::play/stop/bootProgress`; `takeResult`, `peekResult`; `vk::modalActive()` and `modalUpdate()` now real (they call into the engine through the stub's functions, so `vk.cpp` is not edited); a `VK_ON_APP_STOP` listener calls `approval::appStopping`; `vk::config::confirmChange` is set at boot.
 
-- [ ] Host tests first (fake clock, fake buttons): fresh-press rule; hold released early; hold completes; timeout; red closes with `red_reason`; dev override only when `dev_overridable`; `confirm` path; `appStopping` during each phase (review focus 2); result dropped after 60 s.
-- [ ] Theme tokens and both themes; the receipt kit (confirm the font names against the installed LovyanGFX first; apply the stated fallback if one is missing). Engine. Screen drawing per the layout table, in both themes. Result screen.
-- [ ] LED patterns and the boot bar; listeners play `signed`/`refused`.
-- [ ] Keys-up-before-close, the backlight save and restore, and the shell repaint request, as specified.
-- [ ] `features/devtools/demo_approve.cpp`: the dev-only command `VKDEMOAPPROVE <green|amber|red>`, which calls `approval::confirm` with a sample request, so the screen can be tested before any domain exists.
-- [ ] Device (`t_apr.py`): open each severity, assert `VKSTATE`, screenshot each for the record; T-APR2, T-APR3; `STOP` and `RUN` over serial while modal (applied only after it closes; T-REQ6's serial half); the launcher repaints after a confirmation closes over it; config secure-change confirmation now works (T-CFG2).
+- [x] Host tests first (fake clock, fake buttons): fresh-press rule; hold released early; hold completes; timeout; red closes with `red_reason`; dev override only when `dev_overridable`; `confirm` path; `appStopping` during each phase (review focus 2); result dropped after 60 s.
+- [x] Theme tokens and both themes; the receipt kit (confirm the font names against the installed LovyanGFX first; apply the stated fallback if one is missing). Engine. Screen drawing per the layout table, in both themes. Result screen.
+- [x] LED patterns and the boot bar; listeners play `signed`/`refused`.
+- [x] Keys-up-before-close, the backlight save and restore, and the shell repaint request, as specified.
+- [x] `features/devtools/demo_approve.cpp`: the dev-only command `VKDEMOAPPROVE <green|amber|red>`, which calls `approval::confirm` with a sample request, so the screen can be tested before any domain exists.
+- [x] Device (`t_apr.py`): open each severity, assert `VKSTATE`, screenshot each for the record; T-APR2, T-APR3; `STOP` and `RUN` over serial while modal (applied only after it closes; T-REQ6's serial half); the launcher repaints after a confirmation closes over it; config secure-change confirmation now works (T-CFG2).
 - [ ] Hands: T-LED1, T-LED2.
 
 **Done when:** any firmware code can raise an approval with a filled struct and get a yes/no, and the engine's rules are host-tested.
@@ -245,9 +245,9 @@ Stub behaviour (must equal upstream behaviour) is the last column of that table.
 **Read:** [checks](../wallet/checks.md#clock).
 **Files:** Fill `src/vk/core/clock.{h,cpp}`. Config key `ntp_server`. Info field `time`. Dev-only `vk::clock::devSet(unix)` for `VKTIME`.
 
-- [ ] Service: start SNTP once when Wi-Fi is first connected; never wait for it (review focus 4). Sync callback, or the polling fallback.
-- [ ] `raiseTo`. `VKINFO` reports `time=`.
-- [ ] Device: with the hotspot up, `time=sntp` within 10 s of Wi-Fi connecting; with Wi-Fi off, boot reaches `[os] ready` in the usual time and `time=none`.
+- [x] Service: start SNTP once when Wi-Fi is first connected; never wait for it (review focus 4). Sync callback and the polling fallback, both compiled.
+- [x] `raiseTo`. `VKINFO` reports `time=`.
+- [ ] Device: with the hotspot up, `time=sntp` within 10 s of Wi-Fi connecting (deferred, network: `t_clock_net.py`); with Wi-Fi off, boot reaches `[os] ready` in the usual time and `time=none` (done: `t_clock.py`).
 
 ### WP21: Record checks wired into the approval
 
@@ -263,8 +263,8 @@ Stub behaviour (must equal upstream behaviour) is the last column of that table.
 **Read:** [protocol](../protocol/espnow.md) (Frame header, Type registry, Router).
 **Files:** Fill `src/vk/host/router.{h,cpp}`.
 
-- [ ] `install`, route lookup, forwarding rules 1–3, `send`. `granted("espnow")` is consulted (always true until WP30).
-- [ ] Device: T-HOOK1; an upstream ESP-NOW sample app (`whosnear`) still works between two badges.
+- [x] `install`, route lookup, forwarding rules 1–3, `send`. `granted("espnow")` is consulted (always true until WP30).
+- [ ] Device: T-HOOK1; an upstream ESP-NOW sample app (`whosnear`) still works between two badges (deferred, second badge: `t_hook.py`). On one badge, `hello` and `whosnear` still launch and stop with the router's handler installed.
 
 ### WP23: Requests and presence
 
@@ -421,16 +421,16 @@ Each app is one folder under `apps/` with `app.ini`, `main.lua`, `config.lua`, w
 | WP | Owner | Started | Tests passed | Notes |
 |---|---|---|---|---|
 | 00 | orchestrator; agent 0 (Batch 0) | 2026-10-03 | upstream builds, flashes at 460800 baud, boots, `PING` ok; unmodified upstream compiles in place from `os/` | badge key is software (SE050 select failed). Public key `5vpmgLuCfbV7Lp2hTNFz7w75ibhVkc56G1mR6weQedvj`, read by eye from a screenshot of Settings → Identity (confirm against `VKINFO pubkey` when WP11 lands). Finding F17 (I²C clock held low) recorded |
-| 01 | Batch 1: 1A (hooks, `vk.cpp`, `core/`, build scripts), 1B (`host/`, `ui/`, `wallet/`, `sdk/` stubs); integrator I1 | 2026-10-03 | dev build compiles; pre-flash checks 1 to 5 pass (hook ids H1–H17, H19, H20, H21); T-BOOT1 (`t_boot.py`); `VKHELP` lists `VKHELP` and `VKINFO`; `VKINFO` → `OK profile=dev api=2`; linker check (`[vk] linkcheck alive`, U2 settled, no anchor file); upstream sample `hello` pushed, run (`VKSTATE.app` = `hello`), stopped, launcher repaints (screenshot equal to the one before) | Boot line: `[vk] registries: services=0 commands=8 lua=0 status=0 domains=0 routes=0 permissions=0 patterns=0 native=0 config=1` (the one config key is `theme`; with the temporary link-check service it read `services=1`). `[id] 5vpmgLuC, software (1 ms)`. Image 1,882,539 bytes. The first build compiled with no cross-agent error. H21 applied (`VK_SE050_QUARANTINE 1`): no `[se050]` line and no bus scan at boot; the I²C bus was still held low at this flash (`[btn] TCA9534 init FAILED`), so hardware buttons need one power cycle. H21 does not cover every path to the SE050 (see the hook's section). Deferred: T-HOOK1 (second badge). Not yet exercised: `fileio` `renameFile` over an existing file on LittleFS (first used by WP10 and WP24). The `bootScreen` stub forwards the percentage to `leds::bootProgress`, so WP12's boot bar is driven as soon as that body exists |
+| 01 | Batch 1: 1A (hooks, `vk.cpp`, `core/`, build scripts), 1B (`host/`, `ui/`, `wallet/`, `sdk/` stubs); integrator I1 | 2026-10-03 | dev build compiles; pre-flash checks 1 to 5 pass (hook ids H1–H17, H19, H20, H21); T-BOOT1 (`t_boot.py`); `VKHELP` lists `VKHELP` and `VKINFO`; `VKINFO` → `OK profile=dev api=2`; linker check (`[vk] linkcheck alive`, U2 settled, no anchor file); upstream sample `hello` pushed, run (`VKSTATE.app` = `hello`), stopped, launcher repaints (screenshot equal to the one before) | Boot line: `[vk] registries: services=0 commands=8 lua=0 status=0 domains=0 routes=0 permissions=0 patterns=0 native=0 config=1` (the one config key is `theme`; with the temporary link-check service it read `services=1`). `[id] 5vpmgLuC, software (1 ms)`. Image 1,882,539 bytes. The first build compiled with no cross-agent error. H21 applied (`VK_SE050_QUARANTINE 1`): no `[se050]` line and no bus scan at boot; the I²C bus was still held low at this flash (`[btn] TCA9534 init FAILED`), so hardware buttons need one power cycle. H21 did not cover every path to the SE050 at WP01; Batch 2 closed them (the guards now sit in `se050::test()`, `se050_t1::begin()` and `badge_i2c::scan()`), and after one power cycle the bus was healthy at the Batch 2 flash: `[btn] TCA9534 init ok`, heartbeat `btn=0` at 30 to 180 s, real key presses logged. Batch 2 boot line: `[vk] registries: services=4 commands=16 lua=0 status=1 domains=1 routes=0 permissions=0 patterns=5 native=0 config=7`. Image 1,928,819 bytes. Deferred: T-HOOK1 (second badge). Not yet exercised: `fileio` `renameFile` over an existing file on LittleFS (first used by WP10 and WP24). The `bootScreen` stub forwards the percentage to `leds::bootProgress`, so WP12's boot bar is driven as soon as that body exists |
 | 02 | Batch 1: 1C; integrator I1 | 2026-10-03 | host suites `sol`, `record`, `frames`, `checks` (`test/host/run.sh`, also run as pre-flash check 5); the pure code compiles with the ESP32 toolchain and links into the image | vectors regenerate byte for byte (1C). Spec additions recorded in solana-payments.md, checks.md, espnow.md and testing.md. The shim has no suite of its own in the tree |
 | 03 | Batch 1: 1D; integrator I1 | 2026-10-03 | `t_boot.py` (T-BOOT1, serial checks, navigation by injected key); `vkdev.py` `wait-ready`, `reset`, `state`, `cmd`, `btn`, `shot`, `push`, `run`, `stop`, `test` used on the badge | Opening the port does not reset the badge; `reset` reboots it (`[os] ready` after 8.3 s); `VKSHOT` takes 0.6 to 1.0 s; pushing `hello` (2 files) takes 1.5 s. Deferred: T-REL2 (release build, Batch 6); `provision` (needs WP10 and a filled `dashboard/.env`); `monitor` and `provision` not run on the badge |
-| 10 | | | | |
-| 11 | | | | |
-| 12 | | | | |
+| 10 | Batch 2: 2A; integrator I2 | 2026-10-03 | host suite `config`; on the badge `t_cfg.py`: T-BOOT2, T-CFG3 (against `rpc_url`, unprovisioned and again over a stored value), T-CFG1 (values survive a reset, `provisioned=1`), T-CFG2 (`Change setting` confirmation: hold writes, CANCEL leaves) | code complete. The first firmware build had no error in this package. `VKINFO pubkey` is `5vpmgLuCfbV7Lp2hTNFz7w75ibhVkc56G1mR6weQedvj`, equal to the key read by eye in WP00. The tests leave the badge provisioned with the test values. Deferred: T-CFG4 (hands); `vkdev.py provision --env` (needs `npm run devnet:setup`, U9). Spec additions recorded in config.md |
+| 11 | Batch 2: 2B; integrator I2 | 2026-10-03 | host suite `domains`; pre-flash check 2 (nothing but `signer.cpp` signs); T-BOOT3 on the badge (`selfcheck=1`, `key=software`, boot log `[vk] selfcheck ok`) | code complete. One domain registered (`store-reg`). No signature has been made through `signRaw` on the badge yet: the first is WP13's (M2). Deferred: store registration against a broker (network). Spec additions recorded in signing.md |
+| 12 | Batch 2: 2C (engine, LEDs, demo command), 2D (theme, receipt kit, screen); integrator I2 | 2026-10-03 | host suite `approval`; on the badge `t_apr.py` in `receipt-light` and in `receipt-dark`: the three demo severities with their `VKSTATE` and select rules, launcher repaint after close, T-APR2, pushed `STOP` and `RUN` applied only after the approval closes, T-APR3 | code complete. Screenshots in `os/test/device/shots/`: `approval_<green\|amber\|red>_<theme>.png` and `result_<approved\|cancelled\|blocked\|timed_out>_<theme>.png`; all read by the integrator, no clipped or overlapping text. Changed at integration, both by the design owner's decision: the footer in `RESULT` shows the result word and no key hints; **the rubber stamp was removed** from the approval screen and the kit (`receipt::stamp` deleted; the `STAMP_*` tokens stay as status inks), so the coloured band alone carries the verdict. Engine open to first draw: 11 ms (part of M3). Cosmetic, not changed: the screen is 5 px higher than the simulation between the band and the last row. Deferred: T-LED1, T-LED2 (hands); `DEL <running id>` while a signing approval is open (review focus 2) needs an app-owned approval, so it moves to Batch 3 with `signtest`; `SIGNED` and `SIGN FAILED` result screens (need a signing domain) |
 | 13 | | | Gate 1 | |
-| 20 | | | | |
+| 20 | Batch 2: 2E; integrator I2 | 2026-10-03 | on the badge `t_clock.py`: `[os] ready` 7.8 s after reset with Wi-Fi absent, `time=none`, `VKTIME` gives `time=sntp` in `VKINFO` and `VKSTATE` | code complete; device verification of SNTP deferred (network: `t_clock_net.py`, U5, U6). Both SNTP paths are compiled (callback and status poll). No host suite (`clock.cpp` is host-compilable if one is wanted) |
 | 21 | | | | |
-| 22 | | | | |
+| 22 | Batch 2: 2E; integrator I2 | 2026-10-03 | on the badge: `hello` launches, runs and stops with the router's handler installed (`t_clock.py`, `t_apr.py`); `whosnear` launched from the real keys comes up on channel 1 | code complete; device verification deferred (second badge: T-HOOK1 and `whosnear` between two badges, `t_hook.py`). `routes=0` until WP23 |
 | 23 | | | Gate 2 | |
 | 24 | | | | |
 | 30 | | | | |

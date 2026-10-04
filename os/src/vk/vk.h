@@ -3,7 +3,7 @@
 // (architecture/overview.md, sections 4, 5 and 7).
 #pragma once
 
-#include "vk_build.h"      // VK_SE050_QUARANTINE (hook H21)
+#include "vk_build.h"      // the build switches
 #include "core/serial.h"   // vk::serial::handleLine (hook H6)
 #include "host/router.h"   // vk::host::router::install (hook H3)
 

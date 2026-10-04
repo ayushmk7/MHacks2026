@@ -5,6 +5,7 @@
 #include "../badge_log.h"
 #include "badge_i2c.h"
 #include "se050_t1.h"
+#include "../vk/vk_build.h"  // VK: H21
 
 namespace se050 {
 namespace {
@@ -25,6 +26,7 @@ void begin() {
 }
 
 bool test() {
+  if (VK_SE050_QUARANTINE) return false;  // VK: H21 (never address 0x48; present() stays false)
   sPresent = false;
   sAtrLength = 0;
   sLastError = 0;

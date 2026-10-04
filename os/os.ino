@@ -192,8 +192,8 @@ void setup() {
   badge_log::tagf("btn", "TCA9534 init %s",
                   buttons::begin() ? "ok" : "FAILED (will keep re-probing)");
   power::begin();
-  if (!VK_SE050_QUARANTINE) se050::test();       // VK: H21
-  if (!VK_SE050_QUARANTINE) badge_i2c::scan();   // VK: H21
+  se050::test();
+  badge_i2c::scan();
 
   // Deliberately its own stage rather than part of "Peripherals": it must run
   // after se050::test(), because whether the secure element answered decides

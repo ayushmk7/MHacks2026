@@ -175,11 +175,11 @@ bool send(const uint8_t *mac, const uint8_t *frame, size_t len);    // mac nullp
 
 `install()` sets the one upstream receive handler. For each received payload:
 
-1. If it is a VK v1 frame and a route covers its type, call the route with `rx_ms = espnow_mgr::lastRxMs()` (hook H13). If the route returns true, stop.
+1. If it is a VK v1 frame and a route covers its type, call the route with `rx_ms = espnow_mgr::lastRxMs()` (hook H13). If the route returns true, stop. When several routes cover the type, each is called in registry order until one returns true.
 2. CHAL and PROOF (types 2 and 3) are never forwarded to an app, whether or not a route exists.
 3. Everything else that no route consumed (REQ, RESULT, the contact frames, app-range frames, payloads that are not VK frames at all) is forwarded to the app.
 
-"Forward to the app" means `runtime::dispatchEspnow(mac, data, len, rssi)`, and only when an app is running, the approval is not active, and the app was granted the `espnow` permission (native apps always are). There is no queue of our own: a frame that arrives with no eligible app is dropped, except that firmware routes have already seen it.
+"Forward to the app" means `runtime::dispatchEspnow(mac, data, len, rssi)`, and only when an app is running, the approval is not active, and the app was granted the `espnow` permission (native apps always are: `router.cpp` asks `vk::host::granted("espnow")` for every frame and `permissions.cpp` answers true for a native app). `router::send` returns false for a null frame or a zero length. There is no queue of our own: a frame that arrives with no eligible app is dropped, except that firmware routes have already seen it.
 
 Upstream's receive queue holds 7 frames and silently drops the newest when full. While the loop is blocked by a signature (one to three seconds with a software key), requests rebroadcast by several badges can fill it and a CHAL or PROOF can be lost. A lost exchange leaves the slot `PENDING`, which the approval shows as amber; the Pay app may call `wallet.challenge` again (a fresh nonce replaces the slot).
 

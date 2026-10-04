@@ -36,7 +36,7 @@ Line numbers are for upstream commit `812b8c7`. Upstream's `solana-os.ino` is `o
 | H18 | `src/identity/identity.cpp` | optional: never use the SE050 for a new key |
 | H19 | `src/lua_sdk/lua_runtime.cpp` `callGlobal()` | no Lua callback runs while the approval is up |
 | H20 | `src/ui/shell.cpp` `update()` | the shell repaints when Badge OS asks |
-| H21 | `os.ino` `setup()` | provisional: keep the SE050 off the I²C bus (button fix, finding F17) |
+| H21 | `src/hal/se050.cpp` `test()`, `src/hal/se050_t1.cpp` `begin()`, `src/hal/badge_i2c.cpp` `scan()` | provisional: nothing addresses the SE050 on the I²C bus; the badge behaves as if it had no secure element (button fix, finding F17) |
 
 ## The edits
 
@@ -328,26 +328,49 @@ Upstream's shell redraws only when its private dirty flag is set, so without thi
 
 Finding F17: on the development badge, a Solana OS session leaves an I²C slave holding SCL low. The hold survives resets and reflashing and clears only when power is removed; while it lasts the button expander cannot be read under any firmware, which is why the buttons "work in the test kit but not in Solana OS". By elimination the slave is the SE050 (it stretches the clock, has no usable reset on this board, and is the device addressed just before the failure). The two operations only Solana OS performs on it are the boot-time bus scan's zero-length probe of `0x48` and the applet-select write. Which of them latches the part is **not yet proven**: that needs a power cycle and a second deliberate failure.
 
-Until it is proven, the fork does not address the SE050 at boot at all. In `setup()` in `os.ino`:
+Until it is proven, the fork does not address the SE050 at all. Every I²C transfer to `0x48` (`SE050_ADDR`) in upstream starts in one of three functions, and each returns its "absent" result first when `VK_SE050_QUARANTINE` is 1. Each of the three files also gets `#include "../vk/vk_build.h"  // VK: H21` after its own includes.
+
+In `se050::test()` in `src/hal/se050.cpp` (the soft reset and ATR read), as the first line:
 
 ```cpp
-  if (!VK_SE050_QUARANTINE) se050::test();       // VK: H21
-  ...
-  if (!VK_SE050_QUARANTINE) badge_i2c::scan();   // VK: H21
+  if (VK_SE050_QUARANTINE) return false;  // VK: H21 (never address 0x48; present() stays false)
 ```
 
-`VK_SE050_QUARANTINE` is defined in `src/vk/vk_build.h` and is 1; `vk.h` includes that header, so `os.ino` sees the macro through hook H1. Set it to 0 only on a badge whose SE050 is known to work.
+In `se050_t1::begin()` in `src/hal/se050_t1.cpp` (the T=1 link: soft reset and applet select), as the first line:
 
-What it achieves, checked on the development badge on 2026-10-03 (WP01): that badge already holds a **software** identity, so `identity::load()` returns before any SE050 call, and with these two edits nothing addresses `0x48` during boot. The boot log has no `[se050]` line and no `[i2c] scanning bus` line, and the identity line is `[id] 5vpmgLuC, software (1 ms)`.
+```cpp
+  if (VK_SE050_QUARANTINE) { sError = "quarantined (H21)"; return false; }  // VK: H21
+```
 
-What it does not cover. This is read from the upstream source and has not been exercised: `se050_t1::begin()` sends the soft reset and the applet select whenever it is called, and none of its callers asks `se050::present()` first. With the two edits above the SE050 is still addressed by:
+In `badge_i2c::scan()` in `src/hal/badge_i2c.cpp` (a zero-length probe of every address, `0x48` included), as the first line:
 
-- `identity::create()`, which runs on a badge with no stored identity (the first boot after `erase_flash`) and from Settings → Identity → New identity. `createOnSecureElement()` calls `se050_apdu::begin()`, and `createInSoftware()` calls `se050::randomBytes()`. Hook H18 skips only the first of the two.
-- `identity::load()` and `identity::sign()` on a badge whose stored identity is in the SE050.
-- Settings → Info with SELECT pressed, which calls `se050::test()` and `badge_i2c::scan()` (`shell.cpp`, `updateInfo()`).
-- a Lua app that calls `badge.se050.*` (`lib_sensors.cpp`).
+```cpp
+  if (VK_SE050_QUARANTINE) return;  // VK: H21 (the scan probes every address, 0x48 included)
+```
 
-So the sentence "nothing addresses `0x48`" holds only for the boot of a badge with a stored software key. On the development badge, until the trigger is known: do not use New identity, do not erase the flash, do not press SELECT on Settings → Info, and do not run an app that uses `badge.se050`. Closing these paths needs more tagged lines (the narrowest place is the top of `se050_t1::begin()` and of `se050::test()`), which is a change to this hook and must be written here first.
+`VK_SE050_QUARANTINE` is defined in `src/vk/vk_build.h` and is 1. Set it to 0 only on a badge whose SE050 is known to work. The first version of this hook (WP01) was two guards in `setup()` in `os.ino`; they covered only the boot path and are gone, so `os.ino` has upstream's text at those two lines again.
+
+Why these three are enough (read from the source, and checked by the grep below):
+
+- `se050_t1.cpp` has the only other code that transfers to `SE050_ADDR`: `writeBlock()` and `readBlock()`. They are reached only through `exchange()` (called by `softReset()`, called by `begin()`) and through `transceive()`, which runs `if (!sReady && !begin()) return false;` first. `sReady` becomes true only inside `begin()` after its first line, so with the guard it is never true and no block is ever written or read.
+- `se050_apdu.cpp` has no I²C call of its own: `begin()` calls `se050_t1::begin()`, and every command goes through `se050_t1::transceive()`. `se050::randomBytes()` does the same.
+- `badge_i2c::readReg()` and `writeReg()` take the address from the caller; the only caller is `buttons.cpp`, with `TCA9534_ADDR`.
+
+```bash
+cd os
+grep -rn "SE050_ADDR" os.ino src            # config.h (the constant), se050.cpp, se050_t1.cpp, badge_i2c.cpp only
+grep -rln "Wire\.beginTransmission\|Wire\.requestFrom" os.ino src   # the same three .cpp files
+```
+
+What each caller now sees, all of which upstream already handles as "no secure element":
+
+| Path | Result with the quarantine |
+|---|---|
+| `setup()`: `se050::test()`, `badge_i2c::scan()` | no `[se050]` line and no `[i2c] scanning bus` line in the boot log |
+| `identity::create()` (a badge with no stored identity, or Settings → Identity → New identity) | `se050_apdu::begin()` fails, the log has `[se050] link/select failed (quarantined (H21))` and `[id] SE050 unavailable (select)`, and the key is made in software; `se050::randomBytes()` fails, so the seed uses the chip's own random source only |
+| `identity::load()` and `identity::sign()` with an identity stored in the SE050 | upstream keeps the stored identity (`[id] SE050 did not answer; identity present but cannot sign this boot`) and every signature fails. Do not set the flag on a badge whose key is in its SE050 |
+| Settings → Info, SELECT | `badge_i2c::retry()` and `buttons::retry()` still run; the SE050 test and the scan do nothing; the row reads `se050  no answer` |
+| Lua `badge.se050.test()`, `random()`, `random_available()` | `false`, `nil, "quarantined (H21)"`, `false` |
 
 This hook does not release a bus that is already held: **the badge must be power-cycled once** (USB unplugged, battery off, a few seconds) after flashing a build that contains it. It is provisional: when the trigger is identified, replace it with the narrowest change that avoids that one operation and update this section.
 

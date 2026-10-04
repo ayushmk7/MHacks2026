@@ -61,7 +61,7 @@ The app shows the request's *claimed* name in the list, labelled as a claim. The
 
 1. **Amount.** UP/DOWN change the amount by `config.step` minor units; LEFT/RIGHT by ten steps. SELECT opens the request.
 2. **Waiting.** `wallet.request_open{amount = ...}`; the screen shows the amount, "waiting for payment", seconds left, and `request_status().proofs` as "badges checking: n". CANCEL closes the request.
-3. **Paid.** On a RESULT frame (`vk.result_parse`) for this `req_id` with status 0: `vk.confirm(ref)` until `confirmed` (poll every 2 s, up to 30 s), then "PAID" and green LEDs. Status 1 or 2: "Payer cancelled" / "Payment failed". A RESULT is never trusted without the on-chain confirmation.
+3. **Paid.** On a RESULT frame (`vk.result_parse`) for this `req_id` with status 0: `vk.confirm(ref)` until `confirmed` (poll every 2 s, up to 30 s), then the left stub's label reads `PAID` (drawn in the `STAMP_OK` colour) and the LEDs go green. Status 1 or 2: "Payer cancelled" / "Payment failed". A RESULT is never trusted without the on-chain confirmation.
 
 ## History
 

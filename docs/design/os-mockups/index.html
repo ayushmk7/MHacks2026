@@ -82,14 +82,11 @@ section.block p.h{color:var(--mu);margin:0 0 16px}
 .t-rc .ft{position:absolute;left:0;right:0;bottom:0;padding:5px 10px 7px;font-size:9px;border-top:1px dashed var(--ik);display:flex;justify-content:space-between;background:var(--pa)}
 .t-rc .code{height:22px;margin:8px 60px 0;background:repeating-linear-gradient(90deg,var(--ik) 0 2px,transparent 2px 3px,var(--ik) 3px 4px,transparent 4px 7px,var(--ik) 7px 10px,transparent 10px 12px)}
 .t-rc .band{margin:2px 0 4px;padding:6px 6px;text-align:center;font-weight:700;letter-spacing:.06em;color:#111;font-size:12px}
-.t-rc .stamp{position:absolute;right:22px;top:158px;transform:rotate(-13deg);border:3px double;padding:3px 8px;font:700 13px Georgia,serif;letter-spacing:.14em;opacity:.42;border-radius:4px;mix-blend-mode:var(--bl);-webkit-mask-image:repeating-linear-gradient(115deg,#000 0 7px,rgba(0,0,0,.55) 7px 9px,#000 9px 15px,rgba(0,0,0,.75) 15px 16px);mask-image:repeating-linear-gradient(115deg,#000 0 7px,rgba(0,0,0,.55) 7px 9px,#000 9px 15px,rgba(0,0,0,.75) 15px 16px)}
 .t-rc .bar{letter-spacing:-1px;text-align:center;font-size:12px;margin-top:8px}
 .t-rc .toast{background:var(--ik);color:var(--pa)}
 .t-rc .ok{color:var(--sg)}.t-rc .bad{color:var(--sr)}.t-rc .mut{color:var(--fa)}
 
 .t-rc.dk{--pa:#15140f;--ik:#ece6d6;--fa:#7d7868;--su:#a39c8a;--sg:#4fd69a;--sa:#ffc35a;--sr:#ff7b6e;--bl:screen}
-.t-rc .stamp.g{color:var(--sg)}.t-rc .stamp.a{color:var(--sa)}.t-rc .stamp.r{color:var(--sr)}
-.t-rc.dk .stamp{opacity:.6}
 </style>
 </head>
 <body>
@@ -228,9 +225,9 @@ const THEMES = [];
   const two = (l, r) => `<div class="two"><div class="lc">${l}</div><div class="rc">${r}</div></div>`;
   const bar = p => `<div class="bar">${'█'.repeat(Math.round(p*14))}${'░'.repeat(14-Math.round(p*14))}</div>`;
   const amt = (v, lab) => `<div class="lab">${lab}</div><div class="amt" style="font-size:${v.length>5?32:40}px">${v}</div><div class="ctr sm" style="margin-top:2px">${ST.sym}</div>`;
-  const L = {id:'rc', cls:'t-rc', name:'Receipt · Light', tag:'Paper, ink and a rubber stamp', orient:'l', led:[255,226,170], cols:2,
-    about:'Landscape. Every screen is a ticket with a tear-off stub: the amount on the left, the details on the right, split by a dashed perforation. Monospace lines, dotted leaders, a barcode. An approval reads like a bill you are about to sign, and the verdict lands as a stamp. Calm, high contrast, readable in daylight.',
-    notes:['Two fonts: a monospace and one serif for amounts','No gradients or blending: flat fills and 1-pixel dashed lines. Very cheap to draw','The stamp is a rotated bitmap, three of them (verified, check, blocked)'],
+  const L = {id:'rc', cls:'t-rc', name:'Receipt · Light', tag:'Paper and ink', orient:'l', led:[255,226,170], cols:2,
+    about:'Landscape. Every screen is a ticket with a tear-off stub: the amount on the left, the details on the right, split by a dashed perforation. Monospace lines, dotted leaders, a barcode. An approval reads like a bill you are about to sign; the coloured band across the top carries the verdict. Calm, high contrast, readable in daylight.',
+    notes:['Two fonts: a monospace and one serif for amounts','No gradients or blending: flat fills and 1-pixel dashed lines. Very cheap to draw'],
     boot: m => `<div class="hd"><span>BADGE OS</span><span>*** STARTING UP ***</span></div><div class="rule"></div>` + two(
       `<div class="brand">Badge OS</div><div class="amt" style="font-size:40px;margin-top:14px">${m.pct}%</div>${bar(m.pct/100)}<div class="ctr sm" style="margin-top:8px;letter-spacing:0">${STAGES[m.i][1]}</div>`,
       `<div class="ttl">CHECKLIST</div>` + STAGES.map((s,i)=>row(s[0].toUpperCase(), i<m.i||m.pct>=100?'OK':i===m.i?'..':'')).join('')),
@@ -245,14 +242,13 @@ const THEMES = [];
       <div class="band" style="background:${c}">${m.phase==='result'?m.result:m.headline}</div>`
       + two(amt(m.big,'AMOUNT') + `<div class="ctr" style="font-weight:700;margin-top:10px;font-size:${m.sub.length>14?8:10}px">TO ${m.sub.toUpperCase()}</div>`,
         m.lines.map(l=>row(l[0].toUpperCase(),l[1])).join('') + `<div class="rule" style="margin-top:5px"></div>`)
-      + `<div class="stamp ${m.sev==='green'?'g':m.sev==='amber'?'a':'r'}">${m.sev==='green'?'VERIFIED':m.sev==='amber'?'CHECK':'BLOCKED'}</div>`
       + (m.phase==='holding'?`<div class="hold">${'█'.repeat(Math.round(m.prog*30))}${'░'.repeat(30-Math.round(m.prog*30))}</div>`:'') + foot(footL(f),footR(f)); },
     request: m => head() + two(amt(fmt(m.cents), m.mode==='pick'?'PAY ME':m.mode==='wait'?'WAITING':'RECEIVED') + `<div class="code" style="margin:12px 16px 0"></div>`,
       `<div class="ttl">REQUEST</div>` + (m.mode==='pick' ? row('UP / DOWN','0.50')+row('LEFT / RIGHT','5.00')+row('SELECT','open') : m.mode==='wait' ? row('EXPIRES IN',m.secs+' s')+row('CHECKING',m.proofs+' badge')+row('STATUS','on air') : row('FROM','Judge B')+row('CONFIRMED','on chain')+row('REF','5tGh..p2Qx')))
-      + (m.mode==='paid'?`<div class="stamp g">PAID</div>`:'') + foot(m.mode==='pick'?'SELECT open':'', 'CANCEL back')
+      + foot(m.mode==='pick'?'SELECT open':'', 'CANCEL back')
   };
   THEMES.push(L, {...L, cls:'t-rc dk', name:'Receipt · Dark', tag:'The same ticket on night paper', led:[255,196,120],
-    about:'The dark mode of the same design: warm black paper, cream ink, the same layout pixel for pixel. Stamps print in lighter ink. Chosen in Settings → Theme; the approval verdict colours are identical in both modes.'});
+    about:'The dark mode of the same design: warm black paper, cream ink, the same layout pixel for pixel. Chosen in Settings → Theme; the approval verdict colours are identical in both modes.'});
 })();
 
 

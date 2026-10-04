@@ -1,5 +1,5 @@
 // Ed25519 verification backend and random bytes (signing.md, "Crypto backend").
-// Header only until crypto.cpp is written (WP11).
+// Implemented in crypto.cpp (WP11).
 #pragma once
 
 #include <stddef.h>

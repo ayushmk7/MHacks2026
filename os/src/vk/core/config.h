@@ -48,4 +48,27 @@ extern bool (*confirmChange)(const char *key, const char *oldText, const char *n
 struct ResetListener : Registered<ResetListener> { void (*fn)(); explicit ResetListener(void (*f)()) : fn(f) {} };
 #define VK_ON_RESET(ident, fn) static vk::config::ResetListener vk_on_reset_##ident(fn)
 
+// ---- Added by WP10 (core/config.cpp). Nothing above this line was changed. ----
+
+// The registered key with that name, or nullptr.
+const ConfigKey *find(const char *name);
+
+// Text parsers (platform/config.md, "Type text forms" and "Token table"). Pure functions: no NVS,
+// no state; host-tested in test/host/test_config.cpp. Each returns true when `text` is a valid
+// value; an out-parameter may be nullptr and is written only on success.
+bool parseStr(const char *text, uint32_t minLen, uint32_t maxLen);            // printable ASCII, length in range
+bool parseU32(const char *text, uint32_t lowest, uint32_t highest, uint32_t *out);   // decimal digits only, value in range
+bool parseKey32(const char *text, uint8_t out[32]);                           // base58 of exactly 32 bytes
+bool parseTokens(const char *text, vk_token_t out[VK_MAX_TOKENS], size_t *count);   // 1..VK_MAX_TOKENS entries
+bool validate(const ConfigKey &key, const char *text);                        // by the key's type and range
+
+#ifdef VK_HOST_TEST
+// Host-test seams. hostReboot() forgets everything held in RAM, as a reboot does (the in-memory NVS
+// of the shim is kept): the next call opens the namespace again. The three strings are what
+// VKWIFI and VKAUTOSTART would have passed to upstream (wifi_mgr::connect, settings::setAutostartApp).
+void hostReboot();
+extern String hostWifiSsid, hostWifiPassword, hostAutostart;
+extern unsigned hostRepaints;      // how many times the shell repaint was requested
+#endif
+
 }  // namespace vk::config

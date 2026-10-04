@@ -31,7 +31,8 @@
 // 1 = never use the SE050 for the key (wallet/signing.md, Key). Needs hook H18.
 #define VK_FORCE_SOFTWARE_KEY 0
 
-// 1 = never address the SE050 at boot (upstream-hooks.md, H21; finding F17). Set to 0 only on a badge whose SE050 is known to work.
+// 1 = never address the SE050 on the I2C bus: se050::test(), se050_t1::begin() and badge_i2c::scan() return at once
+// (upstream-hooks.md, H21; finding F17). Set to 0 only on a badge whose SE050 is known to work.
 #define VK_SE050_QUARANTINE 1
 
 // Reported to apps as badge.api_version. Bump together with hook H16.

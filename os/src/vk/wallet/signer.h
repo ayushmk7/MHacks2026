@@ -67,4 +67,41 @@ extern vk_presence_t (*presenceLookup)(const uint8_t req_id[8], uint8_t payee_pu
 struct TokenInfo { bool balance_known; uint64_t raw; bool account_known; uint8_t account[32]; };
 extern bool (*tokenInfoLookup)(const uint8_t mint[32], TokenInfo &out);
 
+// --- Self-check (signing.md, "Self-check"). Added by WP11. ---
+
+// One row of the domain table as the self-check sees it. A plain struct, so the host test can check
+// a table without registering anything.
+struct DomainRow {
+  const char *name;
+  const char *prefix;
+  bool needs_button;
+  bool has_decode;
+  bool has_validate;
+};
+
+// The six rules of the self-check, as a pure function. Returns 0 when the table is valid, else the
+// number (1 to 6) of the first rule that is broken; `*bad_name` (when not null) then names the row.
+int checkDomainTable(const DomainRow *rows, size_t count, const char **bad_name);
+
+#ifdef VK_HOST_TEST
+// Host-test seam (test/host/test_domains.cpp). On the badge signer.cpp calls the config store, the
+// permissions, the approval engine and the identity directly; on the host it reads these instead.
+struct HostHooks {
+  bool provisioned = true;                             // vk::config::provisioned()
+  bool (*granted)(const char *permission) = nullptr;   // vk::host::granted(); null = everything granted
+  bool busy = false;                                   // an approval is open or a result is waiting
+  const uint8_t *public_key = nullptr;                 // the badge key, 32 bytes; null = no identity
+  size_t max_sign_bytes = 1248;                        // maxSignBytes()
+  // identity::sign(); null = the identity refuses.
+  bool (*sign)(const uint8_t *message, size_t length, uint8_t out[64]) = nullptr;
+  // The last two steps of begin(): domain->decode, then approval::open. Null = VK_UNSUPPORTED.
+  Reason (*open)(const SignDomain *domain, const uint8_t *bytes, size_t len, const Ctx &ctx, const char *app_id) = nullptr;
+};
+extern HostHooks hostHooks;
+
+// What the signer service does at boot: checks the registered rows and sets selfCheckOk().
+// Returns the broken rule (0 = valid), like checkDomainTable.
+int runSelfCheck(const char **bad_name);
+#endif
+
 }  // namespace vk::wallet

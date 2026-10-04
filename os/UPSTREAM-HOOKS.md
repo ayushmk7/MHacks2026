@@ -29,5 +29,5 @@ Upstream is commit `812b8c7`; its `solana-os.ino` is `os.ino` here.
 | H18 | `src/identity/identity.cpp` | optional: never use the SE050 for a new key |
 | H19 | `src/lua_sdk/lua_runtime.cpp` `callGlobal()` | no Lua callback runs while the approval is up |
 | H20 | `src/ui/shell.cpp` `update()` | the shell repaints when Badge OS asks |
-| H21 | `os.ino` `setup()` | provisional: keep the SE050 off the I²C bus (button fix, finding F17) |
+| H21 | `src/hal/se050.cpp` `test()`, `src/hal/se050_t1.cpp` `begin()`, `src/hal/badge_i2c.cpp` `scan()` | provisional: nothing addresses the SE050 on the I²C bus; the badge behaves as if it had no secure element (button fix, finding F17) |
 

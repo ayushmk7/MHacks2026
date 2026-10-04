@@ -4,6 +4,7 @@
 
 #include "../badge_log.h"
 #include "badge_i2c.h"
+#include "../vk/vk_build.h"  // VK: H21
 
 namespace se050_t1 {
 namespace {
@@ -420,6 +421,7 @@ bool selectApplet() {
 }  // namespace
 
 bool begin() {
+  if (VK_SE050_QUARANTINE) { sError = "quarantined (H21)"; return false; }  // VK: H21
   if (sReady) return true;
 
   sDeadline = millis() + BUDGET_MS;

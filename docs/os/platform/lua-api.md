@@ -101,7 +101,7 @@ No permission needed. Lets an app match the active theme (light or dark).
 | Function | Returns |
 |---|---|
 | `theme.name()` | `"receipt-light"` or `"receipt-dark"` (or another registered theme) |
-| `theme.color(token)` | the RGB565 colour for `"paper"`, `"ink"`, `"faint"`, `"sub"`, `"stamp_ok"`, `"stamp_warn"`, `"stamp_bad"`, `"led"`; also the fixed `"green"`, `"amber"`, `"red"` |
+| `theme.color(token)` | the RGB565 colour for `"paper"`, `"ink"`, `"faint"`, `"sub"`, `"stamp_ok"`, `"stamp_warn"`, `"stamp_bad"` (the status inks for signed, warning and blocked text; nothing draws a stamp), `"led"`; also the fixed `"green"`, `"amber"`, `"red"` |
 
 ## `badge.codec`
 
@@ -134,7 +134,7 @@ Shared, pure Lua. Source: `os/lib/vk.lua`. Upstream's push can write only under 
 | `vk.feed(sig_b58, req)` | `net` | `POST <listener_url>/feed/solana` after a confirmed payment; `req` may be nil |
 | `vk.app_frame(type, body)` / `vk.app_body(data, type)` | — | build / match an app-range frame |
 | `vk.pay.start(opts)` | `sign`, `net`, `espnow` | starts the whole payer flow; returns a flow object (below) |
-| `vk.ui.page()`, `vk.ui.header(left, right)`, `vk.ui.title(text, y)`, `vk.ui.rule(y)`, `vk.ui.row(y, label, value, selected)`, `vk.ui.subline(y, text, selected)`, `vk.ui.amount(cx, y, label, value, unit)`, `vk.ui.footer(left, right)`, `vk.ui.stamp(cx, cy, text, token)`, `vk.ui.list(model)` | — | the receipt look for Lua apps, drawn with `badge.gfx` in the active theme's colours; same geometry as the firmware's receipt kit ([ui](../ui/ui.md#the-receipt-kit)). `vk.ui.list{title=, rows={{l=, r=, sub=, tone=}}, sel=, hint=}` draws a whole list screen. The stamp is drawn unrotated in Lua |
+| `vk.ui.page()`, `vk.ui.header(left, right)`, `vk.ui.title(text, y)`, `vk.ui.rule(y)`, `vk.ui.row(y, label, value, selected)`, `vk.ui.subline(y, text, selected)`, `vk.ui.amount(cx, y, label, value, unit)`, `vk.ui.footer(left, right)`, `vk.ui.list(model)` | — | the receipt look for Lua apps, drawn with `badge.gfx` in the active theme's colours; same geometry as the firmware's receipt kit ([ui](../ui/ui.md#the-receipt-kit)). `vk.ui.list{title=, rows={{l=, r=, sub=, tone=}}, sel=, hint=}` draws a whole list screen |
 
 ### `vk.pay`
 
