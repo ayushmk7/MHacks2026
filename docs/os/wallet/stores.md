@@ -14,6 +14,27 @@ LittleFS, directory `/vk/` (C path `FS_ROOT "/vk/"`, that is `/littlefs/vk/`). U
 
 Common rules: little-endian; an 8-byte header `magic[4]`, `version u16`, `count u16`; a file with a wrong magic or version is renamed to `<name>.bad` and a new empty file is started; writes go to `<name>.tmp` and are renamed over the original, except the history ring, which rewrites one record in place.
 
+The three stores have three owners that may not include each other, so they share one file layer, `src/vk/core/fileio.{h,cpp}`. A store never calls the filesystem directly: every read, write, rename and remove goes through `vk::fileio::ops`. The host tests install an in-memory implementation behind the same pointer ([testing](../testing/testing.md#host-tests)).
+
+```cpp
+// src/vk/core/fileio.h
+namespace vk::fileio {
+struct Ops {
+  bool (*exists)(const char *path);
+  long (*size)(const char *path);
+  bool (*read)(const char *path, size_t offset, uint8_t *out, size_t len);
+  bool (*writeAll)(const char *path, const uint8_t *data, size_t len);
+  bool (*writeAt)(const char *path, size_t offset, const uint8_t *data, size_t len);
+  bool (*renameFile)(const char *from, const char *to);
+  bool (*removeFile)(const char *path);
+  bool (*makeDir)(const char *path);
+};
+extern const Ops *ops;
+}
+```
+
+Paths are LittleFS-relative (`"/vk/history.bin"`). The firmware implementation prepends `FS_ROOT` and uses POSIX stdio.
+
 A filesystem image flashed at `0x670000` replaces the whole volume, these files included.
 
 ## History

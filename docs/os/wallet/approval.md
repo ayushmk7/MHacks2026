@@ -113,7 +113,14 @@ The engine also serves the config store: at boot it sets `vk::config::confirmCha
 
 ## Screen
 
-320×240, drawn into `display::canvas()` every pass while active, with the receipt kit ([ui](../ui/ui.md#the-receipt-kit)). The layout is one fixed function, `vk::ui::drawApproval(const ApprovalRequest &, Phase, float holdProgress)` in `src/vk/ui/approval_screen.cpp`; paper and ink follow the active theme (light or dark), nothing else is configurable.
+320×240, drawn into `display::canvas()` every pass while active, with the receipt kit ([ui](../ui/ui.md#the-receipt-kit)). The layout is one fixed function in `src/vk/ui/approval_screen.cpp`; paper and ink follow the active theme (light or dark), nothing else is configurable. It is declared in `src/vk/ui/approval_screen.h`, in namespace `vk::ui` (the types are the `vk::wallet` ones above):
+
+```cpp
+// src/vk/ui/approval_screen.h
+void drawApproval(const ApprovalRequest &, approval::Phase, float holdProgress, const ApprovalOutcome *outcome, bool footerBlink);
+```
+
+`outcome` is non-null only in `RESULT`: it is what the result band and stamp are drawn from. `footerBlink` is true while the footer is blinking after SELECT was pressed under rule DISABLED. The engine passes both; the screen keeps no state of its own.
 
 | Region | Position (px) | Content |
 |---|---|---|

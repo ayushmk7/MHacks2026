@@ -25,7 +25,7 @@ void bootProgress(uint8_t percent); // hook H15
 }
 ```
 
-A service calls the current pattern's `frame` every loop and then `::leds::show()`. Upstream's own `leds::update()` also runs every loop and redraws whenever one of *its* animations is set (the idle breath restarts whenever the launcher comes back), so on **every frame it draws** the service first calls `::leds::stopAnimation()`. When a pattern finishes or is stopped, the LEDs are turned off and, if no app is running, upstream's idle animation resumes (`::leds::playIdle()`). While an app runs and no pattern is playing, the LEDs belong to the app.
+A service calls the current pattern's `frame` every loop and then `::leds::show()`. Upstream's own `leds::update()` also runs every loop and redraws whenever one of *its* animations is set (the idle breath restarts whenever the launcher comes back), so on **every frame it draws** the service first calls `::leds::stopAnimation()`. When a pattern finishes or is stopped, the LEDs are turned off and, if the badge is idle (`vk::host::idle()`), upstream's idle animation resumes (`::leds::playIdle()`). While an app runs and no pattern is playing, the LEDs belong to the app.
 
 | Name | When | Look | Ends |
 |---|---|---|---|
@@ -34,7 +34,7 @@ A service calls the current pattern's `frame` every loop and then `::leds::show(
 | `approve_red` | approval open, red | solid red | when the approval closes |
 | `signed` | approval result: signed or approved | three quick green flashes | after 600 ms |
 | `refused` | approval result: cancelled, timeout, blocked, failed | one red blink | after 400 ms |
-| `notify` | a notification is waiting and no app is running | dim purple breathe, 3 s period | when the inbox is empty or an app starts |
+| `notify` | a notification is waiting and the badge is idle (`vk::host::idle()`) | dim purple breathe, 3 s period | when the inbox is empty or an app starts |
 
 Colours are the approval's fixed severity colours ([approval](../wallet/approval.md#screen)) and upstream's brand purple.
 
@@ -101,13 +101,13 @@ Items are drawn right to left in `order`, 8 px apart, and drawing stops before x
 | Item | Order | Shows | Registered by |
 |---|---|---|---|
 | `setup` | 10 | `SETUP` in amber while unprovisioned | `core/config` |
-| `dev` | 20 | `DEV` in amber in the dev profile | `ui/statusbar` |
+| `dev` | 20 | `DEV` in amber in the dev profile | `ui/status_dev.cpp` |
 | `inbox` | 30 | `[n]` when n notifications are waiting | `host/notify` |
 | `balance` | 40 | `12.50 HACK`, the default token's last known balance | `features/balance` |
 
 ### Balance
 
-`src/vk/features/balance/`. A service that, every `balance_poll_s` seconds, **only while no app is running, no approval is open and the badge is joined to a network** (`wifi_mgr::mode() == wifi_mgr::Mode::Station && wifi_mgr::connected()`; `connected()` alone is also true in hotspot mode), makes one JSON-RPC call to `rpc_url`:
+`src/vk/features/balance/`. A service that, every `balance_poll_s` seconds, **only while the badge is idle (`vk::host::idle()`), no approval is open and the badge is joined to a network** (`wifi_mgr::mode() == wifi_mgr::Mode::Station && wifi_mgr::connected()`; `connected()` alone is also true in hotspot mode), makes one JSON-RPC call to `rpc_url`:
 
 ```json
 {"jsonrpc":"2.0","id":1,"method":"getTokenAccountsByOwner",
@@ -237,6 +237,12 @@ Upstream's launcher and settings screens use upstream's compile-time colours. Ra
 - Native app `settings`: rows **Theme** (SELECT cycles through the registered themes), **Wallet** (opens `wallet_settings`), **Inbox**, and **System settings** (leaves to upstream's own settings screens, which keep upstream's look: Wi-Fi, Bluetooth, ESP-NOW, push, app store, identity, display, LEDs).
 - The **home service** (`src/vk/host/home.{h,cpp}`) keeps the launcher in front: when no app is running, no approval is open, upstream has no error to show (`runtime::lastError()` is empty), and the shell was not asked for, it calls `runtime::requestLaunch(<home_app>)`. Config key `home_app` (default `launcher`; empty disables the service and leaves upstream's launcher in charge).
 - `vk::host::showShell()` is how the settings app reaches upstream's screens: it sets "shell asked for" and exits the app. The flag clears the next time any app starts. From upstream's launcher, launching any app or holding CANCEL returns to ours.
+- `vk::host::idle()` is what "the badge is idle" means everywhere in these documents: true when no app is running or the running app is config `home_app`. The launcher is itself a native app that runs at all times (hook H8c makes `runtime::running()` true for it), so "no app is running" would never hold; the balance poll, the `notify` LED pattern and the idle LED animation ask `idle()` instead.
+
+```cpp
+// src/vk/host/home.h
+namespace vk::host { void showShell(); bool idle(); }
+```
 
 So an app that exits, crashes or is force-quit lands on the Receipt launcher, and the upstream screens are reachable only through **System settings**.
 

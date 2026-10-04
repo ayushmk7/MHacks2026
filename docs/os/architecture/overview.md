@@ -55,6 +55,7 @@ src/vk/
     config.h  config.cpp           NVS config store, VK_CONFIG_KEY
     clock.h   clock.cpp            SNTP, time source, clock floor
     serial.h  serial.cpp           USB serial commands: VK_SERIAL_COMMAND, VK_INFO_FIELD, VKHELP, VKINFO (config commands are in config.cpp)
+    fileio.h  fileio.cpp           the one file layer every store uses (stores.md); replaced by an in-memory one in host tests
   wallet/
     pure/                          C99, no Arduino, host-tested
       sol.h sol_b58.c sol_sha256.c sol_tx.c
@@ -66,7 +67,7 @@ src/vk/
     crypto.h  crypto.cpp           Ed25519 verify backend
     signer.h  signer.cpp           domain table, the only caller of identity::sign
     approval.h approval.cpp        approval engine (state machine)
-    lua_wallet.cpp                 badge.wallet core functions, badge.codec
+    lua_wallet.h lua_wallet.cpp    badge.wallet core functions, badge.codec; luaBegin(), the ctx parsing shared by every wallet.begin* binding
   host/
     manifest.h manifest.cpp        app.ini keys we add
     lifecycle.h lifecycle.cpp      VK_ON_APP_STOP, onAppStopping(), luaPaused()
@@ -75,7 +76,7 @@ src/vk/
     native.h native.cpp            native runtime
     router.h router.cpp            ESP-NOW router, VK_ESPNOW_ROUTE
     notify.h notify.cpp            notification inbox
-    home.h home.cpp                home service: keeps the launcher app in front; showShell()
+    home.h home.cpp                home service: keeps the launcher app in front; showShell(), idle()
     lua_registry.h lua_registry.cpp  VK_LUA_FUNCTION, permission filtering
   ui/
     approval_screen.h approval_screen.cpp

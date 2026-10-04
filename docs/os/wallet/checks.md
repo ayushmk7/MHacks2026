@@ -74,6 +74,9 @@ Source source();
 uint32_t now();                 // unix seconds; meaningful only when source() != NONE
 bool ok();                      // source() != NONE
 void raiseTo(uint32_t unix_s);  // from a verified record's issued_at: if unix_s > now(), set the clock; NONE becomes FLOOR
+#if VK_TEST_HOOKS
+void devSet(uint32_t unix_s);   // dev profile only, for the VKTIME command: stores the time and sets the source to SNTP
+#endif
 }
 ```
 

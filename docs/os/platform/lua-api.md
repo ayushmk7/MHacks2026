@@ -44,6 +44,14 @@ Permission `sign`.
 
 `ctx` is a table with any of `record` (registry record bytes), `record_sig` (64 bytes), `req` (REQ frame bytes). Nothing in it is trusted; the firmware verifies each part ([checks](../wallet/checks.md)).
 
+`wallet.begin` is in `wallet/lua_wallet.cpp`; `wallet.begin_solana` and `wallet.begin_bank` are in their feature folders, and features may not include each other. All three parse `ctx` the same way by calling one function, declared in `src/vk/wallet/lua_wallet.h`:
+
+```cpp
+int vk::wallet::luaBegin(lua_State *L, const char *domain, int bytesIndex, int ctxIndex);
+```
+
+`bytesIndex` and `ctxIndex` are the Lua stack positions of the bytes and of the optional `ctx` table. It pushes `true` or `nil, reason` and returns the number of Lua results, so `begin_solana` is `return luaBegin(L, "solana", 1, 2);`.
+
 `begin` reasons: `not_provisioned`, `busy`, `too_long`, `unsupported`, `bad_arg`. (A Lua app without the permission never reaches `begin`: the call raises an error. `denied` exists for native apps.) `poll` reasons: `cancelled`, `timeout`, `sign_failed`, and for a blocked (red) approval the cause: `undecodable`, `unverified`, `revoked`, `expired`, `mismatch`, `bad_proof`, `over_cap`, `no_time`.
 
 ## `badge.wallet`: requests
@@ -78,7 +86,7 @@ Permission `history`. Feature `history`.
 
 | Function | Returns |
 |---|---|
-| `wallet.history([max])` | array, newest first, of `{time, domain, outcome, reason, amount, symbol, name, address, app, sig, dev}`. `outcome` is `"signed"`, `"cancelled"`, `"timeout"`, `"blocked"` or `"failed"`; `sig` is base58 or `nil`; `dev` is true if a dev-build override was used. `max` defaults to 20, limit 64 |
+| `wallet.history([max])` | array, newest first, of `{time, domain, outcome, reason, amount, symbol, name, address, app, sig, dev}`. `outcome` is `"signed"`, `"cancelled"`, `"timeout"`, `"blocked"`, `"failed"` or `"approved"` (a confirmation that is not a signature); `sig` is base58 or `nil`; `dev` is true if a dev-build override was used. `max` defaults to 20, limit 64 |
 
 ## `badge.wallet`: balance
 

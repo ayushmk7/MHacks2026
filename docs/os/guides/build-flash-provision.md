@@ -82,7 +82,7 @@ Two profiles; the only difference is the generated header `src/vk/vk_profile.h`.
 
 | Profile | `VK_PROFILE_DEV` | Has | Flash on |
 |---|---|---|---|
-| `dev` | 1 | "DEV BUILD" banner, hold-to-sign on unverified and no-clock screens, serial test hooks (screen dump, button injection, pairing code) | development badges only |
+| `dev` | 1 | "DEV BUILD" banner, hold-to-sign on unverified screens, serial test hooks (screen dump, button injection, pairing code) | development badges only |
 | `release` | 0 | none of that | judge badges, the demo |
 
 ```bash
@@ -92,7 +92,24 @@ scripts/build.sh dev --upload /dev/cu.usbserial-10     # compile, pre-flash chec
 scripts/build.sh release --upload /dev/cu.usbserial-10
 ```
 
-`scripts/build.sh <dev|release> [--upload <port>]` does, in order: write `src/vk/vk_profile.h`; run `scripts/preflash-check.sh <profile>`; `arduino-cli compile --fqbn "$FQBN" .`; if asked, `arduino-cli upload`. It prints the image size; record it in [testing](../testing/testing.md#measurements).
+`scripts/build.sh <dev|release> [--upload <port>]` does, in order: write `src/vk/vk_profile.h`; run `scripts/preflash-check.sh <profile>`; `arduino-cli compile` with the sketch path and `--build-path` given under [Build directory](#build-directory); if asked, `arduino-cli upload` with `$UPLOAD_FQBN`. It prints the image size; record it in [testing](../testing/testing.md#measurements).
+
+### Build directory
+
+The sketch is compiled in place, from `os/`, with one build directory per profile inside it. Checked on 2026-10-03 with unmodified upstream in `os/` (the repository path contains a space):
+
+```bash
+FW="<repo>/os"                                   # absolute; always quoted, the path has a space
+arduino-cli compile --fqbn "$FQBN" --build-path "$FW/build/<profile>" "$FW"
+arduino-cli upload  --fqbn "$UPLOAD_FQBN" --build-path "$FW/build/<profile>" -p <port> "$FW"
+```
+
+- **Sketch path:** the absolute path of `os/` (`"$FW"`), not `.`, so the script works from any directory. Its main file is `os.ino`.
+- **Build path:** `os/build/dev` for the dev profile and `os/build/release` for the release profile. Two directories, so switching profile never reuses the other profile's objects, and a release upload can never send a dev image. `arduino-cli` accepts a build path inside the sketch folder: it compiles only the sketch's top-level files and `src/`, so `build/` is not picked up.
+- **No symlink is needed.** The space in the repository path breaks neither the compile nor the link; quoting the two paths is enough.
+- **Upload** must use the FQBN with `,UploadSpeed=460800` (`$UPLOAD_FQBN`) and the same `--build-path`, so it sends the image that was just built. At the default 921600 baud the upload fails on this badge's CH340. (The compile line was run as written; the upload line's `--build-path` was checked against `arduino-cli upload --help` only, because the port was in use. The first integrator to flash confirms it.)
+- `build/` is ignored by git (upstream's `os/.gitignore` and the repository's `.gitignore` both list it). Never commit it.
+- Measured: a first build into an empty build directory took 49 s (the ESP32 core itself was already in `arduino-cli`'s cache from WP00; with a cold cache expect about 4 minutes), an unchanged rebuild 14 s. Image: 1,871,707 bytes (11 % of the 16 MB flash), globals 76,984 bytes; identical to the WP00 build from the scratch path.
 
 ## Pre-flash checks
 

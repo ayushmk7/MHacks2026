@@ -23,7 +23,7 @@ Every app Badge OS ships: what it is for, its permissions, its screens and its f
 | Game | `game` | Lua | `sign,net,espnow,storage` |
 | Evil game | `evilgame` | Lua, demo only | `sign,net,espnow,storage` |
 | Duel | `duel` | Lua | `sign,request,net,espnow` |
-| Check test | `checktest` | Lua, dev only (test fixture, WP21) | `sign,net` |
+| Check test | `checktest` | Lua, dev only (test fixture, WP21): loads its case from `case.lua`, pushed with the app by the test | `sign,net,history,storage` |
 | Library test | `vktest` | Lua, dev only (test fixture, WP35) | `sign,net,espnow` |
 | Request test | `reqtest` | Lua, dev only (test fixture, WP23): opens a request and logs RESULT frames | `request,espnow` |
 | Launcher | `launcher` | native | — |

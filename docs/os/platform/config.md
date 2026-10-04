@@ -158,6 +158,10 @@ struct SerialCommand : Registered<SerialCommand> {
 };
 #define VK_SERIAL_COMMAND(ident, name, fn, help) static vk::serial::SerialCommand vk_serial_##ident(name, fn, help)
 bool handleLine(const String &line, const Reply &reply);     // true if it was one of ours
+
+// One name=value pair in the VKINFO reply.
+struct InfoField : Registered<InfoField> { const char *name; String (*fn)(); InfoField(const char *n, String (*f)()) : name(n), fn(f) {} };
+#define VK_INFO_FIELD(ident, name, fn) static vk::serial::InfoField vk_info_##ident(name, fn)
 }
 ```
 

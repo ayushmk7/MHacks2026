@@ -34,7 +34,7 @@ Recipes for every kind of addition and removal: [guides/extending.md](guides/ext
 ## Status
 
 - **Only unmodified upstream has run on a badge so far** (WP00, 2026-10-03: builds, flashes, boots; that badge's key is a software key because its SE050 refused the applet select). Statements about upstream were verified by reading its source at commit `812b8c7`. Statements marked `[UNVERIFIED]` need hardware and always name a fallback.
-- No firmware source is in the repository yet; `os/` is created by work package WP01.
+- `os/` holds unmodified upstream (commit `f7a05d7`), which compiles in place ([build directory](guides/build-flash-provision.md#build-directory)). None of our own firmware source exists yet; WP01 adds `src/vk/` and the hooks.
 - Host-tested starting code exists in [`reference/code/`](reference/code/): the Solana message decoder and builder, base58, SHA-256, their test and vectors. From `docs/os/reference/code/`:
   ```bash
   cc -std=c99 -Wall -Wextra -Wpedantic -O2 -DSOL_HOST_SHA256 \

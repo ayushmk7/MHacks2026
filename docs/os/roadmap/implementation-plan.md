@@ -34,7 +34,7 @@
 Conditions the specification implies but that are easy to miss. Each has a test in the package that owns the code.
 
 1. **Slow crypto inside a Lua callback.** `begin_solana` with a full `ctx` verifies a record and a request (about a second each with TweetNaCl) inside one 250 ms callback. Expected: the binding extends the deadline and the app survives. Test in WP21 (device: call with full ctx, app still running afterwards).
-2. **App stopped while an approval is open.** Force-quit (hold CANCEL) or a pushed `STOP` during the approval. Expected: the approval closes, no result lingers, the next `begin` from another app is not `busy`. Test in WP12 (host: `appStopping`; device: `STOP` over serial while `modal` is true).
+2. **App stopped while an approval is open.** Hook H4 skips `routeButtons()` and defers launch and stop requests while the approval is active, so a force-quit (hold CANCEL) cannot happen and a pushed `RUN` or `STOP` is applied on the first pass after the approval closes. The only stop during an approval is a pushed `DEL <running id>` (upstream calls `runtime::stop()` directly). Expected: the approval closes, no result lingers, the next `begin` from another app is not `busy`. Test in WP12 (host: `appStopping`; device: `DEL` of the running app while `modal` is true closes the approval; an app stopped with an un-polled result leaves the next `begin` not `busy`).
 3. **Storage failure.** `/vk/` missing on first boot, filesystem full, or NVS write refused. Expected: directory is created; a failed history write never blocks or fails a signature; `VKSET` answers `ERR`. Tests in WP10 (config) and WP24 (history with a failing file layer on the host).
 4. **No network.** Wi-Fi absent at boot or lost mid-flow. Expected: boot does not wait for SNTP; `vk.*` network helpers return `nil, message`; the balance service skips; the pay flow ends in `failed` with a reason, never hangs. Tests in WP20, WP33, WP35.
 5. **Registration dropped by the linker.** A feature's static registrar is not linked, so the feature silently does nothing. Expected: `VKINFO`/`VKHELP` list what is registered and a boot log line prints the count of each registry. Test in WP01 (the count line is asserted by T-BOOT1 in every later package).
@@ -79,6 +79,15 @@ Conditions the specification implies but that are easy to miss. Each has a test 
 | 52 | Release: four badges, release gate | all shipped | yes (4, hands) | — |
 | 54 | Bank rail (optional) | 23 | yes (2) | — |
 
+**Corrections to the dependency table** (from the [execution plan](execution-plan.md), section 1; where they differ from the table or from a package below, these win):
+
+- WP01 needs WP02's headers: `core/config.h` uses `vk_token_t` and `VK_MAX_TOKENS`, and `signer.h` uses `vk_presence_t`, all from `pure/vk_checks.h`, which includes `sol.h`, `vk_record.h` and `vk_frames.h`. WP01 and WP02 are written in one batch and integrated together.
+- WP10, WP11 and WP12 are listed as a chain. With the headers of the execution plan's section 4 frozen they are written in parallel and integrated together.
+- WP13's step "`vk::wallet::begin` now opens the approval" edits `signer.cpp`, a WP11 file. It moves to WP11.
+- WP23 lists WP21 and WP34 lists WP32 only for their gates and for `notify::post`, which is a stub from WP01. Neither is needed to compile.
+- WP36 does not use WP24.
+- "One branch per work package" is replaced by one branch (`badge-os`) and one commit per batch by the integrator.
+
 File ownership is disjoint between packages that may run in parallel: each package creates or fills only the files listed under **Files**. Stubs created in WP01 are filled in by the package that owns that file.
 
 If time runs out, cut in this order: WP54, WP45, WP43 + WP34, WP36, WP32 inbox (keep the status item), WP33. Gates 1 and 2 are never cut.
@@ -108,15 +117,14 @@ If time runs out, cut in this order: WP54, WP45, WP43 + WP34, WP36, WP32 inbox (
 **Read:** [overview](../architecture/overview.md), [upstream-hooks](../architecture/upstream-hooks.md), [upstream-baseline](../architecture/upstream-baseline.md).
 **Files:**
 - Create: `os/` (copy of upstream), `UPSTREAM-HOOKS.md`, `.gitignore` entry for `src/vk/vk_profile.h`
-- Create: `src/vk/vk.h`, `vk.cpp`, `vk_build.h`, `core/registry.h`, `core/service.h`
-- Create complete: `core/serial.{h,cpp}` (command registry, info-field registry, `handleLine`, `VKHELP`, `VKINFO` with fields `profile` and `api`), `host/lifecycle.{h,cpp}` (`VK_ON_APP_STOP`, `onAppStopping`; `luaPaused()` returns `vk::modalActive()`), `host/lua_registry.{h,cpp}` (everything except permission filtering, which WP30 adds; removes `loadfile`/`dofile`), `ui/statusbar.{h,cpp}` (registry, `draw`, `requestShellRepaint`, `consumeShellRepaint`), `ui/theme.{h,cpp}` (token enum, registry, the default theme `solana` with upstream's colours, `color()`)
-- Create as stubs: full headers exactly as in the spec, with bodies that do nothing, to be filled by the named package: `core/config.{h,cpp}` (WP10; registry declared, accessors return defaults, `provisioned()` false), `core/clock.{h,cpp}` (WP20; source NONE), `host/router.{h,cpp}` (WP22), `host/permissions.{h,cpp}` (WP30; `granted()` true, `preLaunch()` true), `host/manifest.h`, `host/consent.h` (WP30; headers only), `host/native.{h,cpp}` (WP31), `host/notify.{h,cpp}` (WP32; `post()` drops, `count()` 0), `sdk/badge_sdk.hpp` (WP31; complete header, since it only declares), `ui/leds.{h,cpp}` (WP12), `wallet/signer.{h,cpp}`, `wallet/reason.h` (WP11), `wallet/approval.{h,cpp}` (WP12), `features/devtools/devtools.{h,cpp}` (WP03; a no-op `vk_dev_apply_injected_buttons` so hook H17 links)
+- Create: every header in the table of the [execution plan](execution-plan.md), section 4 ("Stub contract"), with its `.cpp` where the table gives a stub body. That table replaces the list that stood here: it names each header, the spec block it is copied from, the declarations added because no document had them, and the stub body until the owning package fills it. Beyond the earlier list it includes `core/fileio.{h,cpp}`, `wallet/signer_internal.h`, `wallet/crypto.h`, `ui/receipt.h`, `ui/approval_screen.h`, `ui/boot_screen.cpp` (stub of `vk::ui::bootScreen`), `host/home.{h,cpp}`, `vk::clock::devSet` and the `InfoField` registry behind `VK_INFO_FIELD`. A later package that is listed as creating one of these headers fills it instead.
+- Needs from WP02, written in the same batch: all of `src/vk/wallet/pure/` (`sol.h`, `vk_reason.h`, `vk_record.h`, `vk_frames.h`, `vk_checks.h`). `core/config.h` and `wallet/signer.h` include `pure/vk_checks.h`; `wallet/reason.h` includes `pure/vk_reason.h`.
 - Create: `scripts/build.sh`, `scripts/preflash-check.sh` (checks 1–4 and 6; check 5 is added when `test/host/run.sh` lands)
 - Modify: the upstream files named in hooks H1–H17, H19 and H20 (H18 only in WP50)
 
 **Interfaces produced:** `vk::begin()`, `vk::update()`, `vk::modalActive()`, `vk::modalUpdate()`; `vk::Registered<T>`; `VK_SERVICE`; `vk::serial::handleLine`, `VK_SERIAL_COMMAND`; `VK_LUA_FUNCTION`, `vk::lua::open`; `VK_STATUS_ITEM`, `vk::ui::statusbar::draw`; the stub signatures exactly as in the spec so later packages only replace bodies.
 
-Stub behaviour (must equal upstream behaviour): `modalActive()` false; `router::install()` installs `espnow_mgr::onReceive([](const uint8_t *m, const uint8_t *d, size_t n, int8_t r) { if (runtime::running()) runtime::dispatchEspnow(m, d, n, r); })`; `preLaunch` returns true; `native::*` report no apps; `leds::bootProgress` does nothing; `signStoreRegistration(message)` returns `identity::signBase64(message)` from inside `signer.cpp`; `onAppStopping` calls its (so far empty) listener list. `reason.h` needs `pure/vk_reason.h`: WP01 creates that one pure header and its `.c` (the enum and names from the signing document); WP02 owns the rest of `pure/`.
+Stub behaviour (must equal upstream behaviour) is the last column of that table. In short: `modalActive()` is false because `approval::active()` is; `router::install()` installs `espnow_mgr::onReceive([](const uint8_t *m, const uint8_t *d, size_t n, int8_t r) { if (runtime::running()) runtime::dispatchEspnow(m, d, n, r); })`; `preLaunch` returns true; `native::*` report no apps; `leds::bootProgress` does nothing; `bootScreen` returns false; `signStoreRegistration(message)` returns `identity::signBase64(message)` from inside `signer.cpp`; `onAppStopping` calls its (so far empty) listener list.
 
 - [ ] Copy upstream into `os/`; commit it unmodified first (one commit, so the hooks are a reviewable diff).
 - [ ] Write `registry.h` and `service.h` exactly as in the overview. Write `vk.cpp`: `begin()` runs every service's `begin`, then logs `[vk] registries: services=<n> commands=<n> lua=<n> status=<n> domains=<n> routes=<n> permissions=<n> patterns=<n> native=<n> config=<n>`; `update()` runs every service's `update`.
@@ -133,7 +141,7 @@ Stub behaviour (must equal upstream behaviour): `modalActive()` false; `router::
 **Goal:** every host-testable module exists and is green, with no badge.
 **Read:** [solana-payments](../wallet/solana-payments.md), [checks](../wallet/checks.md), [protocol](../protocol/espnow.md) (Frames, Codec), [signing](../wallet/signing.md) (Reason codes), [testing](../testing/testing.md#host-tests).
 **Files:**
-- Create: `src/vk/wallet/pure/sol.h`, `sol_b58.c`, `sol_sha256.c`, `sol_tx.c` (copied from `docs/os/reference/code/`, then changed), `vk_record.{h,c}`, `vk_frames.{h,c}`, `vk_checks.{h,c}` (`vk_reason.{h,c}` already exists from WP01; if WP02 runs first it creates it and WP01 keeps it)
+- Create: `src/vk/wallet/pure/sol.h`, `sol_b58.c`, `sol_sha256.c`, `sol_tx.c` (copied from `docs/os/reference/code/`, then changed), `vk_record.{h,c}`, `vk_frames.{h,c}`, `vk_reason.{h,c}`, `vk_checks.{h,c}` (WP02 owns all of `pure/`; WP01's headers include these, so the two packages are written in one batch)
 - Create: `test/host/run.sh`, `test/host/shim/` (the `Arduino.h`, file and NVS stand-ins described in the testing document), `test_sol.c`, `test_record.c`, `test_frames.c`, `test_checks.c`, `vectors.mjs`, `vectors-to-h.mjs`, `vectors.json`, `vectors.h`, `host_ed25519.c` (wraps upstream `tweetnacl.c` with a stub `randombytes`)
 
 **Interfaces produced:** every declaration in the three spec documents' C blocks, unchanged.
@@ -181,7 +189,7 @@ Stub behaviour (must equal upstream behaviour): `modalActive()` false; `router::
 - [ ] NVS layer (`Preferences`, namespace `vkconf`); `set` returns `INVALID` if the NVS write fails (review focus 3).
 - [ ] Commands, registered from `config.cpp`, and info fields `provisioned`, `wifi`. A secure change on a provisioned badge calls `confirmChange`; while that pointer is null (until WP12) it answers `ERR unavailable`. No edit to this file is needed when WP12 lands.
 - [ ] `vkdev.py provision` as specified.
-- [ ] Device: T-CFG1, T-CFG3; T-BOOT2.
+- [ ] Device: T-CFG1, T-CFG3; T-BOOT2. `tokens` and `issuer_key` are registered by `solana_pay` (WP13), so until then `VKSET tokens garbage` answers `ERR unknown_key`: at WP10, T-CFG3 runs against `rpc_url` (`VKSET rpc_url x` → `ERR invalid`); from WP13 on it runs against `tokens`. `t_cfg.py` reads `VKKEYS` and picks accordingly.
 
 **Done when:** a badge can be provisioned with one command and the values survive a reboot.
 
@@ -244,8 +252,8 @@ Stub behaviour (must equal upstream behaviour): `modalActive()` false; `router::
 ### WP21: Record checks wired into the approval
 
 **Read:** [checks](../wallet/checks.md) whole.
-**Files:** Modify `features/solana_pay/domain_solana.cpp`, `lua_solana.cpp` (`check_record`); create `apps/checktest/` (dev-only test app that calls `begin_solana` with prepared `ctx` variants fetched from the laptop), `test/device/t_chk.py`.
-**Needs:** the backend's `GET /registry/<address>` ([backend](../integration/backend.md#needed-routes)). Until it exists, `t_chk.py` serves records itself: a 40-line Python HTTP server in the test that signs records with the test issuer key from `vectors.json`, with the badge provisioned to that issuer.
+**Files:** Modify `features/solana_pay/domain_solana.cpp`, `lua_solana.cpp` (`check_record`); create `apps/checktest/` (dev-only test app, permissions `sign,net,history,storage`, that calls `begin_solana` with the message and `ctx` of one case, loaded from `case.lua`, which the test pushes with the app), `test/device/t_chk.py`.
+**Needs:** no network. `t_chk.py` builds each case on the laptop (message, record, request), signing with the test issuer and device keys from `vectors.json`, with the badge provisioned to that issuer, and pushes it as `case.lua`. The backend's `GET /registry/<address>` ([backend](../integration/backend.md#needed-routes)) is needed by the Pay app, not by this package.
 
 - [ ] Record verification, `clock::raiseTo`, and the full verdict mapping. A supplied request is verified here too (checks 11 and 12 do not need the `requests` feature); only presence is absent until WP23, so the best verdict in this package is amber.
 - [ ] Device: T-CHK2 to T-CHK9; the app is still running after a `begin_solana` with a full `ctx` (review focus 1).

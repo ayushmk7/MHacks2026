@@ -73,6 +73,7 @@ struct Permission : Registered<Permission> {
 
 bool granted(const char *permission);                  // for the active app; true when no app is active (firmware callers)
 bool preLaunch(const String &appId, String &error);    // hook H8a
+void promotePending();                                 // pending grant slot -> active; called by vk::lua::open and native::start
 }
 ```
 
@@ -110,6 +111,18 @@ A permission marked "consent" needs the user's approval the first time an app th
 - Approved → the entry is saved and the app is launched with `runtime::requestLaunch`. Rejected → nothing happens.
 
 This covers every install path (push, serial, BLE, store) with no change to any of them. Native apps skip consent: they were reviewed and compiled in.
+
+```cpp
+// src/vk/host/consent.h
+namespace vk::host::consent {
+uint32_t hashPermissions(const String &permissions);   // FNV-1a of the sorted, comma-joined list: order in app.ini does not matter
+bool has(const String &appId, uint32_t hash);
+bool save(const String &appId, uint32_t hash);
+void eraseAll();                                       // the VK_ON_RESET listener
+size_t count();
+bool at(size_t index, String &appIdOut, uint32_t &hashOut);   // count() and at() let the Wallet app list stored consent
+}
+```
 
 ## Lifecycle events
 
@@ -192,7 +205,7 @@ void clear();
 ```
 
 - Eight notes, in RAM, oldest dropped. Nothing is persisted.
-- Shown by: the `inbox` status item (`[n]` in the bar), the `notify` LED pattern while a note is waiting and no app is running, and the **Inbox** native app, which lists the notes; SELECT launches `app_id`, RIGHT dismisses.
+- Shown by: the `inbox` status item (`[n]` in the bar), the `notify` LED pattern while a note is waiting and the badge is idle (`vk::host::idle()`, [ui](../ui/ui.md#launcher-and-settings)), and the **Inbox** native app, which lists the notes; SELECT launches `app_id`, RIGHT dismisses.
 - Posted by firmware features only (a payment request seen, a contact saved). Apps cannot post.
 
 ## System apps
