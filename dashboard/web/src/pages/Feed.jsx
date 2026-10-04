@@ -1,5 +1,5 @@
-// Feed: stat tiles, the block-chain strip (one payment = one block), block detail, Capital One settlements, badge decisions,
-// minute bars, Tiger Data card, ledger. Settlements join the chain rows by txSig.
+// Feed: stat tiles, the block-chain strip (one payment = one block), block detail, Capital One activity, badge decisions,
+// minute bars, Tiger Data card, ledger. Settlements (when a payee settles to Capital One) join the chain rows by txSig.
 import { useLayoutEffect, useRef, useState } from 'react';
 import { useApi, useData, useGaps, useMode, useStatus } from '../data.jsx';
 import { Amount, Bars, Empty, ExplorerLink, GapCard, Page, Pubkey, Skeleton, StatTile, StatusDot, ago, fmt, notBuilt, short, usd, useCopy, useNow } from '../ui.jsx';
@@ -215,38 +215,61 @@ function Approvals({ symbol }) {
   );
 }
 
-function Settlements({ st }) {
-  const rows = st.data?.settlements ?? [];
-  const count = k => rows.filter(s => s.status === k).length;
-  if (notBuilt(st.error) && !st.data) return (
-    <section className="card" aria-label="Capital One settlements">
-      <div className="card-head"><h2>Capital One settlements</h2></div>
-      <p className="muted">This backend has no <code>/api/settlements</code> yet. Payments to payees that settle to Capital One show their dollar deposit here once it ships.</p>
-    </section>
-  );
+// Capital One's three roles, as one timeline: it verifies who can be paid (and revokes), funds badges (top-ups),
+// and, for payees that settle to the bank, deposits dollars. Built from data the backend already serves.
+const C1 = {
+  verify: { glyph: '✓', label: 'Verified', cls: 'chip--ok' },
+  revoke: { glyph: '⊘', label: 'Revoked', cls: 'chip--bad' },
+  topup: { glyph: '$', label: 'Funded', cls: '' },
+  settle: { glyph: '→', label: 'Settled', cls: 'chip--ok' },
+};
+const TOPUP_STATE = { pending: 'withdrawing…', done: 'done', failed: 'failed' };
+
+function CapitalOne({ st, symbol }) {
+  const tp = useData('topups', { limit: 50 }), atts = useData('attestations'), badges = useData('badges');
+  const labelOf = pk => badges.data?.badges.find(b => b.pubkey === pk)?.label ?? short(pk);
+  const events = [];
+  for (const a of atts.data?.attestations ?? []) {
+    if (a.issuedAt) events.push({ key: `v${a.subject}`, time: a.issuedAt, kind: 'verify', who: a.name,
+      detail: `${a.kind ?? 'payee'} · ${a.settleMode === 'bank' ? 'settles to Capital One' : `receives ${symbol}`}${a.status === 'expired' ? ' · expired' : ''}`, sig: a.issuedSig });
+    if (a.revokedAt && a.status === 'revoked') events.push({ key: `r${a.subject}`, time: a.revokedAt, kind: 'revoke', who: a.name,
+      detail: 'payments to it now show red on every badge', sig: a.revokedSig });
+  }
+  for (const t of tp.data?.topups ?? []) events.push({ key: `t${t.id}`, time: t.time, kind: 'topup', who: t.label ?? labelOf(t.pubkey),
+    detail: `${usd(t.amount * 100)} withdrawn → ${fmt(t.amount)} ${symbol} · ${TOPUP_STATE[t.status] ?? t.status}${t.reason ? ` (${t.reason.replace(/_/g, ' ')})` : ''}`,
+    amount: t.amount, bad: t.status === 'failed', sig: t.hackSig, ref: t.nessieWithdrawalId });
+  for (const x of st.data?.settlements ?? []) events.push({ key: `s${x.txSig}`, time: x.time, kind: 'settle', who: nameOf(x.payee ?? {}),
+    detail: `${usd(Math.round((x.amount ?? 0) * 100))} deposited · ${x.status}`, amount: x.amount, bad: x.status === 'failed', sig: x.txSig, ref: x.nessieDepositId });
+  events.sort((a, b) => b.time.localeCompare(a.time));
+
+  const verified = (atts.data?.attestations ?? []).filter(a => a.status === 'verified').length;
+  const funded = (tp.data?.topups ?? []).filter(t => t.status === 'done').reduce((n, t) => n + t.amount, 0);
+  const loading = atts.loading && tp.loading;
   return (
-    <section className="card" aria-label="Capital One settlements">
+    <section className="card" aria-label="Capital One activity">
       <div className="card-head">
-        <h2>Capital One settlements</h2>
-        <span className="muted">{st.loading ? '' : `${fmt(count('settled'))} settled · ${fmt(count('pending'))} pending · ${fmt(count('failed'))} failed · ${fmt(count('skipped'))} skipped`}</span>
+        <h2>Capital One</h2>
+        <span className="muted">{loading ? '' : `${fmt(verified)} verified payee${verified === 1 ? '' : 's'} · ${usd(funded * 100)} funded to badges`}</span>
       </div>
-      {st.loading ? <Skeleton variant="row" lines={4} />
-        : !rows.length ? (st.error ? <Empty icon="×" title={st.error.code === 'offline' ? 'Backend offline' : 'Settlements unavailable'} hint={st.error.message} />
-          : <Empty icon="∅" title="No settlements yet" hint="A payment to a payee that settles to Capital One lands in the bank's settlement wallet, then is deposited as dollars." />)
+      <p className="muted small">The bank decides who can be paid: only Capital One account holders are verified, and a revocation turns them red on every badge. Badges are funded from their Capital One accounts.</p>
+      {loading ? <Skeleton variant="row" lines={4} />
+        : !events.length ? <Empty icon="∅" title="No Capital One activity yet" hint="Verify a payee on the Issuer page, or top up a badge from the Badges page." />
         : (
           <div className="table-wrap">
             <table className="table">
-              <thead><tr><th>Time</th><th>Payee</th><th>Status</th><th className="r">Amount</th><th>Nessie deposit</th><th className="r">Attempts</th><th>Payment</th></tr></thead>
+              <thead><tr><th>Time</th><th>Capital One</th><th>Who</th><th>Details</th><th>Links</th></tr></thead>
               <tbody>
-                {rows.slice(0, 12).map(s => (
-                  <tr key={s.txSig}>
-                    <td className="num" title={s.time}>{clock(s.time)}</td>
-                    <td>{nameOf(s.payee ?? {})}</td>
-                    <td><SettleChip s={s} />{s.reason && <><br /><span className={`small ${s.status === 'failed' ? 't-bad' : 'muted'}`} title={s.reason}>{settleReason(s.reason)}</span></>}</td>
-                    <td className="r num">{usd(Math.round((s.amount ?? 0) * 100))}</td>
-                    <td className="hash">{s.nessieDepositId ? <span title={s.nessieDepositId}>{short(s.nessieDepositId, 6)}</span> : '—'}</td>
-                    <td className="r num">{s.attempts ?? '—'}</td>
-                    <td><ExplorerLink sig={s.txSig} /></td>
+                {events.slice(0, 12).map(e => (
+                  <tr key={e.key}>
+                    <td className="num" title={e.time}>{clock(e.time)}</td>
+                    <td><span className={`chip ${C1[e.kind].cls}`}><span aria-hidden="true">{C1[e.kind].glyph} </span>{C1[e.kind].label}</span></td>
+                    <td>{e.who}</td>
+                    <td className={e.bad ? 't-bad' : 'muted'}>{e.detail}</td>
+                    <td>
+                      {e.sig ? <ExplorerLink sig={e.sig}>tx</ExplorerLink> : null}
+                      {e.ref && <span className="hash small" title={`Nessie id ${e.ref}`}>{e.sig ? ' · ' : ''}nessie {short(e.ref, 4)}</span>}
+                      {!e.sig && !e.ref && <span className="hash">—</span>}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -356,7 +379,7 @@ export default function Feed() {
         {(pay.loading || rows.length > 0) && <Detail p={sel} now={now} onClose={() => setSel(null)} settlement={sel && settled.get(sel.signature)} />}
       </section>
 
-      <Settlements st={st} />
+      <CapitalOne st={st} symbol={symbol} />
 
       <Approvals symbol={symbol} />
 
@@ -380,7 +403,7 @@ export default function Feed() {
           {pay.loading ? <Skeleton variant="row" lines={6} /> : (
             <div className="table-wrap">
               <table className="table">
-                <thead><tr><th>Time</th><th>Slot</th><th>From</th><th>To</th><th>Status</th>{st.data && <th>Capital One</th>}<th className="r">Amount</th><th>Signature</th></tr></thead>
+                <thead><tr><th>Time</th><th>Slot</th><th>From</th><th>To</th><th>Status</th>{settled.size > 0 && <th>Capital One</th>}<th className="r">Amount</th><th>Signature</th></tr></thead>
                 <tbody>
                   {ledger.map(p => (
                     <tr key={p.signature} className={sel?.signature === p.signature ? 'is-sel' : undefined}>
@@ -389,7 +412,7 @@ export default function Feed() {
                       <td>{nameOf(p.payer)}</td>
                       <td>{nameOf(p.payee)}</td>
                       <td>{p.attackId ? <StatusDot status="signed" label="tampered" /> : <StatusDot status={p.payee.status} />}{p.source !== 'chain' && <span className="b-tag"> ~{p.source}</span>}</td>
-                      {st.data && <td>{settled.has(p.signature) ? <SettleChip s={settled.get(p.signature)} /> : <span className="muted">—</span>}</td>}
+                      {settled.size > 0 && <td>{settled.has(p.signature) ? <SettleChip s={settled.get(p.signature)} /> : <span className="muted">—</span>}</td>}
                       <td className="r"><Amount raw={p.amountRaw} decimals={p.decimals} symbol={p.symbol} /></td>
                       <td><button type="button" className="hash copy" onClick={() => inspect(p)} aria-label={`Inspect transaction ${short(p.signature, 6)}`}>{short(p.signature, 6)}</button></td>
                     </tr>
