@@ -1,10 +1,10 @@
-// Feed: stat tiles, the block-chain strip (one payment = one block), block detail, minute bars, Tiger Data card, ledger.
+// Feed: stat tiles, the block-chain strip (one payment = one block), block detail, bank-rail approvals, minute bars, Tiger Data card, ledger.
 import { useLayoutEffect, useRef, useState } from 'react';
 import { useApi, useData, useGaps, useMode, useStatus } from '../data.jsx';
-import { Amount, Bars, Empty, ExplorerLink, GapCard, Page, Pubkey, Skeleton, StatTile, StatusDot, ago, fmt, short, useCopy, useNow } from '../ui.jsx';
+import { Amount, Bars, Empty, ExplorerLink, GapCard, Page, Pubkey, Skeleton, StatTile, StatusDot, ago, fmt, notBuilt, short, usd, useCopy, useNow } from '../ui.jsx';
 
 const GLYPH = { verified: '✓', unverified: '?', revoked: '⊘' };
-const PAGE = 40, RAIL = 30;
+const PAGE = 40, RAIL_LEN = 30;
 const nameOf = party => party.name || party.label || short(party.pubkey);
 const kindOf = p => (p.attackId ? 'attack' : p.payee.status);
 const bytes = b => (b == null ? '—' : b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.round(b / 1024)} kB`);
@@ -37,7 +37,7 @@ function Block({ p, now, selected, anim, onSelect }) {
 function Chain({ rows, sel, onSelect, now, listening }) {
   const rail = useRef(null), head = useRef(rows[0]?.signature);
   const [scrolled, setScrolled] = useState(false), [unseen, setUnseen] = useState(0);
-  const blocks = rows.slice(0, RAIL);
+  const blocks = rows.slice(0, RAIL_LEN);
   // How each block entered: a number = present at mount (staggered rise), 'new' = slid in at the head,
   // 'quiet' = arrived while the reader was scrolled away. ponytail: this map only grows; fine for one session.
   const seen = useRef(null);
@@ -126,6 +126,79 @@ function Detail({ p, now, onClose }) {
   );
 }
 
+// Why a payment was refused, in words a judge reads from 2 m. Server check-chain reasons (P2-U 3.1) and badge-side ones (00 4).
+const REASON = {
+  replay: 'Replay: this approval was already used', bad_sig: 'Bad signature on the approval', revoked: 'Payee attestation revoked',
+  expired: 'Payee attestation expired', payee_mismatch: 'Payee does not match the attested record', bad_proof: 'Presence proof failed (payee not in the room)',
+  amount_not_whole_dollars: 'Amount is not whole dollars', not_enrolled: 'Payer is not enrolled at the bank', stale: 'Approval too old (stale)',
+  unverified: 'Payee not verified', mismatch: 'Amount or payee mismatch', cancelled: 'Cancelled on the badge', timeout: 'Timed out on the badge',
+  undecodable: 'Request could not be decoded', unverified_hop: 'Unverified relay on the route', route_dropped: 'Route dropped by a relay',
+  nessie_error: 'Bank call failed', insufficient_funds: 'Insufficient funds',
+};
+const reasonText = r => (r ? REASON[r] ?? r.replace(/_/g, ' ') : null);
+const RAIL = { nessie: 'NESSIE', solana: 'SOLANA' };
+// HACK has 2 decimals, so on the Solana rail amountCents is raw base units: 1200 -> 12 HACK.
+const money = (a, symbol) => (a.rail === 'solana' ? `${fmt(a.amountCents / 100)} ${symbol}` : usd(a.amountCents));
+// nessieIds: the contract names it but not its shape; take an array, an object of ids or one string.
+const idsOf = v => (v == null ? [] : Array.isArray(v) ? v : typeof v === 'object' ? Object.values(v) : [v]).filter(Boolean).map(String);
+
+function Approvals({ symbol }) {
+  const ap = useData('approvals', { limit: 50 }), badges = useData('badges');
+  const rows = ap.data?.approvals ?? [];
+  const labelOf = pk => badges.data?.badges.find(b => b.pubkey === pk)?.label ?? short(pk);
+  const blocked = rows.filter(a => a.status === 'blocked' || a.status === 'failed').length;
+  // An older backend has no /api/approvals yet: say so quietly instead of raising an error card.
+  if (notBuilt(ap.error) && !ap.data) return (
+    <section className="card" aria-label="Bank rail approvals">
+      <div className="card-head"><h2>Approvals</h2><span className="chip">bank rail</span></div>
+      <p className="muted">This backend has no <code>/api/approvals</code> yet. Bank-rail payments and blocked attempts appear here once it ships.</p>
+    </section>
+  );
+  return (
+    <section className="card" aria-label="Bank rail approvals">
+      <div className="card-head">
+        <h2>Approvals</h2>
+        <span className="muted">{ap.loading ? '' : `${fmt(rows.length - blocked)} through · ${fmt(blocked)} blocked`}</span>
+      </div>
+      {ap.loading ? <Skeleton variant="row" lines={5} />
+        : !rows.length ? (ap.error ? <Empty icon="×" title={ap.error.code === 'offline' ? 'Backend offline' : 'Approvals unavailable'} hint={ap.error.message} />
+          : <Empty icon="∅" title="No approvals yet" hint="Every bank-rail payment, and every attempt the backend or a badge refused, lands here." />)
+        : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead><tr><th>Time</th><th>Rail</th><th>From</th><th>To</th><th>Status</th><th className="r">Amount</th><th>Links</th></tr></thead>
+              <tbody>
+                {rows.map(a => {
+                  const ids = idsOf(a.nessieIds), memo = a.links?.memo;
+                  return (
+                    <tr key={a.id}>
+                      <td className="num" title={a.time}>{clock(a.time)}</td>
+                      <td><span className="chip">{RAIL[a.rail] ?? a.rail ?? '—'}</span></td>
+                      <td>{labelOf(a.payer?.pubkey)}</td>
+                      <td>{a.payee?.name ?? <span className="muted">{labelOf(a.payee?.pubkey)} · unverified</span>}</td>
+                      <td>
+                        <StatusDot status={a.status} />
+                        {a.source === 'badge_report' && <> <span className="chip" title="Refused on the badge and reported by it (unauthenticated)">reported by badge</span></>}
+                        {a.reason && <><br /><span className={`small ${a.status === 'blocked' || a.status === 'failed' ? 't-bad' : 'muted'}`} title={a.reason}>{reasonText(a.reason)}</span></>}
+                      </td>
+                      <td className="r num">{money(a, symbol)}</td>
+                      <td>
+                        {memo ? <a className="ext-link" href={memo} target="_blank" rel="noreferrer" title={a.memoSig ?? memo}>memo<span aria-hidden="true"> ↗</span></a>
+                          : a.memoSig ? <ExplorerLink sig={a.memoSig}>memo</ExplorerLink> : null}
+                        {ids.map((id, i) => <span key={id} className="hash small" title={`Nessie id ${id}`}>{i || memo || a.memoSig ? ' · ' : ''}nessie {short(id, 4)}</span>)}
+                        {!memo && !a.memoSig && !ids.length && <span className="hash">—</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+    </section>
+  );
+}
+
 function TigerCard({ db }) {
   const now = useNow(5000), d = db.data;
   return (
@@ -187,7 +260,7 @@ export default function Feed() {
   const inspect = p => { setSel(p); detail.current?.scrollIntoView({ block: 'nearest' }); };
 
   return (
-    <Page title="Payments" subtitle={`Every ${symbol} transfer is a block. The newest joins the chain at the head.`}>
+    <Page title="Payments" subtitle={`Every ${symbol} transfer is a block. Bank-rail approvals and blocked attempts are listed under the chain.`}>
       <section className="tiles" aria-label="Last 24 hours">
         {stats.loading ? [0, 1, 2, 3].map(i => <Skeleton key={i} variant="card" />) : <>
           <StatTile label="Payments · 24h" value={fmt(s?.payments)} sub={!s ? 'unavailable' : s.seedRows ? `includes ${fmt(s.seedRows)} seeded rows` : 'confirmed on devnet'} />
@@ -223,6 +296,8 @@ export default function Feed() {
       <section ref={detail} className="detail-slot" aria-label="Selected block" aria-live="polite">
         {(pay.loading || rows.length > 0) && <Detail p={sel} now={now} onClose={() => setSel(null)} />}
       </section>
+
+      <Approvals symbol={symbol} />
 
       <section className="split">
         <div className="card">

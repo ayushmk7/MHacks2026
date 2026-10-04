@@ -7,6 +7,7 @@ import { rpc, rpcState, loadOrCreateSigner, errMsg } from './solana.js';
 import { ingestState, startIngest } from './ingest.js';
 import { registryState, initRegistry, syncAttestations } from './registry.js';
 import { startHttp, broadcast, badgeListener } from './http.js';
+import { getApproval } from './bank.js';
 
 const log = tag => err => console.error(`[${tag}]`, errMsg(err));
 const statusChanged = () => broadcast({ type: 'status', data: {} });
@@ -67,8 +68,12 @@ async function tick() {
 tick();   // not awaited: the API must come up (and report gaps) even while the first RPC round is slow
 setInterval(tick, 30_000);
 
-// 7. Postgres NOTIFY -> SSE. Payments are re-read so the SSE payload is the REST shape.
+// 7. Postgres NOTIFY -> SSE. Payments and approvals are re-read so the SSE payload is the REST shape.
 listen(async ({ type, id }) => {
+  if (type === 'approval') {
+    const approval = await getApproval(id).catch(log('db'));
+    return approval && broadcast({ type: 'approval', data: approval });
+  }
   if (type !== 'payment') return broadcast({ type, data: { id } });
   const row = (await q(Q.paymentBySig, [id]).catch(log('db')))?.rows[0];
   if (row) broadcast({ type: 'payment', data: toPayment(row) });

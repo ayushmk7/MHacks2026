@@ -8,6 +8,10 @@ export const explorerAddr = addr => `${EXPLORER}/address/${addr}?cluster=devnet`
 
 export const short = (s, n = 4) => (!s ? '—' : s.length <= n * 2 + 1 ? s : `${s.slice(0, n)}…${s.slice(-n)}`);
 export const fmt = (n, digits = 2) => (n == null ? '—' : Number(n).toLocaleString('en-US', { maximumFractionDigits: digits }));
+/** Integer cents -> "$1,234.50". null -> "—". */
+export const usd = cents => (cents == null ? '—' : (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' }));
+/** True when the backend answered "no such route": an endpoint another branch has not shipped yet, not an outage. */
+export const notBuilt = err => err?.code === 'not_found' || err?.status === 404;
 export function ago(iso, now = Date.now()) {
   if (!iso) return '—';
   const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
@@ -91,10 +95,10 @@ export function Pubkey({ value, link, chars = 4 }) {
 
 // rejected = the human caught the tampered charge (the defence held) = green. signed = the tampered transfer landed = red.
 const TONE = {
-  verified: 'ok', live: 'ok', rejected: 'ok', unverified: 'warn', pending: 'warn', reconnecting: 'warn', backfilling: 'warn',
-  revoked: 'bad', signed: 'bad', offline: 'bad', expired: 'mute', idle: 'mute',
+  verified: 'ok', live: 'ok', rejected: 'ok', approved: 'ok', unverified: 'warn', pending: 'warn', reconnecting: 'warn', backfilling: 'warn',
+  revoked: 'bad', signed: 'bad', offline: 'bad', blocked: 'bad', failed: 'bad', expired: 'mute', idle: 'mute',
 };
-/** status: verified | unverified | revoked | pending | signed | rejected | expired (also live | reconnecting | idle | offline). */
+/** status: verified | unverified | revoked | pending | signed | rejected | expired | approved | blocked | failed (also live | reconnecting | idle | offline). */
 export function StatusDot({ status, label }) {
   const text = label ?? status;
   return <span className={`status s-${status} t-${TONE[status] ?? 'mute'}`}><i className="dot" aria-hidden="true" />{text && <span>{text}</span>}</span>;
