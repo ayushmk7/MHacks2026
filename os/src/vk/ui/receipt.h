@@ -30,6 +30,9 @@ void row(int x0, int x1, int y, const char *label, const char *value, bool selec
 void subline(int x0, int x1, int y, const char *text, bool selected = false);   // SUB colour, indented 12 px
 void amount(int cx, int y, const char *label, const char *value, const char *unit);   // label, big serif value, unit; centred on cx
 void barcode(int x, int y, int w, int h, const uint8_t *seed, size_t seedLen);       // bars derived from the bytes
+// A Code 128 barcode a scanner reads back as `text`, centred in the box, dark on a light patch in every
+// theme. False, with nothing drawn, when the text does not fit the width or is not printable ASCII.
+bool barcodeText(int x, int y, int w, int h, const char *text);
 void holdBar(float progress);                             // y 204..209, x 40..280
 void footer(const char *left, const char *right);         // dashed rule at y=216, text at y=224
 

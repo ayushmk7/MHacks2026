@@ -54,4 +54,4 @@ cannot carry a hook tag). A replaced file carries no hook tag.
 | `src/net/push_server.cpp` | edited | the embedded web page: title and heading `BadgeOS`, colours from the Receipt-light palette. A raw string cannot carry a hook tag. The only C++ change in the file is the tagged H23 LED line |
 | `tools/badge-push.py` | edited | texts say BadgeOS; the example host is `badgeos.local` |
 | `README.md` | rewritten | short: what BadgeOS is, the credit line "BadgeOS is built on Solana OS by spacemandev.", a pointer to `docs/os/`. Upstream's README is kept as `docs/os/reference/upstream-readme.md` |
-| `apps/dice`, `apps/gallery`, `apps/hello`, `apps/radar`, `apps/vumeter`, `apps/whosnear` | deleted | upstream's six sample apps |
+| `apps/gallery`, `apps/hello`, `apps/radar`, `apps/vumeter`, `apps/whosnear` | deleted | upstream's sample apps. Upstream's `apps/dice` was deleted too; the `apps/dice` in the tree is BadgeOS's own app, written fresh (docs/os/apps/apps.md) |

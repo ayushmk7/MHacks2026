@@ -4,6 +4,7 @@
 // Pixel reference: docs/design/os-mockups/index.html (the ".t-rc" styles). Coordinates and layout
 // constants: ui.md. Glyph sizes below were measured with the installed LovyanGFX 1.2.32.
 #include "receipt.h"
+#include "code128.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -393,6 +394,29 @@ void barcode(int x, int y, int w, int h, const uint8_t *seed, size_t seedLen) {
     px += bar + gap;
   }
   display::touch();
+}
+
+bool barcodeText(int x, int y, int w, int h, const char *text) {
+  if (text == nullptr || w <= 0 || h <= 0) return false;
+  uint8_t modules[11 * (13 + 2) + 13];                          // 13 characters are the most that fit 320 px
+  const int count = vk_code128_encode(text, modules, (int)sizeof modules);
+  if (count < 0) return false;
+  const int total = count + 2 * VK_CODE128_QUIET;
+  const int px = w / total;                                     // the largest whole module width
+  if (px < 1) return false;
+  // The light theme's paper and ink whatever the active theme is, as qr() does: scanners read dark on light.
+  uint16_t ground = theme::color(theme::PAPER), ink = theme::color(theme::INK);
+  if (const theme::Theme *light = theme::find("receipt-light")) {
+    ground = light->colors[theme::PAPER];
+    ink = light->colors[theme::INK];
+  }
+  LGFX_Sprite &c = display::canvas();
+  const int x0 = x + (w - total * px) / 2;
+  c.fillRect(x0, y, total * px, h, ground);                     // the light patch, quiet zones included
+  for (int i = 0; i < count; ++i)
+    if (modules[i]) c.fillRect(x0 + (VK_CODE128_QUIET + i) * px, y, px, h, ink);
+  display::touch();
+  return true;
 }
 
 // ---- hold bar -----------------------------------------------------------------------------------------

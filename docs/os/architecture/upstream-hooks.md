@@ -336,11 +336,11 @@ Why these three are enough (read from the source, and checked by the grep below)
 
 - `se050_t1.cpp` has the only other code that transfers to `SE050_ADDR`: `writeBlock()` and `readBlock()`. They are reached only through `exchange()` (called by `softReset()`, called by `begin()`) and through `transceive()`, which runs `if (!sReady && !begin()) return false;` first. `sReady` becomes true only inside `begin()` after its first line, so with the guard it is never true and no block is ever written or read.
 - `se050_apdu.cpp` has no I²C call of its own: `begin()` calls `se050_t1::begin()`, and every command goes through `se050_t1::transceive()`. `se050::randomBytes()` does the same.
-- `badge_i2c::readReg()` and `writeReg()` take the address from the caller; the only caller is `buttons.cpp`, with `TCA9534_ADDR`.
+- `badge_i2c::readReg()` and `writeReg()` take the address from the caller; the callers are `buttons.cpp`, with `TCA9534_ADDR`, and the Self test app (`src/native_apps/selftest/selftest.cpp`), which reads one byte from `0x20`, `0x14`, `0x5D` and `0x4A` and refuses `0x48` at compile time (`static_assert`) and at run time.
 
 ```bash
 cd os
-grep -rn "SE050_ADDR" os.ino src            # config.h (the constant), se050.cpp, se050_t1.cpp, badge_i2c.cpp only
+grep -rn "SE050_ADDR" os.ino src            # config.h (the constant), se050.cpp, se050_t1.cpp, badge_i2c.cpp; and native_apps/selftest/selftest.cpp, where it is only a guard that refuses the address
 grep -rln "Wire\.beginTransmission\|Wire\.requestFrom" os.ino src   # the same three .cpp files
 ```
 
@@ -440,7 +440,7 @@ Paths are relative to `os/`. Kinds: **deleted** (the file or folder does not exi
 | `src/net/push_server.cpp` | edited | the embedded web page: title and heading `BadgeOS`, colours from the Receipt-light palette. A raw string cannot carry a hook tag. The only C++ change in the file is the tagged H23 LED line |
 | `tools/badge-push.py` | edited | texts say BadgeOS; the example host is `badgeos.local` |
 | `README.md` | rewritten | short: what BadgeOS is, the credit line "BadgeOS is built on Solana OS by spacemandev.", a pointer to `docs/os/`. Upstream's README is kept as [`docs/os/reference/upstream-readme.md`](../reference/upstream-readme.md) |
-| `apps/dice`, `apps/gallery`, `apps/hello`, `apps/radar`, `apps/vumeter`, `apps/whosnear` | deleted | upstream's six sample apps |
+| `apps/gallery`, `apps/hello`, `apps/radar`, `apps/vumeter`, `apps/whosnear` | deleted | upstream's sample apps. Upstream's `apps/dice` was deleted too; the `apps/dice` in the tree is BadgeOS's own app, written fresh (docs/os/apps/apps.md) |
 
 ### `src/ui/boot.cpp`, complete
 
@@ -518,7 +518,7 @@ The replaced files (pre-flash check 1, second half):
 
 ```bash
 cd os
-for p in src/ui/shell.cpp splash_images.h apps/dice apps/gallery apps/hello apps/radar apps/vumeter apps/whosnear; do
+for p in src/ui/shell.cpp splash_images.h apps/gallery apps/hello apps/radar apps/vumeter apps/whosnear; do
   [ -e "$p" ] && echo "still exists: $p"; done
 for p in src/ui/boot.cpp src/ui/theme.h src/net/push_server.cpp tools/badge-push.py README.md; do
   [ -e "$p" ] || echo "missing: $p"; done

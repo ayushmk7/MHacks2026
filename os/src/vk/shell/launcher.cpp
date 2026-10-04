@@ -212,7 +212,11 @@ void draw() {
   receipt::rule(156);
   drawBalance();
   const uint8_t *key = vk::wallet::publicKey();
-  if (key != nullptr) receipt::barcode(X0, 184, 300, 22, key, 32);   // not drawn when the badge has no identity
+  if (key != nullptr) {                                              // not drawn when the badge has no identity
+    // A scanner reads the badge ID (the first 8 characters of the address); the plain bars are the fallback.
+    const String id = vk::wallet::addressBase58().substring(0, 8);
+    if (!receipt::barcodeText(X0, 184, 300, 22, id.c_str())) receipt::barcode(X0, 184, 300, 22, key, 32);
+  }
   receipt::footer("SELECT open", "CANCEL settings");
 }
 

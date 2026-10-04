@@ -313,7 +313,7 @@ Screen `launcher`: the simulation's MENU screen. It lists every installed app, L
 | scroll mark | when there are more than 12 apps: `n/N` (selected index + 1 / count) right-aligned at (310, 28), `FAINT` |
 | rule | `receipt::rule(156)` |
 | balance | `receipt::row(10, 310, 166, "BALANCE", "<amount> <symbol>")`. Unprovisioned (`!vk::config::provisioned()`): `receipt::row(10, 310, 166, "SETUP NEEDED", "provision over USB", false, STAMP_WARN)` |
-| barcode | `receipt::barcode(10, 184, 300, 22, vk::wallet::publicKey(), 32)`; not drawn when the badge has no identity |
+| barcode | `receipt::barcodeText(10, 184, 300, 22, id)`: a Code 128 barcode a scanner app reads back as the badge ID (the first 8 characters of the address), dark on a light patch in both themes, 2 px per module. If it does not fit, the decorative `receipt::barcode(…, vk::wallet::publicKey(), 32)`. Not drawn when the badge has no identity |
 | footer | `receipt::footer("SELECT open", "CANCEL settings")` |
 
 Balance text: the default token is the first entry of `vk::config::tokens()`; `vk::wallet::tokenInfoLookup(mint, info)` gives its balance; the amount is formatted with `sol_format_amount` and followed by the symbol. `--` and the symbol when the pointer is null (the balance feature is absent) or the balance is not known yet.
@@ -524,7 +524,7 @@ UP (`buttons::repeated`): `scroll + 1` up to `total - 17`; DOWN: `scroll - 1` do
 
 ### About
 
-Screen `about`, `page_about.cpp`: what the badge runs, and a QR code that opens the project's repository on a phone. The link is the config key `repo_url` ([config](../platform/config.md#keys)), which this file registers; no address is compiled into the firmware. A striped barcode cannot hold a link, so this is a QR code; the launcher's barcode stays as decoration.
+Screen `about`, `page_about.cpp`: what the badge runs, and a QR code that opens the project's repository on a phone. The link is the config key `repo_url` ([config](../platform/config.md#keys)), which this file registers; no address is compiled into the firmware. A 1-D barcode wide enough for a link does not fit 320 px, so this is a QR code; the launcher's barcode holds the badge ID.
 
 Layout, two columns like Home, with no page title: `receipt::page()`, the header, `receipt::perforation(146, 24, 212)`.
 

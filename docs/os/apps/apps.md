@@ -14,7 +14,7 @@ Every app BadgeOS ships: what it is for, its permissions, its screens and its fl
 - Every app draws with `vk.ui` (Lua) or the receipt kit (native), in colours from the active theme. No app hard-codes a colour, draws a stamp, or uses a brand colour of upstream's.
 - Every app draws through `vk.ui.frame(draw)`, which calls `draw` only when the screen can have changed ([Lua API](../platform/lua-api.md#drawing-only-when-something-changed)). An app that draws on every pass holds the badge at 20 loop passes a second. Only an animation (the Game's playfield) passes period 0.
 - Every app passes `header = "BADGEOS"` from its `config.lua`.
-- The launcher and the settings are not apps: they are the BadgeOS shell ([shell](../ui/shell.md)). An app that exits returns to the shell's launcher. Upstream's sample apps (`hello`, `dice`, `gallery`, `radar`, `vumeter`, `whosnear`) are not shipped.
+- The launcher and the settings are not apps: they are the BadgeOS shell ([shell](../ui/shell.md)). An app that exits returns to the shell's launcher. Upstream's sample apps (`hello`, `dice`, `gallery`, `radar`, `vumeter`, `whosnear`) are not shipped; the Dice app below is BadgeOS's own.
 
 | App | Id | Kind | Permissions |
 |---|---|---|---|
@@ -33,6 +33,21 @@ Every app BadgeOS ships: what it is for, its permissions, its screens and its fl
 | Inbox | `inbox` | native | — |
 | Wallet | `wallet_settings` | native | — |
 | Hello (C++) | `hello_native` | native | — |
+| Dice | `dice` | Lua | — |
+| Self test | `selftest` | native | — |
+
+## Dice
+
+A small game with no payments and no permissions. SELECT rolls `config.count` dice (default 2) with a short animation; UP and DOWN change the number of dice between 1 and `config.max` (default 5); the total is printed as the amount, the last rolls as rows; the LEDs pulse in the theme's LED colour on a roll. It logs `DICE roll <d1> <d2> ... total <n>` when the dice settle and `DICE count <n>` when the number changes. Every tunable is in `config.lua`. Test: `t_app_dice.py`.
+
+## Self test
+
+A native app (`src/native_apps/selftest/selftest.cpp`) that checks every part of the badge, in the spirit of the factory test firmware. A checklist of 14 checks, each `OK`, `FAIL` or `--` (not tested, or needs a person):
+
+- Automatic, run when the app opens: battery, microphone (2 s of samples), I²C bus (line levels, `0x20`, `0x14`, `0x5D`, `0x4A`; **`0x48` is never probed**, see [H21](../architecture/upstream-hooks.md)), storage (a write, read and delete of `/vk/selftest.tmp`), settings store, key present (nothing is signed), crypto (an RFC 8032 vector verifies and a corrupted copy does not), clock, Wi-Fi, ESP-NOW, memory.
+- Manual, entered with SELECT from the checklist: display (colour screens), buttons (each key in turn, 20 s each; a short CANCEL out of turn gives the key up), LEDs (each of `RGB_LED_COUNT`).
+
+Serial: `[selftest] start`, one line `[selftest] <name>=<OK|FAIL|--> <value>` per check, `[selftest] done ok=<n> fail=<n> manual=<n>`, and a summary line every 5 s while the app is open. CANCEL exits. Test: `t_selftest.py`.
 
 ## Sign test
 

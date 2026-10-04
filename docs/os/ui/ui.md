@@ -202,6 +202,7 @@ void row(int x0, int x1, int y, const char *label, const char *value, bool selec
 void subline(int x0, int x1, int y, const char *text, bool selected = false);   // SUB colour, indented 12 px
 void amount(int cx, int y, const char *label, const char *value, const char *unit);   // label, big serif value, unit; centred on cx
 void barcode(int x, int y, int w, int h, const uint8_t *seed, size_t seedLen);       // bars derived from the bytes
+bool barcodeText(int x, int y, int w, int h, const char *text);                     // scannable Code 128 (ui/code128.c); false if it does not fit
 void holdBar(float progress);                             // y 204..209, x 40..280
 void footer(const char *left, const char *right);         // dashed rule at y=216, text at y=224
 void headerText(const char *left, const char *right);     // header() without its rule: the approval's band sits directly under it
