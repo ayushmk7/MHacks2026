@@ -43,6 +43,7 @@ and H20 are retired, and no line in the source carries them.
 | H27 | `src/apps/app_store.cpp` `refresh()` | the launcher's app catalogue is rebuilt after a rescan (two sites: the include and the call) |
 | H28 | `src/net/ble_mgr.cpp` `begin()`, `end()` | turning Bluetooth off stops advertising and drops the connection but keeps the stack; upstream's `BLEDevice::deinit(true)` released the controller memory for good, so Bluetooth could not be turned on again until a reboot (`createServer failed`) |
 | H29 | `src/net/wifi_mgr.cpp` `disconnect()`, `stop()` | after Wi-Fi is switched off, ESP-NOW is restarted on its own channel (`settings::espnowChannel()`): a joined network had moved the radio to the access point's channel and `WIFI_OFF` took its interface down, so a badge that left Wi-Fi could not reach the offline badges until a reboot |
+| H30 | `src/config.h` `LCD_BRIGHTNESS` | the default backlight is full (255, was 190); Settings → Display → Backlight still changes it |
 
 ## Replaced upstream files
 

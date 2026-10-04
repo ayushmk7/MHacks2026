@@ -50,7 +50,7 @@ constexpr int PIN_MIC_DATA = 48;
 // ============================================================================
 constexpr uint8_t  LCD_ROTATION   = 1;      // 1 = landscape, 320x240
 constexpr bool     LCD_INVERT     = false;
-constexpr uint8_t  LCD_BRIGHTNESS = 190;    // default; overridden by settings
+constexpr uint8_t  LCD_BRIGHTNESS = 255;    // default; overridden by settings  // VK: H30 (was 190: full brightness by default)
 constexpr int16_t  LCD_WIDTH      = 320;
 constexpr int16_t  LCD_HEIGHT     = 240;
 
