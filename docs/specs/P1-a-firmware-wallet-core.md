@@ -1,7 +1,7 @@
 # P1-A — Firmware: Wallet Core in Solana OS
 
 Owner: **A** · Part 1 (≈ hours 0–8) · Gate: one badge-signed HACK payment confirmed on devnet
-Reads: [`00-Interfaces.md`](00-Interfaces.md) (§0 decisions, §1 platform facts, §3 signing domains, §4 Lua API) · Parent: [`Prd-verified-payment-key.md`](Prd-verified-payment-key.md)
+Reads: [`00-Interfaces.md`](00-Interfaces.md) (§0 decisions, §1 platform facts, §3 signing domains, §4 Lua API, §9 routing) · Parent: [`Prd-verified-payment-key.md`](Prd-verified-payment-key.md)
 
 ## 1. Why this exists
 
@@ -28,7 +28,9 @@ From the Solana OS README (https://github.com/spacemandev-git/solana-defcon-badg
 - **Serial log tags** `id` and `se050` show what the identity code did.
 - **Build:** arduino-cli, FQBN `esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=custom,CDCOnBoot=cdc` (README).
 
-## 3. Scope
+## 3. Scope — ✏️ Changed (routing)
+
+Routing (00 §9) is **built in Part 2** (P2-A), after the direct-payment gate passes. Part 1 only makes the core routing-ready (A11, A14) and changes the clock rule (A8).
 
 ### In scope (Part 1)
 
@@ -41,12 +43,13 @@ From the Solana OS README (https://github.com/spacemandev-git/solana-defcon-badg
 | A5 | Solana legacy-message parser + `transferChecked` decoder with the strict checks in §4.2 | P0 |
 | A6 | Async `wallet.begin_solana` / `wallet.poll`: parse → decode → checks → approval → sign with identity key | P0 |
 | A7 | Watchdogs: signing (~261 ms on SE050, unmeasured) extends the Lua deadline; the C approval task feeds the ESP-IDF task watchdog | P0 |
-| A8 | SNTP at boot + `wallet.time_ok()`; clock floor from verified `issued_at` | P0 |
+| A8 | ✏️ SNTP at boot + `wallet.time_ok()`, true **only after an SNTP sync since boot**. A verified `issued_at` is used for anti-rollback only. *Previously: the clock floor from a verified record could also set `time_ok()`* | P0 |
 | A9 | Pinned issuer key + pinned HACK mint/decimals/symbol; `wallet.check_record` (Ed25519 verify over `registry:` + record, expiry, status, freshness) | P1 |
 | A10 | `wallet.sign_request`, `wallet.sign_proof` (auto, domain-separated) | P1 |
-| A11 | `wallet.new_nonce(req_id)` / `wallet.check_proof` with the presence state kept in C (up to 4 slots, keyed by `req_id`) | P1 |
+| A11 | ✏️ `wallet.new_nonce(id)` / `wallet.check_proof` with the presence state kept in C. Up to **8 slots keyed by (id, peer pubkey)**, so one route can challenge several neighbours. *Previously: 4 slots keyed by `req_id`* | P1 |
 | A12 | Firmware-side REQ verification inside `begin_*` (00 §4 step 2) and the amount/recipient comparison (steps 4–5) | P1 |
 | A13 | `VK_DEV_ALLOW_UNVERIFIED` dev-build flag with a "DEV BUILD" banner, so R's harness can sign before the registry exists | P0 |
+| A14 | 🆕 Routing-ready structure (§4.6): the decoder returns a **list** of `transferChecked` legs (direct mode still accepts exactly one); the approval-screen layout leaves room for a route line | P2 |
 
 ### Out of scope for Part 1
 Bank payload decoder and `begin_bank` (P2-A), spending cap (P2-A), app UI (P2), any networking logic beyond what Lua already has.
@@ -92,10 +95,18 @@ Reject → `undecodable` unless all of these hold (never blind-sign):
   - Red states ignore SELECT.
 - Require a fresh press: ignore any button already held when the screen appears (debounce + "release first"). Hold CANCEL for 2 s to force-close any app (master PRD risk table).
 
-### 4.5 Prefix enforcement
+### 4.5 Prefix enforcement — ✏️ Changed (routing)
 - `sign_request` / `sign_proof` sign only `pay-req:`/`pay-proof:` + given bytes; never callable with raw bytes.
-- `begin_solana` refuses input starting with any reserved ASCII prefix (also impossible structurally; see 00 §3).
+- 🆕 `sign_route_att` / `sign_route_quote` (built in P2-A) sign only `route-att:` / `route-quote:` + bytes **the firmware assembles itself**. The relay's own pubkey, proof flag and nonce come from C state.
+- Every `begin_*` refuses input starting with any reserved ASCII prefix: `pay-`, `bank-`, `route-`, `registry`. This is also impossible structurally; see 00 §3, recomputed for `r`.
 - No other path to the identity key from Lua.
+
+### 4.6 Routing hooks — 🆕 Routing
+Build these in Part 1 only as structure; the routed behaviour is P2-A.
+- **Decoder:** parse every `transferChecked` into a leg list `{source, mint, dest, owner, amount, decimals}`. The direct rule (exactly one leg) becomes a check on that list, so the routed rule (one payment leg + one fee leg per relay, 00 §4.1 Q6) is a different check, not a new parser.
+- **Presence slots:** keyed by (id, peer), per A11.
+- **Screen:** a reserved line between recipient and total for "via N relays ✓ · fees X". A `right` press opens a detail view.
+- **Size:** a routed message with 3 relays is ≤ 412 B (00 §9.7). No parser limits change.
 
 ## 5. Interfaces you provide
 `00-Interfaces.md` §4 exactly. Publish a short `wallet.md` with return codes once A6 works, so R and U can call it.
@@ -104,18 +115,20 @@ Reject → `undecodable` unless all of these hold (never blind-sign):
 - From U: issuer public key (from `server/.keys/authority.json`), HACK mint address, at least one registry record from `GET /registry/:pubkey` for A9 testing.
 - From R: R3 harness (a laptop that builds unsigned `transferChecked` messages and serves them over `/badge/pending`, then verifies the returned signature). Until then, build one test message by hand with `@solana/kit` or `solders`.
 
-## 7. Done when
+## 7. Done when — ✏️ Changed (routing)
 - [ ] All 4 badges flashed with your build; pubkey and key location recorded for each.
 - [ ] R's harness serves an unsigned `transferChecked` message. The badge shows the correct amount and recipient. SELECT produces a signature that verifies on the laptop, and the submitted tx confirms on devnet. A dev build is allowed before A9.
 - [ ] Each of these is refused as `undecodable`: a second (non-memo) instruction, a wrong mint, two signers, a versioned message, trailing bytes. R6 supplies the fuzz set.
 - [ ] A Lua app cannot obtain a signature without the approval screen, and cannot make the screen green by lying in `ctx` (wrong record, wrong REQ, no proof).
 - [ ] No reset of any watchdog during a 45 s approval wait or an SE050 signature.
 - [ ] After a reboot with the hotspot up, `wallet.time_ok()` is true within 10 s.
+- [ ] ✏️ With SNTP blocked, `wallet.time_ok()` stays false even after a verified record arrives (routing clock rule, 00 §0).
+- [ ] 🆕 The decoder returns a leg list. A two-leg message is still refused in direct mode.
 
-## 8. Risks
+## 8. Risks — ✏️ Changed (routing)
 | Risk | Mitigation |
 | --- | --- |
 | SE050 fails on silicon | Time-box; NVS key is fine for the demo; note it on the Badges view |
 | Async approval task fights the Lua task for the display | Global UI lock; Lua `on_draw` skipped while approval is active |
-| SNTP blocked on the hotspot | Clock floor from verified records; check on the venue hotspot early |
+| SNTP blocked on the hotspot | ✏️ Check on the venue hotspot early; an iPhone hotspot passes NTP. There is no record-based fallback for `time_ok()` any more (*previously: clock floor from verified records*) |
 | Toolchain setup slow | Start A1 before the event if allowed; otherwise first hour |
