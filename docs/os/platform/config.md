@@ -62,6 +62,7 @@ Details of the store, as built (WP10):
 - **`set()` on a provisioned badge, secure key:** `UNAVAILABLE` while `confirmChange` is null, and also when `confirmChange` returns false because another approval is on screen (a change already waiting for its confirmation is kept). Otherwise `PENDING`.
 - **`requestReset()`** uses the same pointer, called as `confirmChange("(reset)", "", "", done)`, so `core/` includes no wallet header. The confirmation is raised whether or not the badge is provisioned. `requestReset()` returns nothing: a caller that needs to know whether the confirmation opened (the Wallet app's Reset page) looks at `vk::wallet::approval::active()` straight after the call.
 - **Parsers.** `parseStr`, `parseU32`, `parseKey32`, `parseTokens` and `validate` are pure functions declared in `config.h` and covered by `test_config`. `find(name)` returns the registered key.
+- **Key rules.** `KeyRule`, `VK_CONFIG_RULE` and `ruleFor`: see [Key rules](#key-rules).
 - **Cache.** 32 slots; keys beyond that still work but are read from NVS on every call.
 - Avoid `CHANGE`, `RISING`, `FALLING` and `DISABLED` as enumerator names anywhere: the Arduino core defines them as macros.
 
@@ -88,6 +89,7 @@ Each key is registered by the code that uses it. This table is the complete list
 | `listener_url` | STR | (empty) | | 0–128 | `core` | base URL of the backend's badge listener, e.g. `http://192.168.4.20:8788` (placeholder: the address changes with the venue) |
 | `display_name` | STR | (empty) | | 0–32 | `core` | name this badge claims in requests and contact cards; empty means upstream's device name |
 | `ntp_server` | STR | `pool.ntp.org` | | 3–64 | `core` (clock) | SNTP host. Read once, when Wi-Fi first connects: a change takes effect at the next boot |
+| `utc_offset` | STR | (empty) | | 0–6, and its [rule](#key-rules) | `core` (clock) | the venue's offset from UTC for **display only**: `+HH:MM` or `-HH:MM`, a whole quarter hour from `-12:00` to `+14:00`; empty is UTC. The header and Settings → Badge print the time moved by it; `vk::clock::now()`, the clock's source and every wallet check stay UTC. Settings → Badge → `Time zone` writes it |
 | `approval_tmo_s` | U32 | 45 | secure | 10–120 | approval | approval timeout; keep below the ~60 s blockhash lifetime |
 | `hold_ms` | U32 | 3000 | secure | 1000–10000 | approval | hold-SELECT duration |
 | `record_ttl_s` | U32 | 30 | secure | 5–3600 | `solana_pay` | maximum age of a registry record under SNTP |
@@ -110,6 +112,9 @@ Each key is registered by the code that uses it. This table is the complete list
 | `batt_hyst_pct` | U32 | 3 | | 0–20 | `ui` (`battery.cpp`) | a battery level is left only this many percent above its threshold |
 | `theme` | STR | (empty) | | 0–24 | `ui` | active theme: `receipt-light` (also when empty) or `receipt-dark` ([ui](../ui/ui.md#theme)); Settings → Theme writes it |
 | `repo_url` | STR | (empty) | | 0–120 | shell (`pages/page_about.cpp`) | the link shown as a QR code on Settings → About and in Home's stub: the project's repository ([shell](../ui/shell.md#about)). Empty: About says `no link set` and Home shows its barcode. A public value; set it with `VKSET repo_url <url>` |
+| `setup_done` | U32 | 0 | | 0–1 | shell (`pages/page_setup.cpp`) | 1: the setup checklist does not open by itself at boot. Set when a person leaves the checklist with CANCEL ([shell](../ui/shell.md#setup)); erased by `VKRESET` with the rest, so a reset badge shows the checklist once more |
+
+Every key that is neither secure nor required can also be changed on the badge, on Settings → Advanced ([shell](../ui/shell.md#advanced)); `display_name`, `utc_offset` and `balance_poll_s` also on Settings → Badge. Secure and required keys are never changed from the buttons.
 
 There is no `home_app` key: the launcher is the shell itself, not an app ([shell](../ui/shell.md)). Secure keys are the ones whose change could turn a blocked payment into an approved one. Wi-Fi credentials are upstream settings, not config keys ([Wi-Fi](#wi-fi)).
 
@@ -278,6 +283,21 @@ Dev-profile commands (`VKSHOT`, `VKBTN`, `VKSTATE`, `VKTIME`, `VKPERF` and the o
 
 Upstream owns Wi-Fi: one saved network in its `sysconf` settings, joined at boot. `VKWIFI` is a USB shortcut to it. The on-badge Settings → Wi-Fi screen and the upstream push API keep working unchanged.
 
+## Key rules
+
+A key whose valid texts are narrower than its type and range says so with a rule, registered next to the key (`src/vk/core/config.h`, added for the on-badge settings):
+
+```cpp
+struct KeyRule : Registered<KeyRule> {
+  const char *name;                    // the key it belongs to
+  bool (*valid)(const char *text);     // called only for a text that already passed type and range
+};
+#define VK_CONFIG_RULE(ident, name, fn) static vk::config::KeyRule vk_config_rule_##ident{name, fn}
+const KeyRule *ruleFor(const char *name);
+```
+
+`validate()` applies it after the type and range, so `set()`, `VKSET` (`ERR invalid`), the settings pages and the read of a stored value (a stored text the rule refuses reads as the default) all agree. One key has a rule: `utc_offset`, with `vk_utc_offset_valid` (`src/vk/core/utc_offset.c`, pure C, host suite `test_setup`). Host suite `test_config_rule` checks the mechanism. The range and length a page needs come from the key itself (`find(name)->min`, `->max`, `->def`, `->help`): no other accessor was added.
+
 ## Adding a config key
 
 One line in the file that uses the value:
@@ -288,7 +308,7 @@ VK_CONFIG_KEY(duel_rounds, "duel_rounds", vk::config::Type::U32, "3", vk::config
 const uint32_t rounds = vk::config::u32("duel_rounds");
 ```
 
-It is then listed by `VKKEYS`, settable with `VKSET`, validated, and shown in the Wallet settings app. No table elsewhere is edited (add the row to this document). Mark it `F_SECURE` only if changing it could weaken an approval. Recipe: [../guides/extending.md](../guides/extending.md#add-a-config-key).
+It is then listed by `VKKEYS`, settable with `VKSET`, validated, shown in the Wallet settings app, and (unless it is secure or required) shown and editable on Settings → Advanced. If its values are a list, register them with `VK_KEY_CHOICES` (`src/vk/shell/edit.h`) and Advanced offers a picker. No table elsewhere is edited (add the row to this document). Mark it `F_SECURE` only if changing it could weaken an approval. Recipe: [../guides/extending.md](../guides/extending.md#add-a-config-key).
 
 ## Tests
 

@@ -218,6 +218,23 @@ The run ends with one line of JSON, ready to copy: the badge's entry for `dashbo
 
 Details, the checks made before a badge is touched, and the by-hand commands: [../platform/config.md](../platform/config.md#provisioning). `--autostart home` (upstream's autostart setting, `VKAUTOSTART`) still works: the Home app then starts at boot, and CANCEL in it returns to the launcher. Without it the badge boots to the launcher.
 
+## On the badge, without a laptop
+
+What a person holding a flashed badge can do with its six buttons ([shell](../ui/shell.md#settings-pages)):
+
+| What | Where |
+|---|---|
+| see what is still missing, and go to each step | Settings → Setup (opens by itself once on a new, unprovisioned badge; CANCEL closes it for good) |
+| join a Wi-Fi network (scan, type the password) | Settings → Wi-Fi |
+| the name other badges see (`display_name`) | Settings → Badge → Name, or Setup → Name |
+| the time zone the header shows (`utc_offset`, display only) | Settings → Badge → Time zone |
+| how often the balance is fetched (`balance_poll_s`) | Settings → Badge → Balance check |
+| the app that opens at boot (as `--autostart` / `VKAUTOSTART`) | Settings → Badge → Start at boot |
+| theme, backlight, sleep time, LEDs, restart | Settings → Theme, Display, LEDs, Restart |
+| any other key that is neither secure nor required (`listener_url`, `ntp_server`, `repo_url`, request timings, battery thresholds ...) | Settings → Advanced |
+
+What still needs the laptop: provisioning itself (the issuer key, the token table, the RPC address and `VKCOMMIT`: the wallet's root of trust, which the buttons never set), any secure key (confirmed with a hold on the badge), a Wi-Fi network that asks for a user name, and pushing apps. The clock cannot be set by hand at all: it comes from the network once Wi-Fi is joined.
+
 ## Before a demo
 
 Values nothing fills in automatically. Each must be set by hand before the demo, or the feature it belongs to fails quietly:

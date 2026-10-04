@@ -22,6 +22,9 @@ src/vk/shell/
   launcher.cpp                 screen `launcher`
   settings_list.cpp            screen `settings`: lists the registered pages
   dialogs.cpp                  screens `app_delete`, `app_error`, `offer`, `installing`
+  edit.h  edit.cpp             changing a config key from the buttons, screen `pick`, the jump to a page
+  setup.h                      the setup checklist for the launcher (implemented in pages/page_setup.cpp)
+  setup_core.h  setup_core.c   pure C: the checklist and the number stepper (host suite test_setup)
   pages/page_<id>.cpp          one file per settings page; each registers itself
 ```
 
@@ -239,7 +242,12 @@ Rules for every screen and page:
 | 120 | `info` | Device info | page | `SOLANA_OS_VERSION` (`0.1.0`) | `pages/page_info.cpp` | 5G |
 | 130 | `console` | Console | page | — | `pages/page_console.cpp` | 5G |
 | 140 | `about` | About | page | the host of config key `repo_url` (`github.com`), or `not set` | `pages/page_about.cpp` | added after the close-out |
+| 142 | `badge` | Badge | page | config key `display_name`, or `name, time` when it is empty | `pages/page_badge.cpp` | on-badge settings |
+| 144 | `setup` | Setup | page | `<n> steps left` / `1 step left` / `done` (`setup::summary`) | `pages/page_setup.cpp` | on-badge settings |
+| 146 | `advanced` | Advanced | page | `all settings` | `pages/page_advanced.cpp` | on-badge settings |
 | 150 | `restart` | Restart | page | — | `pages/page_restart.cpp` | added with screen sleep |
+
+Badge, Setup and Advanced sit after About on purpose: the device tests' `common.SETTINGS_ROWS` finds a page by its index in the list, so a row inserted above About would move every page after it. A page list read from the badge (`VKPAGES`, gap audit item 22) would free the order.
 
 When SELECT is pressed on a page row, the list copies the page's `id`, `enter`, `update`, `draw` and `refresh_ms` into one static `Screen` and pushes it (only one page is open at a time). On an action row it calls `action()` and repaints.
 
@@ -247,7 +255,7 @@ When SELECT is pressed on a page row, the list copies the page's `id`, `enter`, 
 
 `shell::screenName()` returns one of these; device tests read it as the `screen` field of `VKSTATE` ([testing](../testing/testing.md#dev-hooks)).
 
-`launcher` · `app_delete` · `settings` · `wifi` · `bluetooth` · `espnow` · `push` · `store` · `identity` · `identity_new` · `display` · `leds` · `info` · `console` · `about` · `restart` · `app_error` · `offer` · `installing`
+`launcher` · `app_delete` · `settings` · `wifi` · `bluetooth` · `espnow` · `push` · `store` · `identity` · `identity_new` · `display` · `leds` · `info` · `console` · `about` · `badge` · `setup` · `advanced` · `pick` · `restart` · `app_error` · `offer` · `installing`
 
 It is empty while an app runs. While an approval is open over the shell it keeps the name of the screen underneath (`VKSTATE.modal` tells). The boot screen has no name: nothing can ask during `setup()`.
 
@@ -713,6 +721,97 @@ Row value in the Settings list: the host of the link (the text between `://` and
 
 Buttons: CANCEL back. Refresh: on change only. The page reads `repo_url` twice a second and repaints when it differs from what it last drew, so a `VKSET repo_url …` shows while the page is open. For this project: `VKSET repo_url https://github.com/ayushmk7/MHacks2026` (38 characters: QR version 3, 29 modules, 4 px each).
 
+### Badge
+
+Screen `badge`, `page_badge.cpp`: what a person sets on the badge itself, with no laptop. `frame("BADGE", <left>)`; five rows through `listDraw(list, rows, 5, 48, 5)`; `receipt::rule(140)`; `receipt::row(X0, X1, 150, "LOCAL TIME", "<HH:MM>  (UTC <HH:MM>)")`, or `no time yet` while the clock has no source; two lines at y = 170 and 182 in `SUB` that say what the row under the cursor does; for 3 s after a change, its [note](#editing-a-config-key) at y = 196 (`STAMP_OK`, or `STAMP_WARN` for a refusal).
+
+| Row | Value | Keys | Footer left |
+|---|---|---|---|
+| `Name` | config key `display_name`, or `device name` in `SUB` | SELECT: the keyboard, title `NAME`, limits from the key (0 to 32 printable characters; empty means upstream's device name, which the help line names) | `SELECT type` |
+| `Time zone` | `UTC`, `UTC+5:30`, `UTC-4` (config key `utc_offset`) | LEFT / RIGHT (`buttons::repeated`): a quarter hour west / east, from −12:00 to +14:00, written at once (UTC is stored as the empty text). SELECT: the picker over every offset | `LEFT/RIGHT change  SELECT list` |
+| `Clock` | `synced` (`STAMP_OK`) for SNTP, `unsynced` (`STAMP_WARN`) for FLOOR, `not set` (`STAMP_WARN`) for NONE | none: there is nothing to set. The help line says where the time comes from (the SNTP server's name, or "join it in Settings > Wi-Fi") and that it is never typed in | — |
+| `Balance check` | config key `balance_poll_s` as `every 15 s`, `every 1 min`, `every 1 h`, or `off` | LEFT / RIGHT (`buttons::pressed`): one [step](#editing-a-config-key) in the key's range; SELECT: type the number | `LEFT/RIGHT change  SELECT type` |
+| `Start at boot` | upstream's `settings::autostartApp()` as the app's name, `none`, or `<id> (not installed)` | SELECT: the picker: `none: the launcher`, then every installed app (`app_store::count()` / `at()`); choosing writes `settings::setAutostartApp` (what `VKAUTOSTART` does) and logs `[os] autostart app set on the badge: '<id>'` | `SELECT choose` |
+
+**The clock is never set by hand**, here or anywhere on the badge. The wallet trusts the network's time (SNTP) and the floor of a verified record ([checks](../wallet/checks.md#clock)); a time typed with the buttons would let anyone holding the badge move record expiry. `utc_offset` changes what is printed and nothing else: `vk::clock::now()` stays UTC and `vk::clock::source()` is untouched by it. The header's time ([ui](ui.md#header)) and this page's `LOCAL TIME` add the offset; the History app's times are still UTC (they come through `wallet.time`, which this work does not change).
+
+The page also registers the choices (`VK_KEY_CHOICES`) of `utc_offset` (the 105 quarter hours) and of `pay_app` (the installed apps), which Advanced then offers as pickers. Refresh: on change only; twice a second the page compares what it shows (the values, the clock's source, Wi-Fi joined or not, the minute, whether a note is up) with its last draw and repaints when they differ.
+
+### Setup
+
+Screen `setup`, `page_setup.cpp`; the logic is `setup_core.c` (pure C, host suite `test_setup`). A checklist of what this badge still needs, read from the badge each time it is drawn. `frame("SETUP", <left>, "CANCEL close")`; beside the title, right-aligned, `<n> left` in `FAINT` or `ready` in `STAMP_OK`; seven rows through `listDraw(list, rows, 7, 48, 7)`, the value coloured by state (done `STAMP_OK`, to do `STAMP_WARN`, waiting ink, optional `SUB`); `receipt::rule(172)`; up to three lines at y = 178, 189 and 200 that say what to do next for the row under the cursor (`SUB`; the wallet's missing keys in `STAMP_WARN`; for 3 s after a change the note takes the last line).
+
+| Row | Required | State, from | SELECT |
+|---|---|---|---|
+| `Identity` | yes | `ready` / `no key` (`vk::wallet::publicKey()`) | nothing. The text says to restart and read the Console. It never leads to New identity, which would wipe the wallet key |
+| `Wi-Fi` | yes | `joined` (station and connected) / `hotspot` / `looking` (a saved network, not joined: waiting) / `none` | the Wi-Fi page |
+| `Clock` | yes | `synced` (SNTP) / `unsynced` (FLOOR: still not done, payments say CLOCK UNSYNCED) / `not set`; waiting while joined | joined: the Badge page (time zone); otherwise the Wi-Fi page |
+| `Wallet` | yes | `provisioned` / `needs USB` | nothing: the lines say `From a laptop: connect USB, and in the repo run` / `python3 os/scripts/vkdev.py provision`, then `missing: issuer_key, rpc_url, tokens` (the `F_REQUIRED` keys with no value, from the config registry, sorted), or `all values set: finish with VKCOMMIT` |
+| `Listener` | no | `set` / `not set` (`listener_url`) | nothing; the text says it comes with the provision command (`--listener`) or Advanced |
+| `Name` | no | the name, or `device name` | the keyboard for `display_name` |
+| `Theme` | no | `light` / `dark` | the next theme, in place (as the Theme row) |
+
+The footer's left side says what SELECT does on the row (`SELECT open Wi-Fi`, `SELECT time zone`, `SELECT type a name`, `SELECT switch theme`, `needs a laptop: see below`, or nothing). No value, key or address is printed: the wallet's values are the root of trust and come from the laptop tool only ([build, flash, provision](../guides/build-flash-provision.md#provisioning)). When `VKCOMMIT` lands the rows turn done within half a second: the screen compares its rows with its last draw twice a second and repaints only when they differ.
+
+**Set up** means the four required rows are done: a key, a joined network, a clock synced by the network, a provisioned wallet. `setup::needed()` is that test.
+
+**First boot.** The screen opens by itself, once, over the launcher (stack `[launcher, setup]`) on the first loop pass after boot on which the launcher is on top, when all of these hold: no approval is open, no autostart app is set, no app is running, config key `setup_done` is 0, the badge is not provisioned, and a required row is not done (`vk_setup_autoopen`). "First" needs no flag of its own: a badge that is not provisioned is new, or was reset, which is when it should be shown again. The one flag is the dismissal: CANCEL leaves the screen (to the launcher when it opened by itself) and sets `setup_done` to 1 (`[os] setup dismissed`), so it never opens by itself again. A provisioned badge never gets it at boot. `VKRESET` erases `setup_done` with the rest of the config, so a reset badge shows it once more. CANCEL always leaves: the screen never traps.
+
+**For the launcher** (`src/vk/shell/setup.h`):
+
+```cpp
+namespace vk::shell::setup {
+bool needed();                         // a required row is not done
+unsigned left();                       // how many required rows are left
+void summary(char *out, size_t cap);   // "3 steps left", "1 step left", "done"
+void open();                           // push(&kSetup)
+}
+```
+
+Config key `setup_done` (U32, 0, 0 to 1) is registered in `page_setup.cpp`. Dev hook `VKSETUP` (dev profile only): `{"left":3,"autoopen":true,"setup_done":0,"cursor":0,"rows":"identity=done,wi-fi=todo,clock=todo,wallet=todo,listener=optional,name=optional,theme=optional"}`.
+
+### Advanced
+
+Screen `advanced`, `page_advanced.cpp`: every config key that is not secure, from the config registry, sorted by name, with its value; so a key added tomorrow is shown and editable here with no new page. `frame("ADVANCED", <left>)`; eight visible rows from y = 48 (`listDraw(list, rows, count, 48, 8)`, `n/N` beside the title); at y = 194 the selected key's `help` text in `SUB`, or the [note](#editing-a-config-key) for 3 s after a change. A value is the key's text (`(empty)` in `SUB` when it is empty); a read-only key's value is `SUB`.
+
+| Key | Footer left | Keys |
+|---|---|---|
+| U32 | `LEFT/RIGHT change  SELECT type` | LEFT / RIGHT one step; SELECT the keyboard for a number in the key's range |
+| with registered choices (`theme`, `utc_offset`, `pay_app`) | `LEFT/RIGHT change  SELECT list` | LEFT / RIGHT the previous / next choice; SELECT the picker |
+| STR | `SELECT type` | SELECT the keyboard, limits from the key |
+| required (`rpc_url`), or a stored text longer than the keyboard holds | `set from a laptop (USB)` | none |
+
+Secure keys are not listed: they change over USB with a hold on the badge, as before. This file registers the choices of `theme` (the registered themes). Refresh: on change only (a hash of every value and of the note, compared twice a second).
+
+Why a generic page and not one page per key: it is about 160 lines (and `edit.cpp`, which Badge and Setup need anyway), it reads ranges, lengths, rules and help from the keys themselves, and every future key becomes editable on the badge with no code. The cost is that a key's raw name and value are shown as they are; the keys a person is likely to want (name, time zone, balance poll, autostart) have the Badge page with words around them.
+
+### Editing a config key
+
+`src/vk/shell/edit.{h,cpp}`, shared by Badge, Setup and Advanced. Every change goes through `vk::config::set`, so the key's own type, range and [rule](../platform/config.md#key-rules) decide; no range, length or default is copied into the shell.
+
+```cpp
+namespace vk::shell::edit {
+struct Choices : Registered<Choices> { const char *key; size_t (*count)(); At at; };   // VK_KEY_CHOICES(ident, key, count, at)
+const Choices *choicesFor(const char *key);
+enum class How : uint8_t { STEP, CHOOSE, TYPE, LAPTOP };
+How how(const vk::config::ConfigKey &key);
+bool step(const char *key, int direction);      // U32: one step inside the key's range
+bool cycle(const char *key, int direction);     // the previous / next registered choice
+void type(const char *key, const char *title);  // the keyboard; written on DONE
+void choose(const char *key, const char *title);// the picker; written on SELECT
+void pick(const char *title, size_t count, At at, const char *current, Picked picked);   // screen `pick`
+bool openPage(const char *id);                  // push a registered settings page by id
+const char *note(bool *bad = nullptr);          // what the last change did, for 3 s
+}
+```
+
+- **What can be changed here:** a key that is neither `F_SECURE` nor `F_REQUIRED`, of type U32 or STR (`How::LAPTOP` otherwise). The rule is enforced in `edit.cpp` itself, whatever page asks: the issuer key, the token table, the limits and the RPC address never come from the buttons.
+- **The step** (`vk_step_u32`): a range of 20 or less moves by one; a wider range moves along round numbers (1 2 3 5 10 15 20 25 30 45 50 60 90 100 120 150 180 200 250 300 400 500 600 750 900 1000 … 3600 … 10000, then 1-2-5 per decade), with the range's ends as stops; 0 to 3600 takes about 35 presses. A value set over USB that is not on the ladder steps to its neighbour. At a limit nothing is written.
+- **The keyboard** gets the key's limits: STR `minLen` = the key's minimum, `maxLen` = its maximum but at most 64 (`keyboard::TEXT_MAX`), an empty text allowed when the minimum is 0, hint `up to <n> characters; empty: the default` or `<a> to <b> characters`; U32 1 to 10 characters, hint `a number from <a> to <b>`. It starts with the current value.
+- **The note**: `saved` (and `[os] setting <key> changed on the badge` in the log, the name only), `refused: a number from <a> to <b>`, `refused: up to <n> printable characters`, `refused: not a valid value (see its help)` (a key rule), `not saved: storage is full`. A step or a cycle leaves a note only when it fails.
+- **Screen `pick`**: `frame(<title>, "SELECT choose")`; the choices through `listDraw` (9 visible, `n/N` when more), only the rows on screen read through `at`; the current value's row has the value `current` in `STAMP_OK` and the cursor starts on it. SELECT pops the picker and then calls `picked(value)`; CANCEL pops it and changes nothing. With no choice: `Nothing to choose from.`
+- **`openPage(id)`** pushes the registered page with that id from one of four static `Screen` slots (a jumped-to page can itself jump), or runs its action; no page with that id: nothing happens. Setup uses it for `wifi` and `badge`.
+
 ### Restart
 
 Screen `restart`, `page_restart.cpp`: restarts the badge, with the page as the confirmation (the row opens it; a second press restarts). It erases nothing; it is neither Identity's New identity nor the wallet reset.
@@ -829,9 +928,10 @@ A row that only acts (no screen) is `VK_SETTINGS_ACTION(ident, "id", order, "Lab
 
 ## Tests
 
-No host suite: the shell is drawing and upstream calls. Device tests ([testing](../testing/testing.md#acceptance-tests)) navigate by `VKSTATE.screen`, never by comparing screenshots, and save one screenshot per screen and theme as `os/test/device/shots/shell_<screen>_<theme>.png`:
+Host: `test_setup` covers the shell's only logic that is not drawing: the setup checklist from a state struct (every row's state, where SELECT goes, the steps left, the first-boot rule, the missing-keys line), the number stepper, and the UTC offset (`src/vk/core/utc_offset.c`: parse, format, step, apply); `test_config_rule` covers a key's rule. The rest of the shell is drawing and upstream calls. Device tests ([testing](../testing/testing.md#acceptance-tests)) navigate by `VKSTATE.screen`, never by comparing screenshots, and save one screenshot per screen and theme as `os/test/device/shots/shell_<screen>_<theme>.png`:
 
 - `t_shell.py`: boot lands on `launcher` with no app, with the backlight on and the canvas sent to the panel (`VKSTATE` `backlight` and `flushes`: a screenshot reads the canvas and would pass on a black screen); grid navigation; settings and back; an app that exits, an app that errors (`app_error`), the delete confirmation by holding RIGHT. Its two fixture apps are written to a temporary folder at run time.
 - `t_pages1.py`, `t_pages2.py`: every settings page reached by name, drawn, and left with CANCEL; Theme changes config key `theme`; Wallet and Inbox launch their apps. `identity_new` is only ever left with CANCEL.
+- `t_setup.py` (written, **not yet run**): VKSETUP against VKINFO (the first-boot rule); Setup's rows, a name typed on the keyboard into `display_name`, CANCEL as the dismissal (`setup_done`); Badge's time zone (RIGHT RIGHT is `+00:30`, LEFT LEFT is back), the key's rule refusing `+05:31` over `VKSET`, the two pickers left with CANCEL, a balance-poll step each way; Advanced opened and scrolled. Screenshots `shots/setup_<setup|keyboard|badge|pick|advanced>_<theme>.png`. It puts back `display_name`, `utc_offset`, `balance_poll_s`, `setup_done` and `theme`, and never changes the autostart app.
 - `t_about.py`: the About page in both themes. The QR code in each screenshot is read back on the laptop (`common.qr_decode`: OpenCV's detector on the screenshot enlarged three times) and must be exactly `repo_url`; its patch is the light paper in both themes; a module is at least 3 px; with the key empty the page holds no code, and the code returns when the key is set again.
 - Not scriptable on one badge: the boot screen (a person), the offer and installing screens (a broker), the Wi-Fi actions (they would drop the test network).

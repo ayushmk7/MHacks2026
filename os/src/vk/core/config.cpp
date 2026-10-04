@@ -154,13 +154,24 @@ bool parseTokens(const char *text, vk_token_t out[VK_MAX_TOKENS], size_t *count)
 
 bool validate(const ConfigKey &key, const char *text) {
   if (text == nullptr || strlen(text) > VALUE_MAX) return false;
+  bool ok = false;
   switch (key.type) {
-    case Type::STR:    return parseStr(text, key.min, key.max);
-    case Type::U32:    return parseU32(text, key.min, key.max, nullptr);
-    case Type::KEY32:  return parseKey32(text, nullptr);
-    case Type::TOKENS: return parseTokens(text, nullptr, nullptr);
+    case Type::STR:    ok = parseStr(text, key.min, key.max); break;
+    case Type::U32:    ok = parseU32(text, key.min, key.max, nullptr); break;
+    case Type::KEY32:  ok = parseKey32(text, nullptr); break;
+    case Type::TOKENS: ok = parseTokens(text, nullptr, nullptr); break;
   }
-  return false;
+  if (!ok) return false;
+  const KeyRule *rule = ruleFor(key.name);
+  return rule == nullptr || rule->valid == nullptr || rule->valid(text);
+}
+
+const KeyRule *ruleFor(const char *name) {
+  if (name == nullptr) return nullptr;
+  for (auto *rule = KeyRule::first(); rule; rule = rule->next()) {
+    if (rule->name != nullptr && strcmp(rule->name, name) == 0) return rule;
+  }
+  return nullptr;
 }
 
 const ConfigKey *find(const char *name) {

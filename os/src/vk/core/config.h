@@ -60,7 +60,21 @@ bool parseStr(const char *text, uint32_t minLen, uint32_t maxLen);            //
 bool parseU32(const char *text, uint32_t lowest, uint32_t highest, uint32_t *out);   // decimal digits only, value in range
 bool parseKey32(const char *text, uint8_t out[32]);                           // base58 of exactly 32 bytes
 bool parseTokens(const char *text, vk_token_t out[VK_MAX_TOKENS], size_t *count);   // 1..VK_MAX_TOKENS entries
-bool validate(const ConfigKey &key, const char *text);                        // by the key's type and range
+bool validate(const ConfigKey &key, const char *text);                        // by the key's type and range, then its rule
+
+// ---- Added for the on-badge settings (docs/os/platform/config.md, "Key rules"). Nothing above
+// this line was changed except the comment on validate(). ----
+
+// A key's own rule beyond its type and range: utc_offset must be a quarter-hour offset, not just
+// 0..6 characters. validate() applies it, so set(), VKSET, the settings pages and the read of a
+// stored value all refuse what it refuses. Registered next to the key; at most one per key.
+struct KeyRule : Registered<KeyRule> {
+  const char *name;                       // the key it belongs to
+  bool (*valid)(const char *text);        // called only for a text that already passed type and range
+  KeyRule(const char *n, bool (*v)(const char *)) : name(n), valid(v) {}
+};
+#define VK_CONFIG_RULE(ident, name, fn) static vk::config::KeyRule vk_config_rule_##ident{name, fn}
+const KeyRule *ruleFor(const char *name);     // the rule of that key, or nullptr
 
 #ifdef VK_HOST_TEST
 // Host-test seams. hostReboot() forgets everything held in RAM, as a reboot does (the in-memory NVS
