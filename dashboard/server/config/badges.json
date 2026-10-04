@@ -1,37 +1,9 @@
 {
-  "_gap": "BADGE-GAP(badge-pubkeys, key-location, token-accounts): fill from each flashed badge (Settings > Identity). See docs/dashboard/BADGE-GAPS.md",
+  "_gap": "Real badges read with VKINFO on 2026-10-04 (all software keys). Labels are placeholders until roles are assigned; physical stickers map to these keys. See docs/specs/U6-app-decisions.md",
   "badges": [
-    {
-      "id": 1,
-      "label": "Merchant (team)",
-      "pubkey": "ChPPKh4s47BMK3RGVCRc53fsUuw2xgSXw8jefRGhzA39",
-      "keyLocation": "software",
-      "tokenAccount": null,
-      "standIn": false
-    },
-    {
-      "id": 2,
-      "label": "Impostor (team)",
-      "pubkey": "DhEb6hTLaMQt13xYd8fNASC4PAQoV8mbMkJzH7pCW511",
-      "keyLocation": "software",
-      "tokenAccount": null,
-      "standIn": true
-    },
-    {
-      "id": 3,
-      "label": "Judge A",
-      "pubkey": "4vJDQvQxRrfLYpjFWXFsVTMsw7cayvWB46pnzdn2BW97",
-      "keyLocation": "software",
-      "tokenAccount": null,
-      "standIn": true
-    },
-    {
-      "id": 4,
-      "label": "Judge B",
-      "pubkey": "FdBSxAmqiTcttuoTezCQRTLRk4pgQpZ8uqGfve5N17XD",
-      "keyLocation": "software",
-      "tokenAccount": null,
-      "standIn": true
-    }
+    { "id": 1, "label": "Badge 8DTh", "pubkey": "8DThDhtyLSgW81XSqqD3SSXtb1yCYqk37iD7zDypoh9q", "keyLocation": "software", "tokenAccount": null, "standIn": false },
+    { "id": 2, "label": "Badge EEpk", "pubkey": "EEpkZNjVHXXCSCuCQub41vhHrXYdU899yF3y4AsVMXVL", "keyLocation": "software", "tokenAccount": null, "standIn": false },
+    { "id": 3, "label": "Badge 5vpm", "pubkey": "5vpmgLuCfbV7Lp2hTNFz7w75ibhVkc56G1mR6weQedvj", "keyLocation": "software", "tokenAccount": null, "standIn": false },
+    { "id": 4, "label": "Badge ApWU", "pubkey": "ApWUpQZtNXsy7LTA7bhnyLY6xyG1jU5S2EjuQWXAJjFQ", "keyLocation": "software", "tokenAccount": null, "standIn": false }
   ]
 }
