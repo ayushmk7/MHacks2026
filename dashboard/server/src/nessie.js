@@ -42,8 +42,8 @@ export function createNessie({ key = () => process.env.NESSIE_KEY || '', base = 
   const dollars = amount => (Number.isSafeInteger(amount) && amount > 0 ? amount : fail(400, `amount must be a positive whole number of dollars, got ${amount}`));
 
   // A deposit or withdrawal record on one account (same body for both). Returns the new record's id.
-  // ponytail: POST /accounts/{id}/withdrawals is UNVERIFIED against the live 2026 API; it is assumed to take the
-  // deposit body ({medium, transaction_date, status, amount, description}). Deposits are verified.
+  // Both verified against the live 2026 API (2026-10-04): withdrawals require only medium + amount but accept the
+  // full deposit body ({medium, transaction_date, status, amount, description}).
   const record = async (kind, accountId, { amount, description }) =>
     createdId(await api('POST', `/accounts/${encodeURIComponent(accountId)}/${kind}s`, {
       medium: 'balance', transaction_date: today(), status: 'completed', amount: dollars(amount), description }), kind);
