@@ -36,6 +36,8 @@ Recipes for every kind of addition and removal: [guides/extending.md](guides/ext
 
 As of 2026-10-04, on one development badge (software key, no network, no second badge).
 
+- **Later on 2026-10-04, two badges.** Requests, the green approval (record verified, payee present: T-REQ1 to T-REQ4, T-CHK1), the contact swap (T-CON1, T-CON2) and the Duel passed between two badges (commit `0be6486`). `scripts/fleet.sh` flashes several badges with one build and fails if their launchers differ. The pinned devnet values (issuer `2SXh6Xng…`, HACK mint `3VmWnzfW…`) are in `os/provision.public.env`. The bullets below were written before these runs and still describe the one-badge state; a payment confirmed on devnet is not recorded here yet.
+
 - **BadgeOS runs on the badge with its own shell.** Upstream's launcher, settings screens, dialogs and splash are gone; the boot screen, the launcher, the settings list with its fourteen rows, the delete confirmation and the app-error screen are BadgeOS's, in the Receipt design, light and dark ([shell](ui/shell.md)). Nothing a user or the network can see names upstream; the check is `scripts/check-names.py` plus `strings` on the image ([names](architecture/upstream-hooks.md#checking-the-hooks)). `os/` is upstream plus hooks H1 to H13, H16, H17, H19, H21, H23, H24 and H25 and the files listed as replaced.
 - **Two profiles build.** Dev 1,991,895 bytes, release 1,983,131 bytes (the slot is 3,342,336). The release build has none of the dev commands (T-REL2 passed). The badge carries the dev build.
 - **Everything that one badge can show passes.** Fourteen host suites and 25 scripted device tests ([testing](testing/testing.md)): boot, config and provisioning, the approval engine and its screen in both themes, the transfer decoder and every refusal vector, the record checks (T-CHK2 to T-CHK9), signing with the badge key (the signature verifies on the laptop), history, permissions and consent, native apps, notifications, contacts on one badge, every shell screen in both themes, and every shipped app up to the point where it needs a peer or the network. Every app returns to the launcher on CANCEL and on the force-quit hold.
@@ -82,9 +84,13 @@ As of 2026-10-04, on one development badge (software key, no network, no second 
 | [guides/extending.md](guides/extending.md) | how to add or remove anything |
 | [testing/testing.md](testing/testing.md) | host tests, dev hooks, acceptance tests, measurements |
 | [roadmap/implementation-plan.md](roadmap/implementation-plan.md) | the work packages, in order, with gates |
+| [roadmap/execution-plan.md](roadmap/execution-plan.md) | how the packages were run: batches, agent briefs, the device-test format |
 | [reference/reasons.md](reference/reasons.md) | reason codes, headlines, glossary |
 | [reference/upstream-readme.md](reference/upstream-readme.md) | upstream's README: the upstream Lua API and push protocol |
 | [reference/differences-from-specs.md](reference/differences-from-specs.md) | what changed from `docs/specs/` and what other tracks must do |
+| [reference/conventions.md](reference/conventions.md) | naming of files, identifiers, keys and commands; how folders and files are documented; known deviations |
+
+Each folder of `os/` has a short README that says what is in it and how to run or add to it, and points back here: [`os/`](../../os/README.md), [`apps/`](../../os/apps/README.md), [`lib/`](../../os/lib/README.md), [`scripts/`](../../os/scripts/README.md), [`test/`](../../os/test/README.md), [`templates/`](../../os/templates/README.md), [`src/vk/`](../../os/src/vk/README.md), [`src/native_apps/`](../../os/src/native_apps/README.md).
 
 ## Reading order
 
@@ -109,6 +115,7 @@ As of 2026-10-04, on one development badge (software key, no network, no second 
 7. Write the host test first for anything in `src/vk/wallet/pure/` and for every state machine.
 8. A package is done when its tests pass on a badge. If hardware contradicts a document, apply the stated fallback, update the document, and say so in the commit.
 9. Do not invent requirements. If the documents do not say it, it is not needed; if it seems needed, add it to the owning document first.
+10. Name and document new files, identifiers, keys and folders as [conventions](reference/conventions.md) says. Do not rename an existing name to fit it.
 
 ## Open items
 

@@ -116,7 +116,7 @@ src/vk/
     contacts/                      domain "contact"; frames; store; Lua
     history/                       signature log store; Lua
     balance/                       RPC poller; Lua (the launcher shows the balance)
-    bank/                          domain "bank" (optional, last)
+    selftest_sign/                 domain "selftest": the signature check of the Self test app
     devtools/                      dev serial commands (dev profile only); see testing.md
 src/native_apps/
   inbox/  wallet_settings/  selftest/  nativetest/ (dev only)   one file each, self-registering (BADGE_APP)
@@ -125,8 +125,8 @@ apps/                              Lua apps, one folder each; app.ini says where
                                    No script or C++ file names an app. (upstream's six samples are deleted)
 templates/                         lua_app/ and native_app/: what scripts/new-app.sh copies for a new app
 lib/vk.lua                         shared Lua library (copied into each app when pushed)
-scripts/                           build.sh  preflash-check.sh  push-apps.sh  push_serial.py  new-app.sh
-                                   vkdev.py (serial tool: provision, push, test hooks)
+scripts/                           build.sh  fleet.sh  preflash-check.sh  check-names.py  push-apps.sh  push_serial.py
+                                   new-app.sh  vkdev.py (serial tool: provision, push, test hooks)
 test/host/                         host tests (run.sh, test_*.c, vectors.*)
 test/device/                       scripted on-device tests driven by vkdev.py
 ```
