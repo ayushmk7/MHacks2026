@@ -1,0 +1,145 @@
+# Apps
+
+Every app Badge OS ships: what it is for, its permissions, its screens and its flow. Lua apps live in `firmware/solana-os/apps/<id>/`; native apps in `firmware/solana-os/src/native_apps/<id>/`.
+
+## Rules for every Lua app
+
+- `app.ini` lists `permissions=` and `min_api=2` ([app host](../platform/app-host.md#manifest)).
+- Anything a person might want to change (a price, a recipient, a step size, a colour) is in the app's own `config.lua`, which returns a table. `main.lua` contains no such literals. Customising an app is editing `config.lua` and pushing again.
+- Shared code comes from `require("vk")` ([Lua API](../platform/lua-api.md#libvklua)); an app does not carry its own base64, JSON or RPC code.
+- CANCEL (`"b"`) always goes back or exits. No app traps it.
+- Amounts are strings. Amount stepping uses the app's own integer count of minor units, formatted with a helper; never a float.
+- An app never draws anything that imitates the firmware approval screen.
+- Apps are independent: deleting one app's folder breaks no other app.
+
+| App | Id | Kind | Permissions |
+|---|---|---|---|
+| Sign test | `signtest` | Lua, dev only | `sign,net` |
+| Home | `home` | Lua | `net` |
+| Pay | `pay` | Lua | `sign,net,espnow` |
+| Request | `request` | Lua | `request,net,espnow` |
+| History | `history` | Lua | `history` |
+| Contacts | `contacts` | Lua | `contacts,espnow` |
+| Game | `game` | Lua | `sign,net,espnow,storage` |
+| Evil game | `evilgame` | Lua, demo only | `sign,net,espnow,storage` |
+| Duel | `duel` | Lua | `sign,request,net,espnow` |
+| Check test | `checktest` | Lua, dev only (test fixture, WP21) | `sign,net` |
+| Library test | `vktest` | Lua, dev only (test fixture, WP35) | `sign,net,espnow` |
+| Request test | `reqtest` | Lua, dev only (test fixture, WP23): opens a request and logs RESULT frames | `request,espnow` |
+| Launcher | `launcher` | native | — |
+| Settings | `settings` | native | — |
+| Inbox | `inbox` | native | — |
+| Wallet | `wallet_settings` | native | — |
+| Hello (C++) | `hello_native` | native | — |
+
+## Sign test
+
+The first app, used to reach gate 1 and by the unattended test loop. Dev profile only; never pushed to a judge badge.
+
+1. `GET <listener_url>/badge/pending?badge=<wallet.address()>` every 2 s. The reply holds `id` and `messageBase64` ([backend](../integration/backend.md#existing-routes)).
+2. `wallet.begin_solana(codec.b64dec(messageBase64))` with no `ctx`. In the dev profile the approval is red "UNVERIFIED RECIPIENT" with the hold-to-sign override.
+3. On a signature: `vk.send_tx(wallet.wire_tx(sig, msg))`. The dashboard detects a signed transaction from the chain; nothing is posted. On refusal: `POST <listener_url>/badge/outcome` with `{id, outcome="rejected"}`.
+4. Screen: one status line (`waiting`, `approving`, `sent <short sig>`, `refused: <reason>`).
+
+## Home
+
+The landing app (set as upstream's autostart app by provisioning).
+
+- Calls `wallet.refresh_balance()` on start and every `balance_poll_s` seconds (the firmware does not poll while an app runs). Shows the badge's display name, short address (first 4 + `..` + last 4), key location, and `wallet.balance()` for the default token; "SETUP NEEDED" when unprovisioned; "clock not set" when `time_ok()` is false.
+- A menu of the other installed apps (`badge.system.apps()` filtered by the list in `config.lua`); SELECT launches with `badge.system.launch(id)`.
+- CANCEL exits to the launcher.
+
+## Pay
+
+1. **List.** `wallet.requests()` sorted by `rssi`, strongest first: claimed name, amount, signal bars. Empty: "No requests nearby". Refreshes every 500 ms.
+2. **Pay.** SELECT on a request starts `vk.pay.start{request = entry}`. The screen shows the flow's state (`checking presence`, `fetching record`, `building`, `approve on the firmware screen`, `sending`, `confirming`).
+3. **Result.** `done`: "Paid", the short signature, green LEDs; a RESULT frame has been sent to the payee. `failed`: the reason in words; for a firmware block (`unverified`, `revoked`, `mismatch`, `bad_proof`, `expired`) the app calls `vk.report{...}` so the dashboard shows the refusal.
+
+The app shows the request's *claimed* name in the list, labelled as a claim. The verified name appears only on the firmware approval.
+
+## Request
+
+1. **Amount.** UP/DOWN change the amount by `config.step` minor units; LEFT/RIGHT by ten steps. SELECT opens the request.
+2. **Waiting.** `wallet.request_open{amount = ...}`; the screen shows the amount, "waiting for payment", seconds left, and `request_status().proofs` as "badges checking: n". CANCEL closes the request.
+3. **Paid.** On a RESULT frame (`vk.result_parse`) for this `req_id` with status 0: `vk.confirm(ref)` until `confirmed` (poll every 2 s, up to 30 s), then "PAID" and green LEDs. Status 1 or 2: "Payer cancelled" / "Payment failed". A RESULT is never trusted without the on-chain confirmation.
+
+## History
+
+A scrolling list of `wallet.history(64)`: time, outcome (coloured), amount and symbol, recipient name or short address, app. SELECT on a row shows the full record including the reason and the short signature.
+
+## Contacts
+
+- **List.** `wallet.contacts()`: name, short address, date added. RIGHT removes after a confirm line.
+- **Swap** (SELECT on "Swap contacts"): the app broadcasts `wallet.contact_hello()` once a second and listens.
+  - On a CONTACT_HELLO from another badge (`vk.hello_parse`): show "Swap with `<name>`?"; SELECT sends `wallet.contact_card(hello)` unicast to it.
+  - On a CONTACT_CARD: `wallet.contact_accept(card)`; on success show "Saved `<name>`" and pulse green; on failure show the reason.
+  - Both badges do both halves, so each ends up with the other's card.
+- Names here are labelled "self-named"; they are not verified identities.
+
+## Game
+
+A single-player arcade game with a shop, to show that an ordinary app can take payments safely.
+
+- **Play.** A dodge game: the player moves LEFT/RIGHT along the bottom, blocks fall, the score counts seconds survived. Speed rises over time. High score in `badge.storage`.
+- **Shop.** From the title screen: items from `config.shop.items` (`{name, price}`); SELECT buys with `vk.pay.start{to = config.shop.recipient, amount = item.price, memo = item.name}`. The approval is amber "VERIFIED - NOT PRESENT" (a shop has no badge present), and shows the real amount and the shop's verified name.
+- On `done` the item (an extra life, a colour) is unlocked and stored.
+
+`config.lua`: `shop.recipient` (address with a registry record), `shop.items`, `speed`, `colors`.
+
+## Evil game
+
+The same game with a dishonest shop, for the demo. `apps/evilgame/` contains only `app.ini` and `config.lua`; `scripts/push-apps.sh` copies `apps/game/*.lua` except `config.lua` into it before pushing.
+
+`config.lua` adds `evil`:
+
+| `evil` | What the game does | What the firmware shows |
+|---|---|---|
+| `"amount"` | its own screen says "Buy sword: 5.00", but it builds the transfer for `config.evil_amount` (500.00) | the true amount, `500.00 HACK`, and a hold because it is over the cap |
+| `"recipient"` | builds the transfer to `config.evil_recipient` while passing the real shop's record | red, WRONG RECIPIENT; cannot be signed |
+
+The point of the demo: the game's screen lies, the firmware's cannot.
+
+## Duel
+
+Two badges, one stake.
+
+1. **Invite.** Badge A picks a stake (`config.stakes`) and broadcasts INVITE (app frame type 64: stake string, a random 8-byte game id). Badge B shows "Duel `<name>` for `<stake>`?"; SELECT sends ACCEPT (type 65).
+2. **Play.** A reaction round: after a random 2–5 s delay chosen by A and sent as GO (type 66), both screens flash; each player presses SELECT; each badge sends its reaction time in TIME (type 67). Best of `config.rounds`.
+3. **Settle.** The winner's badge calls `wallet.request_open{amount = stake}`; the loser's badge finds that request in `wallet.requests()` (matching the winner's key) and runs `vk.pay.start{request = entry}`. This is the full payment flow, so the approval can be green.
+4. The winner shows PAID after confirming on chain, or "unpaid" if no confirmed RESULT arrives within `config.settle_timeout_s`.
+
+Limits to state honestly: there is no escrow (the loser can press CANCEL), and reaction times are self-reported (a modified app could lie). Frame types 64–71 are reserved for Duel ([protocol](../protocol/espnow.md#type-registry)).
+
+## Launcher (native)
+
+The MENU screen ([ui](../ui/ui.md#launcher-and-settings)): every installed app except itself in a two-column grid, UP/DOWN move by a row, LEFT/RIGHT by a column, SELECT launches, CANCEL opens `settings`. Below the grid: the balance row (from `vk::wallet::tokenInfoLookup`; `--` when unknown) and the badge's barcode. The home service keeps it in front.
+
+## Settings (native)
+
+A list: **Theme** (value shows the active theme; SELECT cycles through registered themes and writes config key `theme`), **Wallet** (launches `wallet_settings`), **Inbox** (launches `inbox`), **System settings** (`vk::host::showShell()`: upstream's own settings screens). CANCEL returns to the launcher.
+
+Every Lua app draws with `vk.ui` so it carries the Receipt look in both modes; no app hard-codes a colour.
+
+## Inbox (native)
+
+Lists `vk::host::notify` notes, newest first: title, body, age. SELECT launches the note's `app_id` and removes the note; RIGHT dismisses; CANCEL exits. Empty: "Nothing new".
+
+## Wallet (native)
+
+Read-only pages, LEFT/RIGHT to change page:
+
+1. **Status**: provisioned or not, public key (full, wrapped), key location, clock source, build profile, domain self-check result.
+2. **Tokens**: each token's symbol, mint (short), cap, max, balance.
+3. **Config**: every config key and value (`VKKEYS` in screen form).
+4. **Apps**: native apps and their declared permissions; Lua apps with stored consent.
+5. **Reset**: "Reset wallet config" → `vk::config::requestReset()`.
+
+Balances come from `vk::wallet::tokenInfoLookup`; the page shows "—" when the balance feature is absent.
+
+## Hello (native)
+
+The smallest native app ([native apps](../platform/native-apps.md#the-smallest-app)). Kept as the template to copy.
+
+## Adding an app
+
+Lua: a new folder with `app.ini`, `main.lua`, `config.lua`; push it. Native: a new folder with one `.cpp`; reflash. Recipes: [../guides/extending.md](../guides/extending.md#add-a-lua-app). Add a row to the table at the top of this document.

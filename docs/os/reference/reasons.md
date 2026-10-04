@@ -1,0 +1,75 @@
+# Reason codes and glossary
+
+## Reason codes
+
+One list for every refusal in Badge OS. In C it is `vk_reason_t` (`src/vk/wallet/pure/vk_reason.h`); in Lua it is the lower-case string returned as the second value of `nil, reason`; in the history store it is the numeric value. The order is fixed: new codes are added at the end.
+
+| # | C | Lua string | Meaning | Where it appears |
+|---|---|---|---|---|
+| 0 | `VK_OK` | `ok` | no error | — |
+| 1 | `VK_CANCELLED` | `cancelled` | the user pressed CANCEL on a green or amber approval | `poll` |
+| 2 | `VK_TIMEOUT` | `timeout` | a green or amber approval was not answered in `approval_tmo_s` | `poll` |
+| 3 | `VK_UNDECODABLE` | `undecodable` | the bytes are not a payment the badge can read, the token is unknown, or account 0 is not this badge | `poll` (red approval) |
+| 4 | `VK_UNVERIFIED` | `unverified` | no record, a record whose issuer signature fails, or a request that does not verify | `poll` (red); `vk.record` on 404 |
+| 5 | `VK_REVOKED` | `revoked` | the record says revoked | `poll` (red) |
+| 6 | `VK_EXPIRED` | `expired` | the record is past its expiry or older than `record_ttl_s`; a contact nonce is no longer current | `poll` (red); `contact_accept` |
+| 7 | `VK_MISMATCH` | `mismatch` | the decoded recipient or amount differs from the record or the request; a contact card made for another badge | `poll` (red); `contact_accept` |
+| 8 | `VK_BAD_PROOF` | `bad_proof` | a presence proof or contact card signature is invalid | `poll` (red); `contact_accept` |
+| 9 | `VK_OVER_CAP` | `over_cap` | the amount is above the token's `max` | `poll` (red) |
+| 10 | `VK_NO_TIME` | `no_time` | the clock has no trusted source | `request_open` |
+| 11 | `VK_BUSY` | `busy` | an approval is open or a result is waiting to be polled; two requests are already open | `begin`; `request_open` |
+| 12 | `VK_DENIED` | `denied` | the app lacks the permission | `begin` (native apps; Lua apps get a Lua error instead) |
+| 13 | `VK_NOT_PROVISIONED` | `not_provisioned` | the badge has not been provisioned | `begin`; `request_open` |
+| 14 | `VK_TOO_LONG` | `too_long` | the bytes exceed the domain's limit or what the key can sign (242 bytes with an SE050 key) | `begin` |
+| 15 | `VK_SIGN_FAILED` | `sign_failed` | the key refused or the domain table failed its self-check | `poll`; `request_open`; `contact_card` |
+| 16 | `VK_BAD_ARG` | `bad_arg` | an argument has the right type but an invalid value | any function |
+| 17 | `VK_UNSUPPORTED` | `unsupported` | the domain or feature is not in this firmware; a default could not be resolved | `begin`; `build_transfer` |
+| 18 | `VK_IDLE` | `idle` | `poll` was called with nothing begun | `poll` |
+
+Rules: a red approval always reports its own cause (`red_reason`), however it was closed. An app decides what to tell the user from the reason; `vk.report` forwards `unverified`, `revoked`, `expired`, `mismatch` and `bad_proof` to the dashboard feed.
+
+Decoder errors (`sol_tx_err_t`, [solana-payments](../wallet/solana-payments.md#decoder-rules)) are logged as `[pay] undecodable: <name>` and all surface to apps as `undecodable`.
+
+## Approval headlines
+
+| Headline | Colour | Reason if red |
+|---|---|---|
+| `VERIFIED - PRESENT` | green | — |
+| `VERIFIED - NOT PRESENT` | amber | — |
+| `CLOCK UNSYNCED` | amber | — |
+| `CANNOT READ PAYMENT` | red | `undecodable` |
+| `UNKNOWN TOKEN` | red | `undecodable` |
+| `OVER LIMIT` | red | `over_cap` |
+| `UNVERIFIED RECIPIENT` | red | `unverified` |
+| `REVOKED` | red | `revoked` |
+| `EXPIRED`, `STALE RECORD` | red | `expired` |
+| `WRONG RECIPIENT`, `WRONG AMOUNT` | red | `mismatch` |
+| `BAD REQUEST` | red | `unverified` |
+| `BAD PROOF` | red | `bad_proof` |
+| `NEW PERMISSIONS`, `SECURITY SETTING`, `ERASE WALLET CONFIG` | amber | — (confirmations) |
+
+## Glossary
+
+| Term | Meaning |
+|---|---|
+| Approval | the firmware's own full-screen prompt on which the user accepts or rejects; the only place a button-domain signature can come from |
+| App host | the layer that launches apps, enforces permissions, routes frames and holds notifications |
+| ATA | associated token account: the account that holds one owner's balance of one token |
+| Auto domain | a signing domain that signs without a button press; its bytes are always built by firmware |
+| Button domain | a signing domain that signs only after SELECT on the approval |
+| Check chain | the pure function that turns message + record + request + presence + clock into a verdict |
+| Config key | a provisioned setting stored in NVS |
+| Consent | the user's one-time approval of an app's sensitive permissions |
+| Dev profile | the build with test hooks and the hold-to-sign override; never flashed on a judge badge |
+| Feature | a self-contained folder under `src/vk/features/` |
+| Hook | a single marked line in an upstream file that calls into `src/vk/` |
+| Issuer | the key that signs registry records; the backend's registry authority |
+| Listener | the backend's badge-facing HTTP port on the hotspot |
+| Presence | proof, by a fresh signed answer within a deadline, that the payee's key holder is in range now |
+| Provisioned | all required config keys are set and committed |
+| Record | the issuer-signed statement of who a device key belongs to and which token account is theirs |
+| Registry (code) | a self-registering list of rows of one kind (domains, routes, services, ...) |
+| Request (REQ) | a payee's signed "pay me" frame |
+| Severity | green, amber or red |
+| Upstream | Solana OS at commit `812b8c7` |
+| Verdict | the output of the check chain: severity, select rule, headline, reason |

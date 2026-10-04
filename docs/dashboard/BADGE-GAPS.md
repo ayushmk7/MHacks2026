@@ -1,6 +1,6 @@
 # Badge gaps
 
-The panel was built before any badge was flashed. Every place that depends on badge hardware or firmware is marked in the code with `BADGE-GAP(<id>)`. This file is the single list of them on the dashboard side. The badge-side counterpart, which says how the firmware closes each gap, is [../os/integration/dashboard.md](../os/integration/dashboard.md).
+The panel was built before any badge was flashed. Every place that depends on badge hardware or firmware is marked in the code with `BADGE-GAP(<id>)`. This file is the single list of them on the dashboard side. The badge-side counterpart, which says how the firmware closes each gap, is [../os/integration/backend.md](../os/integration/backend.md).
 
 Paths in this document are relative to `dashboard/` (so `server/src/config.js:38` is `dashboard/server/src/config.js`, line 38). npm scripts run from `dashboard/`. Line numbers are as of 2026-10-03.
 
@@ -59,7 +59,7 @@ On 2026-10-03 the grep printed 27 marker lines in code and config, plus the line
 
 ## When a real badge arrives
 
-The badge side of each step (where the public key is shown, what the firmware polls and posts) is in [../os/integration/dashboard.md](../os/integration/dashboard.md). The steps below are the laptop side. All commands run from `dashboard/`.
+The badge side of each step (where the public key is shown, what the firmware polls and posts) is in [../os/integration/backend.md](../os/integration/backend.md). The steps below are the laptop side. All commands run from `dashboard/`.
 
 Per badge:
 
