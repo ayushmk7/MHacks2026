@@ -1,6 +1,7 @@
 // npm run nessie:seed [-- --check]
 // Seeds Capital One Nessie for the demo: one customer + checking account per payer, one person payee
-// (customer + account), the "MHacks Merch" merchant, one test purchase and one test transfer.
+// (customer + account), the "MHacks Merch" merchant, the business customer + checking account that receives MHacks
+// Merch's Capital One settlements, one test purchase and one test transfer.
 // Idempotent: IDs are saved to server/config/nessie.json after every create and reused on re-runs.
 // --check is read-only: verifies the key and prints what the seed would create. The key is never printed.
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
@@ -18,6 +19,9 @@ const PAYERS = [
 ];
 const PERSON = { role: 'person_payee', first_name: 'Sam', last_name: 'Witwicky', balance: 100 };
 const MERCHANT = { name: 'MHacks Merch', category: 'Merchandise', address: ADDRESS, geocode: { lat: 42.2780, lng: -83.7382 } };
+// The business behind the merchant: Capital One settlement deposits land in this account (merchant.account_id).
+// Nessie customers have no business flag, so it is a customer named after the business.
+const MERCHANT_HOLDER = { first_name: 'MHacks', last_name: 'Merch', balance: 0 };
 const TEST_AMOUNT = 1;   // dollars: Nessie amounts are dollars, the badge payload is cents
 
 const redact = s => (KEY ? String(s).split(KEY).join('<key>') : String(s));
@@ -65,6 +69,9 @@ async function main() {
     console.log('would create:');
     for (const p of [...PAYERS, PERSON]) console.log(`  customer ${p.first_name} ${p.last_name} + Checking account ($${p.balance})`);
     console.log(`  merchant ${MERCHANT.name} (${MERCHANT.address.city}, ${MERCHANT.address.state})`);
+    const m = state.merchant ?? {};
+    console.log(`  business customer ${MERCHANT_HOLDER.first_name} ${MERCHANT_HOLDER.last_name} + Checking account ($${MERCHANT_HOLDER.balance}) for settlements`
+      + (m.account_id ? ` (saved: customer ${m.customer_id}, account ${m.account_id}, reused if still there)` : ''));
     console.log(`  purchase Judge A -> ${MERCHANT.name} $${TEST_AMOUNT}.00 (medium balance)`);
     console.log(`  transfer Judge A -> ${PERSON.first_name} ${PERSON.last_name} $${TEST_AMOUNT}.00 (transfer on payer + matching deposit on payee)`);
     console.log('\nCheck done. Nothing was created.');
@@ -76,10 +83,23 @@ async function main() {
   console.log(`person    ${person.name}  customer ${person.customer_id}  account ${person.account_id}${person.reused ? '  (reused)' : ''}`);
 
   if (!(state.merchant?.id && await stillThere(`/merchants/${state.merchant.id}`))) {
-    state.merchant = { name: MERCHANT.name, id: createdId(await api('POST', '/merchants', MERCHANT), 'merchant') };
+    state.merchant = { ...state.merchant, name: MERCHANT.name, id: createdId(await api('POST', '/merchants', MERCHANT), 'merchant') };
     save();
   }
   console.log(`merchant  ${state.merchant.name}  ${state.merchant.id}`);
+
+  // Settlement account: issue the merchant with settleMode 'bank' and nessieAccountId = this account id.
+  if (!(state.merchant.account_id && await stillThere(`/accounts/${state.merchant.account_id}`))) {
+    const h = MERCHANT_HOLDER;
+    const customer_id = state.merchant.customer_id && await stillThere(`/customers/${state.merchant.customer_id}`) ? state.merchant.customer_id
+      : createdId(await api('POST', '/customers', { first_name: h.first_name, last_name: h.last_name, address: ADDRESS }), 'customer');
+    state.merchant.customer_id = customer_id;
+    save();
+    state.merchant.account_id = createdId(await api('POST', `/customers/${customer_id}/accounts`,
+      { type: 'Checking', nickname: `${MERCHANT.name} settlement`, rewards: 0, balance: h.balance }), 'account');
+    save();
+  }
+  console.log(`business  ${MERCHANT.name}  customer ${state.merchant.customer_id}  account ${state.merchant.account_id}  (settlement deposits)`);
 
   // This Nessie (2026 rebuild) differs from the classic docs: amounts are integers (whole dollars), purchases are created with `purchase_date`,
   // other records use `transaction_date`, `status` is required to read a record back, and a transfer has no
@@ -124,7 +144,7 @@ async function main() {
   await show('purchase', `/purchase/${state.tests.purchase_id}`);
   await show('transfer', `/transfers/${state.tests.transfer_id}`);
   await show('deposit', `/deposits/${state.tests.deposit_id}`);
-  for (const [label, id] of [['Judge A', judgeA], ['Judge B', state.payers.judge_b.account_id], [person.name, person.account_id]]) {
+  for (const [label, id] of [['Judge A', judgeA], ['Judge B', state.payers.judge_b.account_id], [person.name, person.account_id], [MERCHANT.name, state.merchant.account_id]]) {
     const a = await api('GET', `/accounts/${id}`);
     console.log(`balance   ${label.padEnd(12)} $${a.balance}`);
   }

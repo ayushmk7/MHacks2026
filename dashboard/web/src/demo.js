@@ -39,21 +39,24 @@ const badges = [
 ];
 const badgeOf = pubkey => badges.find(b => b.pubkey === pubkey);
 
-const CAFE = b58(44, 'DemoXCafe'), RELAY = b58(44, 'DemoRelay');
+// RELAY is Relay B, the gateway (last hop before the merchant). ROGUE carries payments but holds no attestation: an unverified hop.
+const CAFE = b58(44, 'DemoXCafe'), RELAY = b58(44, 'DemoHopB'), RELAY_A = b58(44, 'DemoHopA'), ROGUE = b58(44, 'DemoXRogue');
 const attestations = [
   { subject: badges[0].pubkey, badgeId: 1, label: badges[0].label, name: 'MHacks Merch', kind: 'merchant', status: 'verified', pda: b58(44, 'DemoAtt'),
-    issuedSig: b58(88), issuedAt: iso(T0 - 3 * 3600e3), revokedSig: null, revokedAt: null, expiresAt: iso(T0 + 30 * 86400e3) },
+    issuedSig: b58(88), issuedAt: iso(T0 - 3 * 3600e3), revokedSig: null, revokedAt: null, expiresAt: iso(T0 + 30 * 86400e3), settleMode: 'bank' },
   { subject: badges[2].pubkey, badgeId: 3, label: badges[2].label, name: 'Alice (judge)', kind: 'person', status: 'verified', pda: b58(44, 'DemoAtt'),
-    issuedSig: b58(88), issuedAt: iso(T0 - 2.5 * 3600e3), revokedSig: null, revokedAt: null, expiresAt: iso(T0 + 30 * 86400e3) },
+    issuedSig: b58(88), issuedAt: iso(T0 - 2.5 * 3600e3), revokedSig: null, revokedAt: null, expiresAt: iso(T0 + 30 * 86400e3), settleMode: 'hack' },
   { subject: RELAY, badgeId: null, label: null, name: 'Relay Hall B', kind: 'relay', status: 'verified', pda: b58(44, 'DemoAtt'),
-    issuedSig: b58(88), issuedAt: iso(T0 - 2 * 3600e3), revokedSig: null, revokedAt: null, expiresAt: iso(T0 + 30 * 86400e3) },
+    issuedSig: b58(88), issuedAt: iso(T0 - 2 * 3600e3), revokedSig: null, revokedAt: null, expiresAt: iso(T0 + 30 * 86400e3), settleMode: null },
+  { subject: RELAY_A, badgeId: null, label: null, name: 'Relay Hall A', kind: 'relay', status: 'verified', pda: b58(44, 'DemoAtt'),
+    issuedSig: b58(88), issuedAt: iso(T0 - 2.1 * 3600e3), revokedSig: null, revokedAt: null, expiresAt: iso(T0 + 30 * 86400e3), settleMode: null },
   { subject: OLD, badgeId: null, label: null, name: 'Old Merch', kind: 'merchant', status: 'revoked', pda: b58(44, 'DemoAtt'),
-    issuedSig: b58(88), issuedAt: iso(T0 - 26 * 3600e3), revokedSig: b58(88), revokedAt: iso(T0 - 2 * 3600e3), expiresAt: iso(T0 + 29 * 86400e3) },
+    issuedSig: b58(88), issuedAt: iso(T0 - 26 * 3600e3), revokedSig: b58(88), revokedAt: iso(T0 - 2 * 3600e3), expiresAt: iso(T0 + 29 * 86400e3), settleMode: 'hack' },
   // 'expired' is what the server reports once expiresAt has passed; the badge rejects the record from then on.
   { subject: CAFE, badgeId: null, label: null, name: 'Pop-up Cafe', kind: 'merchant', status: 'expired', pda: b58(44, 'DemoAtt'),
-    issuedSig: b58(88), issuedAt: iso(T0 - 9 * 86400e3), revokedSig: null, revokedAt: null, expiresAt: iso(T0 - 86400e3) },
+    issuedSig: b58(88), issuedAt: iso(T0 - 9 * 86400e3), revokedSig: null, revokedAt: null, expiresAt: iso(T0 - 86400e3), settleMode: 'hack' },
 ];
-const operators = new Map([[RELAY, 'op-hallb-01']]); // relay subject -> operator id. Backend-only (never in a response), like the server's DB.
+const operators = new Map([[RELAY, 'op-hallb-01'], [RELAY_A, 'op-halla-01']]); // relay subject -> operator id. Backend-only (never in a response), like the server's DB.
 const syncBadge = a => { const b = badgeOf(a.subject); if (b) b.attestation = { status: a.status, name: a.name, kind: a.kind, pda: a.pda, issuedSig: a.issuedSig, revokedSig: a.revokedSig }; };
 attestations.forEach(syncBadge);
 
@@ -89,6 +92,7 @@ for (let i = 24; i >= 0; i--) {
   const ms = T0 - 6000 - i * 11000 - Math.floor(rnd() * 4000);
   if (i === 6) mint({ payer: judgeA, payee: AUTH, amount: 500, ms, attackId: SIGNED_ATTACK });
   else if (i === 13) mint({ payer: judgeB, payee: OLD, amount: 8, ms });
+  else if (i === 3) mint({ payer: judgeA, payee: merchant, amount: 12.5, ms }); // fractional: Nessie only takes whole dollars, so its settlement is skipped
   else mint({ ...randomTransfer(), ms });
 }
 
@@ -175,6 +179,95 @@ function approve({ ms, rail = 'nessie', source = 'backend', payer = judgeA, paye
   { amountCents: 1000, status: 'pending' },
 ].forEach((x, i, all) => approve({ ...x, ms: T0 - 4000 - (all.length - i) * 17000 }));
 
+const byTime = list => list.sort((a, b) => b.time.localeCompare(a.time)); // newest first, in place
+
+// Routed payments (Tier 0): a normal payment whose radio messages hopped through relays. Shape of GET /api/routes.
+// The network (treasury) rewards each verified relay 0.01 HACK once the payment is confirmed; an unverified hop earns nothing.
+const REWARD = 0.01;
+const routes = [];
+const relayName = pk => attestations.find(a => a.subject === pk && a.kind === 'relay')?.name ?? badgeOf(pk)?.label ?? null;
+const isRelay = pk => attestations.some(a => a.subject === pk && a.kind === 'relay' && a.status === 'verified');
+// rewards: 'paid' | 'pending' | 'failed' (the state every verified hop starts in), e2eProof: the payer badge's "confirmed" came back end to end.
+function route(p, hopKeys, { rewards = 'paid', e2eProof = true } = {}) {
+  const hops = hopKeys.map((pk, i) => {
+    const verified = isRelay(pk), state = verified ? rewards : 'none';
+    return { position: i + 1, pubkey: pk, label: relayName(pk), verified, reward: verified ? REWARD : 0, rewardState: state,
+      rewardSig: state === 'paid' ? b58(88) : null };
+  });
+  const r = { txSig: p.signature, time: p.blockTime, payer: { pubkey: p.payer.pubkey, label: p.payer.label },
+    payee: { pubkey: p.payee.pubkey, name: p.payee.name, label: p.payee.label }, amount: p.amount, amountRaw: p.amountRaw,
+    hops, e2eProof, gateway: hopKeys.at(-1), links: { tx: txUrl(p.signature) } };
+  routes.unshift(r); byTime(routes);
+  if (routes.length > 200) routes.pop();
+  return r;
+}
+const payReward = h => { if (h.rewardState === 'pending') Object.assign(h, { rewardState: 'paid', rewardSig: b58(88) }); };
+
+// Capital One settlement: a payment to a payee that settles to the bank is deposited as dollars in its Nessie account. Shape of GET /api/settlements.
+const settlements = [];
+function settlement(p, status, reason = null, attempts = 1) {
+  const s = { txSig: p.signature, time: iso(Date.parse(p.blockTime) + 2500), payee: { pubkey: p.payee.pubkey, name: p.payee.name, label: p.payee.label },
+    amount: p.amount, status, reason, nessieDepositId: status === 'settled' ? hex(24) : null, attempts };
+  settlements.unshift(s); byTime(settlements);
+  if (settlements.length > 200) settlements.pop();
+  return s;
+}
+const settlesToBank = pk => attestations.some(a => a.subject === pk && a.status === 'verified' && a.settleMode === 'bank');
+
+// Seed: every payment to MHacks Merch settles (one of each non-settled status), and about every third one came through the mesh.
+{
+  const toMerch = payments.filter(p => p.payee.pubkey === merchant && !p.attackId); // newest first
+  let failed = false;
+  toMerch.forEach((p, i) => {
+    if (p.amount % 1) settlement(p, 'skipped', 'amount_not_whole_dollars', 0);
+    else if (i === 0) settlement(p, 'pending', null, 0);
+    else if (i >= 2 && !failed) { failed = true; settlement(p, 'failed', 'nessie_error', 3); }
+    else settlement(p, 'settled');
+  });
+  toMerch.filter((_, i) => i % 3 === 0).forEach((p, i) => {
+    if (i === 0) route(p, [RELAY_A, RELAY], { rewards: 'pending' });          // newest: rewards still going out
+    else if (i === 1) route(p, [ROGUE, RELAY], { e2eProof: false });         // an unverified hop: no reward, no end-to-end proof
+    else if (i === 2) { const r = route(p, [RELAY_A, RELAY]); Object.assign(r.hops[0], { rewardState: 'failed', rewardSig: null }); }
+    else route(p, i % 2 ? [ROGUE, RELAY] : [RELAY_A, RELAY]);
+  });
+}
+function leaderboard() {
+  const m = new Map();
+  for (const r of routes) for (const h of r.hops) {
+    const e = m.get(h.pubkey) ?? { pubkey: h.pubkey, label: h.label, routes: 0, earned: 0 };
+    e.routes++;
+    if (h.rewardState === 'paid') e.earned = +(e.earned + h.reward).toFixed(DEC);
+    m.set(h.pubkey, e);
+  }
+  return [...m.values()].sort((a, b) => b.earned - a.earned || b.routes - a.routes);
+}
+
+// Top-ups: a Nessie withdrawal from the badge's Capital One account, then HACK sent to the badge from the treasury. Shape of GET /api/topups.
+const topups = [];
+function topup({ pubkey, amount, ms, status = 'pending', reason = null }) {
+  const t = { id: `topup_${b58(12)}`, time: iso(ms), pubkey, amount, status, reason, nessieWithdrawalId: null, hackSig: null, links: { tx: null } };
+  if (status === 'done') Object.assign(t, { nessieWithdrawalId: hex(24), hackSig: b58(88) });
+  t.links.tx = t.hackSig ? txUrl(t.hackSig) : null;
+  topups.unshift(t); byTime(topups);
+  if (topups.length > 200) topups.pop();
+  return t;
+}
+// pending -> done (bank withdrawal, then HACK to the badge) or failed. Idempotent: a finished top-up is returned unchanged.
+function finishTopup(t) {
+  if (t.status !== 'pending') return t;
+  const b = badgeOf(t.pubkey), cents = t.amount * 100;
+  if (!b?.nessie || b.nessie.usdCents < cents) return Object.assign(t, { status: 'failed', reason: 'insufficient_funds' });
+  b.nessie.usdCents -= cents; b.hack += t.amount;
+  const hackSig = b58(88);
+  return Object.assign(t, { status: 'done', nessieWithdrawalId: hex(24), hackSig, links: { tx: txUrl(hackSig) } });
+}
+let emit = null; // the running ticker's push(), so a POST can stream its own follow-up event like the server's SSE does
+[
+  { pubkey: judgeA, amount: 200, ms: T0 - 52 * 60e3, status: 'done' },
+  { pubkey: judgeA, amount: 1000, ms: T0 - 31 * 60e3, status: 'failed', reason: 'nessie_error' },
+  { pubkey: judgeA, amount: 100, ms: T0 - 30 * 60e3, status: 'done' },
+].forEach(topup);
+
 export const demoStatus = {
   ok: true, app: 'badgepay', cluster: 'devnet', explorer: EXPLORER,
   db: { ok: true, schema: true, error: null },
@@ -213,6 +306,10 @@ export function demoGet(resource, params = {}) {
     case 'approvals': return clone({ approvals: approvals.slice(0, Number(params.limit) || 50) });
     case 'attacks': return clone({ attempts: attempts.slice(0, Number(params.limit) || 20).map(a => // 'expired' is derived, never stored
       ({ ...a, outcome: a.outcome === 'pending' && Date.now() - Date.parse(a.createdAt) > 90000 ? 'expired' : a.outcome })) });
+    case 'routes': return clone({ routes: routes.slice(0, limit) });
+    case 'relays/leaderboard': return clone({ relays: leaderboard() });
+    case 'settlements': return clone({ settlements: settlements.slice(0, limit) });
+    case 'topups': return clone({ topups: topups.slice(0, limit) });
     default: throw fail('not_found', `No such resource: ${resource}`, 404);
   }
 }
@@ -231,6 +328,13 @@ export function demoPost(path, body = {}) {
     if (!KINDS.includes(body.kind)) throw fail('invalid_kind', 'kind must be merchant, person or relay');
     if (body.solanaWallet != null && !isPubkey(body.solanaWallet)) throw fail('invalid_pubkey', 'solanaWallet must be a base58 32-byte address');
     if (body.kind === 'relay' && body.nessieRef) throw fail('invalid_param', 'a relay attestation carries no Nessie reference');
+    if (body.kind === 'relay' && body.settleMode != null) throw fail('invalid_param', 'a relay attestation has no settle mode');
+    const holder = body.kind !== 'relay', settleMode = holder ? body.settleMode ?? 'hack' : null;
+    if (holder && !(typeof body.nessieRef === 'string' && body.nessieRef.trim()))
+      throw fail('invalid_param', 'nessieRef is required: only Capital One account holders can be verified');
+    if (holder && !['hack', 'bank'].includes(settleMode)) throw fail('invalid_param', 'settleMode must be "hack" or "bank"');
+    if (settleMode === 'bank' && !(typeof body.nessieAccountId === 'string' && body.nessieAccountId.trim()))
+      throw fail('invalid_param', 'nessieAccountId is required when settleMode is "bank"');
     const op = body.kind === 'relay' && typeof body.operatorId === 'string' ? body.operatorId.trim() : '';
     if (op && [...operators].some(([k, v]) => v === op && k !== body.pubkey && attestations.some(a => a.subject === k && a.status === 'verified')))
       throw fail('conflict', 'This operator already holds a live relay attestation (one per verified operator)', 409);
@@ -238,7 +342,7 @@ export function demoPost(path, body = {}) {
     if (op) operators.set(body.pubkey, op);
     const a = { subject: body.pubkey, badgeId: b?.id ?? null, label: b?.label ?? null, name, kind: body.kind, status: 'verified',
       pda: old >= 0 ? attestations[old].pda : b58(44, 'DemoAtt'), issuedSig: b58(88), issuedAt: iso(now),
-      revokedSig: null, revokedAt: null, expiresAt: iso(now + 30 * 86400e3) };
+      revokedSig: null, revokedAt: null, expiresAt: iso(now + 30 * 86400e3), settleMode };
     if (old >= 0) attestations.splice(old, 1);
     attestations.unshift(a); syncBadge(a);
     return clone({ attestation: a, signature: a.issuedSig, explorerUrl: txUrl(a.issuedSig) });
@@ -257,6 +361,18 @@ export function demoPost(path, body = {}) {
     const customerId = body.nessieCustomerId || hex(24), accountId = body.nessieAccountId || b?.nessie?.accountId || hex(24);
     if (b) b.nessie = { accountId, usdCents: b.nessie?.usdCents ?? 100000 }; // a new demo account opens with $1,000
     return { customerId, accountId };
+  }
+  if (path === '/api/topups') {
+    if (!isPubkey(body.pubkey)) throw fail('invalid_pubkey', 'pubkey must be a base58 32-byte address');
+    const b = badgeOf(body.pubkey);
+    if (!b) throw fail('unknown_badge', 'pubkey must be one of the configured badges', 404);
+    if (!Number.isInteger(body.amount) || body.amount < 1 || body.amount > 1000) throw fail('invalid_amount', 'amount must be a whole number of HACK from 1 to 1000');
+    if (!b.nessie) throw fail('not_enrolled', 'This badge has no Capital One account. Enroll it on the Issuer page first.', 409);
+    const t = topup({ pubkey: b.pubkey, amount: body.amount, ms: now });
+    // The bank call and the HACK transfer land a moment later, as an SSE 'topup' event.
+    const timer = setTimeout(() => { if (t.status === 'pending') { finishTopup(t); emit?.({ type: 'topup', data: clone(t) }); } }, 1600);
+    timer.unref?.(); // node --test must not wait for it
+    return clone(t);
   }
   if (path === '/api/attacks') {
     const { victim, displayAmount = 5, actualAmount = 500 } = body;
@@ -294,14 +410,44 @@ export function mintDemoApproval() {
     status: blocked ? 'blocked' : 'approved', reason: blocked ? pick(...BLOCKED) : null }));
 }
 
-/** Pushes `{type:'payment', data}` (the SSE message shape) about every 4 s, or 10 s under reduced motion, and an 'approval' every third tick. Returns stop(). */
+/**
+ * What the backend does after a payment lands, as SSE events: last tick's pending work finishes (settlements deposit, relay rewards pay out),
+ * then `p` (a payment just minted) may have come through the mesh ('route') and, if its payee settles to Capital One, starts a 'settlement'.
+ */
+export function mintDemoFollowUps(p) {
+  const out = [];
+  for (const s of settlements) if (s.status === 'pending') {
+    Object.assign(s, { status: 'settled', nessieDepositId: hex(24), attempts: s.attempts + 1, time: iso(Date.now()) });
+    const to = badgeOf(s.payee.pubkey)?.nessie;
+    if (to) to.usdCents += Math.round(s.amount * 100);
+    out.push({ type: 'settlement', data: clone(s) });
+  }
+  byTime(settlements);
+  for (const r of routes) if (r.hops.some(h => h.rewardState === 'pending')) { r.hops.forEach(payReward); out.push({ type: 'route', data: clone(r) }); }
+  if (p.payee.pubkey === merchant && !p.attackId && p.payee.status === 'verified') {
+    if (rnd() < 0.4) out.push({ type: 'route', data: clone(route(p, rnd() < 0.75 ? [RELAY_A, RELAY] : [ROGUE, RELAY], { rewards: 'pending', e2eProof: rnd() < 0.85 })) });
+    if (settlesToBank(p.payee.pubkey)) out.push({ type: 'settlement', data: clone(settlement(p, 'pending', null, 0)) });
+  }
+  return out;
+}
+
+/** Test hook: finish a pending demo top-up now instead of waiting for its timer. Returns the top-up (API shape). */
+export function finishDemoTopup(id) {
+  const t = topups.find(x => x.id === id);
+  return t ? clone(finishTopup(t)) : null;
+}
+
+/** Pushes `{type:'payment', data}` (the SSE message shape) about every 4 s, or 10 s under reduced motion, its follow-ups, and an 'approval' every third tick. Returns stop(). */
 export function startDemoTicker(push) {
   const base = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 10000 : 4000;
   let n = 0;
+  emit = push;
   let t = setTimeout(function tick() {
-    push({ type: 'payment', data: mintDemoPayment() });
+    const p = mintDemoPayment();
+    push({ type: 'payment', data: p });
+    mintDemoFollowUps(p).forEach(push);
     if (++n % 3 === 0) push({ type: 'approval', data: mintDemoApproval() });
     t = setTimeout(tick, base * (0.7 + Math.random() * 0.6));
   }, base * 0.6);
-  return () => clearTimeout(t);
+  return () => { clearTimeout(t); if (emit === push) emit = null; };
 }

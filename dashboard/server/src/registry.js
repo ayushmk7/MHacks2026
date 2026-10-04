@@ -69,11 +69,13 @@ export async function ensureRegistry() {
 const mirror = (sql, params) => q(sql, params).catch(err => console.error('[registry] mirror write failed, the 30 s sync reconciles:', err.message));
 
 const UPSERT_PAYEE = `
-INSERT INTO payees (pubkey, kind, display_name, nessie_ref, salt, bank_ref_hash, solana_wallet, attestation, operator_id, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now())
+INSERT INTO payees (pubkey, kind, display_name, nessie_ref, salt, bank_ref_hash, solana_wallet, attestation, operator_id,
+                    settle_mode, nessie_account_id, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), now())
 ON CONFLICT (pubkey) DO UPDATE SET kind = EXCLUDED.kind, display_name = EXCLUDED.display_name, nessie_ref = EXCLUDED.nessie_ref,
   salt = EXCLUDED.salt, bank_ref_hash = EXCLUDED.bank_ref_hash, solana_wallet = EXCLUDED.solana_wallet,
-  attestation = EXCLUDED.attestation, operator_id = EXCLUDED.operator_id, updated_at = now()`;
+  attestation = EXCLUDED.attestation, operator_id = EXCLUDED.operator_id, settle_mode = EXCLUDED.settle_mode,
+  nessie_account_id = EXCLUDED.nessie_account_id, updated_at = now()`;
 // "Active" = attestation not cleared by revoke.
 const OTHER_RELAY = `SELECT pubkey FROM payees WHERE kind = 'relay' AND operator_id = $1 AND pubkey <> $2 AND attestation IS NOT NULL LIMIT 1`;
 // The attestations CHECK only allows verified|revoked, so an expired attestation is mirrored as revoked with no
@@ -84,17 +86,40 @@ ON CONFLICT (subject) DO UPDATE SET name = EXCLUDED.name, status = 'revoked', at
   expires_at = EXCLUDED.expires_at, revoked_at = COALESCE(attestations.revoked_at, now()), updated_at = now()
 WHERE attestations.status <> 'revoked' OR attestations.name <> EXCLUDED.name OR attestations.expires_at IS DISTINCT FROM EXCLUDED.expires_at`;
 
-// Re-issue or rename = close + create in one transaction. The salt and plaintext Nessie id stay in the DB only;
-// the chain sees sha256(salt || nessie id), so the bank reference can't be read or brute-forced from the attestation.
-export async function issue(pubkey, { name, kind, solanaWallet = pubkey, nessieRef = null, operatorId = null } = {}) {
+// Capital One's rules for one record, no I/O (exported for tests). Identity: only a Capital One account holder can be
+// verified, so a merchant or person needs nessieRef (merchant id / account id). Settlement: 'bank' pays the issuer's
+// settlement wallet (the treasury owner) on chain and the backend deposits dollars into nessieAccountId afterwards.
+export function issueParams(pubkey, { name, kind, solanaWallet = pubkey, nessieRef = null, settleMode = 'hack', nessieAccountId = null } = {},
+                            settlementWallet = registryState.authority) {
   if (!isAddress(pubkey ?? '')) fail('invalid_pubkey', 'pubkey must be a base58 32-byte address');
   if (!KINDS[kind]) fail('invalid_param', 'kind must be merchant, person or relay');
   if (typeof name !== 'string' || !/^[\x20-\x7E]{1,32}$/.test(name)) fail('invalid_name', 'name must be 1 to 32 printable ASCII characters');
-  if (!isAddress(solanaWallet ?? '')) fail('invalid_param', 'solanaWallet must be a base58 32-byte address');
+  if (settleMode !== 'hack' && settleMode !== 'bank') fail('invalid_param', 'settleMode must be hack or bank');
+  if (kind === 'relay') {
+    if (settleMode === 'bank') fail('invalid_param', 'a relay cannot settle to Capital One');
+    if (!isAddress(solanaWallet ?? '')) fail('invalid_param', 'solanaWallet must be a base58 32-byte address');
+    return { solanaWallet, bankRef: null, settleMode, nessieAccountId: null };
+  }
+  const bankRef = nessieRef == null ? '' : String(nessieRef).trim();
+  if (!bankRef) fail('invalid_param', 'only Capital One account holders can be verified: nessieRef is required for a merchant or person');
+  if (settleMode === 'hack') {
+    if (!isAddress(solanaWallet ?? '')) fail('invalid_param', 'solanaWallet must be a base58 32-byte address');
+    return { solanaWallet, bankRef, settleMode, nessieAccountId: null };
+  }
+  if (typeof nessieAccountId !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(nessieAccountId))
+    fail('invalid_param', 'settleMode bank needs nessieAccountId, the Nessie account that receives the deposits (1 to 64 letters, digits or dashes)');
+  if (!isAddress(settlementWallet ?? '')) fail('not_configured', 'the issuer settlement wallet is not loaded yet');
+  return { solanaWallet: settlementWallet, bankRef, settleMode, nessieAccountId };
+}
+
+// Re-issue or rename = close + create in one transaction. The salt and plaintext Nessie id stay in the DB only;
+// the chain sees sha256(salt || nessie id), so the bank reference can't be read or brute-forced from the attestation.
+export async function issue(pubkey, opts = {}) {
+  const { name, kind, operatorId = null } = opts;
+  const { solanaWallet, bankRef, settleMode, nessieAccountId } = issueParams(pubkey, opts);
   if (kind === 'relay' && operatorId != null && (await q(OTHER_RELAY, [operatorId, pubkey])).rowCount)
     fail('conflict', 'this operator already holds an active relay attestation');
 
-  const bankRef = kind !== 'relay' && nessieRef ? String(nessieRef) : null;
   const salt = bankRef ? randomBytes(16) : null;
   const bankRefHash = bankRef ? createHash('sha256').update(salt).update(bankRef, 'utf8').digest() : null;
 
@@ -112,8 +137,8 @@ export async function issue(pubkey, { name, kind, solanaWallet = pubkey, nessieR
   const expiresAt = new Date(expiry * 1000);
   await mirror(Q.upsertVerified, [pubkey, name, pda, signature, expiresAt]);
   // Not a mirror: losing the salt would orphan the on-chain hash. A failure here surfaces; re-issuing heals it.
-  await q(UPSERT_PAYEE, [pubkey, kind, name, bankRef, salt, bankRefHash, solanaWallet, pda, operatorId]);
-  return { signature, pda, expiresAt };
+  await q(UPSERT_PAYEE, [pubkey, kind, name, bankRef, salt, bankRefHash, solanaWallet, pda, operatorId, settleMode, nessieAccountId]);
+  return { signature, pda, expiresAt, solanaWallet, settleMode };
 }
 
 export async function revoke(pubkey) {

@@ -8,6 +8,9 @@ import { registryState, issue, revoke, recordFields } from './registry.js';
 import { getSignedRecord } from './records.js';
 import { enroll, balance, authorize, listApprovals, recordBadgeEvent } from './bank.js';
 import { confirmSolana } from './feed.js';
+import { routeCtx, confirmRoute, listRoutes, relayLeaderboard } from './route.js';
+import { settleIfNeeded, listSettlements } from './settlement.js';
+import { topup, listTopups } from './topup.js';
 
 const STATUS = {
   bad_json: 400, invalid_pubkey: 400, invalid_name: 400, invalid_amount: 400, invalid_param: 400,
@@ -84,6 +87,19 @@ async function readJson(req, strict) {
   try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { fail('bad_json', 'body is not valid JSON'); }
   if (!body || typeof body !== 'object' || Array.isArray(body)) fail('bad_json', 'body must be a JSON object');
   return body;
+}
+
+// Runs once per newly confirmed payment (direct or routed), never awaited by the badge-facing response.
+// Routed payments also get an approvals row so the feed lists them next to direct ones (direct rows come from feed.js).
+const ROUTED_APPROVAL = `
+INSERT INTO approvals (rail, source, payer, payee, payee_name, amount_cents, status, reason, req_id, solana_sig)
+SELECT 'solana', 'backend', $1, $2, $3, $4, 'approved', 'routed', $5, $6
+WHERE NOT EXISTS (SELECT 1 FROM approvals WHERE solana_sig = $6)`;
+export async function onConfirmed(facts) {
+  if (facts.routed) await q(ROUTED_APPROVAL, [facts.payer, facts.payee, facts.payeeName ?? null, String(facts.amountRaw), facts.reqId, facts.txSig])
+    .catch(err => console.error('[route] approvals row failed:', err.message));
+  await settleIfNeeded({ txSig: facts.txSig, payee: facts.payee, amountRaw: facts.amountRaw })
+    .catch(err => console.error('[settlement]', err.message));
 }
 
 const attackById = async (id, warnings) => toAttack((await q(Q.attacks, [1, id])).rows[0], warnings);
@@ -178,10 +194,10 @@ const routes = {
     const pubkey = validate.pubkey(body.pubkey), name = validate.name(body.name);
     await requireFundedAuthority(ctx.authority);
     // issue() validates kind, wallet and the relay-per-operator rule itself (invalid_param / conflict).
-    const { kind, solanaWallet, nessieRef, operatorId } = body;
+    const { kind, solanaWallet, nessieRef, operatorId, settleMode, nessieAccountId } = body;
     const { signature, pda, expiresAt } = await chain(issue(pubkey, { name, kind, solanaWallet: solanaWallet || pubkey,
-      nessieRef: nessieRef || null, operatorId: operatorId || null }));
-    return [201, await attestationResult(ctx, pubkey, signature, { name, kind, status: 'verified', attestation_pda: pda,
+      nessieRef: nessieRef || null, operatorId: operatorId || null, settleMode: settleMode || 'hack', nessieAccountId: nessieAccountId || null }));
+    return [201, await attestationResult(ctx, pubkey, signature, { name, kind, settle_mode: settleMode || 'hack', status: 'verified', attestation_pda: pda,
       issued_sig: signature, issued_at: new Date(), revoked_sig: null, revoked_at: null, expires_at: expiresAt })];
   },
 
@@ -201,6 +217,17 @@ const routes = {
   },
 
   'GET /api/approvals': async ({ query }) => ({ approvals: await listApprovals(validate.limit(query.get('limit'), 40)) }),
+
+  'GET /api/routes': async ({ query }) => ({ routes: await listRoutes(validate.limit(query.get('limit'), 40)) }),
+  'GET /api/relays/leaderboard': async () => ({ relays: await relayLeaderboard() }),
+  'GET /api/settlements': async ({ query }) => ({ settlements: await listSettlements(validate.limit(query.get('limit'), 40)) }),
+  'GET /api/topups': async ({ query }) => ({ topups: await listTopups(validate.limit(query.get('limit'), 40)) }),
+
+  // Capital One top-up: Nessie withdrawal, then HACK from the treasury to the badge.
+  'POST /api/topups': async ({ body, ctx }) => {
+    await requireFundedAuthority(ctx.authority);
+    return [201, await topup({ pubkey: body.pubkey, amount: body.amount }, { authority: ctx.authority })];
+  },
 
   'GET /api/attacks': async ({ query }) =>
     ({ attempts: (await q(Q.attacks, [validate.limit(query.get('limit'), 20), null])).rows.map(r => toAttack(r)) }),
@@ -270,7 +297,13 @@ async function handleBadge(req, res, ctx) {
   if (req.method === 'POST' && url.pathname === '/bank/authorize')
     return send(res, 200, await authorize(await readJson(req, false), { recordFields, authority: ctx.authority }));
   if (req.method === 'POST' && url.pathname === '/feed/solana')
-    return send(res, 200, await confirmSolana(await readJson(req, false), { recordFields }));
+    return send(res, 200, await confirmSolana(await readJson(req, false), { recordFields, onConfirmed }));
+  if (req.method === 'GET' && route === 'route' && arg === 'ctx') {
+    const r = await routeCtx(ctx.authority, validate.pubkey(url.pathname.split('/')[3]));
+    return r.status === 200 ? send(res, 200, r.body) : fail('not_found', 'no registry record for this key');
+  }
+  if (req.method === 'POST' && url.pathname === '/feed/route')
+    return send(res, 200, await confirmRoute(await readJson(req, false), { recordFields, authority: ctx.authority, onConfirmed }));
   if (req.method === 'POST' && url.pathname === '/feed/event')
     return send(res, 200, await recordBadgeEvent(await readJson(req, false)));
   fail('not_found', 'no such route');

@@ -53,3 +53,18 @@ test('refuses fractional dollars and a missing key before calling out', async ()
   assert.equal(calls.length, 0);
   await assert.rejects(createNessie({ key: '', fetch: () => assert.fail('no call') }).getAccount('a'), { status: 503 });
 });
+
+test('deposit and withdrawal post the deposit body to their own route', async () => {
+  const { calls, client } = fake([() => ok({ objectCreated: { _id: 'd-1' } }), () => ok({ objectCreated: { _id: 'w-1' } })]);
+  assert.deepEqual(await client.deposit('m-acct', { amount: 40, description: 'settlement x' }), { deposit_id: 'd-1' });
+  assert.deepEqual(await client.withdrawal('j-acct', { amount: 25, description: 'top up' }), { withdrawal_id: 'w-1' });
+  assert.equal(calls[0].url, `https://nessie.test/accounts/m-acct/deposits?key=${KEY}`);
+  assert.equal(calls[1].url, `https://nessie.test/accounts/j-acct/withdrawals?key=${KEY}`);
+  for (const [c, amount, description] of [[calls[0], 40, 'settlement x'], [calls[1], 25, 'top up']]) {
+    assert.equal(c.method, 'POST');
+    assert.match(c.body.transaction_date, /^\d{4}-\d{2}-\d{2}$/);
+    assert.deepEqual({ ...c.body, transaction_date: 'x' }, { medium: 'balance', transaction_date: 'x', status: 'completed', amount, description });
+  }
+  await assert.rejects(client.withdrawal('j', { amount: 0.5, description: 'd' }), { status: 400 });
+  assert.equal(calls.length, 2);
+});

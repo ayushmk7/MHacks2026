@@ -43,7 +43,7 @@ function world(nessieOver = {}) {
 
   const db = { enrollments: new Map([[payerPk, { badge_pubkey: payerPk, nessie_customer_id: 'cust-1', nessie_account_id: 'acct-1' }]]),
                payees: new Map(Object.values(payees).map(p => [p.pk, { pubkey: p.pk, kind: p.record.kind, nessie_ref: p.ref, salt: p.salt }])),
-               nonces: new Set(), approvals: [] };
+               nonces: new Set(), approvals: [], topups: [], settlements: [] };
   const fakeQ = async (sql, params) => {
     const rows = r => ({ rows: r, rowCount: r.length });
     switch (sql) {
@@ -66,8 +66,10 @@ function world(nessieOver = {}) {
       case SQL.setMemo: db.approvals.find(a => a.id === params[0]).memo_sig = params[1]; return rows([]);
       case SQL.ledger: {
         const ok = db.approvals.filter(a => a.rail === 'nessie' && a.source === 'backend' && a.status === 'approved');
-        const sum = xs => String(xs.reduce((s, a) => s + Number(a.amount_cents), 0));
-        return rows([{ debits: sum(ok.filter(a => a.payer === params[0])), credits: sum(ok.filter(a => a.payee === params[0] && a.nessie_ids?.deposit_id)) }]);
+        const sum = (xs, f = 'amount_cents') => xs.reduce((s, a) => s + Number(a[f]), 0);
+        const acct = (xs, status) => xs.filter(x => x.nessie_account_id === params[1] && x.status === status);
+        return rows([{ debits: String(sum(ok.filter(a => a.payer === params[0])) + sum(acct(db.topups, 'done'), 'amount_raw')),
+                       credits: String(sum(ok.filter(a => a.payee === params[0] && a.nessie_ids?.deposit_id)) + sum(acct(db.settlements, 'settled'), 'amount_raw')) }]);
       }
       case SQL.approvals: return rows([...db.approvals].reverse().filter(a => !params[1] || a.id === params[1]).slice(0, params[0]));
       default: throw new Error(`unexpected SQL ${sql}`);
@@ -229,6 +231,19 @@ test('balance = Nessie opening balance - approved debits + approved deposits', a
   await w.authorize(w.request('person', { amount: 1000 }));
   assert.deepEqual(await w.bank.balance(w.payees.person.pk), { usd_cents: 51_000, account_id: 'sam-acct' });
   await assert.rejects(w.bank.balance(b58(w.keyPair().pub)), { code: 'not_found' });
+});
+
+test('balance also counts completed top-ups as debits and settled settlements as credits, by Nessie account', async () => {
+  const w = world();
+  w.db.topups.push({ nessie_account_id: 'acct-1', status: 'done', amount_raw: 2500 },
+                   { nessie_account_id: 'acct-1', status: 'failed', amount_raw: 9900 },
+                   { nessie_account_id: 'acct-1', status: 'pending', amount_raw: 9900 },
+                   { nessie_account_id: 'acct-2', status: 'done', amount_raw: 9900 });
+  w.db.settlements.push({ nessie_account_id: 'acct-1', status: 'settled', amount_raw: 4000 },
+                        { nessie_account_id: 'acct-1', status: 'failed', amount_raw: 9900 },
+                        { nessie_account_id: 'acct-1', status: 'skipped', amount_raw: 9950 },
+                        { nessie_account_id: 'acct-9', status: 'settled', amount_raw: 9900 });
+  assert.deepEqual(await w.bank.balance(w.payerPk), { usd_cents: 50_000 - 2500 + 4000, account_id: 'acct-1' });
 });
 
 test('enroll: given ids are checked read-only, missing ids create a customer and account', async () => {

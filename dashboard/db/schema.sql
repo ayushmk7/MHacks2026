@@ -219,3 +219,79 @@ CREATE TABLE IF NOT EXISTS nonces (
 DROP TRIGGER IF EXISTS approvals_notify ON approvals;
 CREATE TRIGGER approvals_notify AFTER INSERT OR UPDATE ON approvals
   FOR EACH ROW EXECUTE FUNCTION notify_feed('approval', 'id');
+
+-- ── Tier 0 routing, Capital One settlement and top-ups (docs/specs/P3-demo-apps-tier0.md, docs/PROJECT-OVERVIEW.md) ──
+
+-- Payees choose how they are paid: their own HACK wallet, or Capital One's settlement account (then the backend
+-- deposits dollars into nessie_account_id after each confirmed payment).
+ALTER TABLE payees ADD COLUMN IF NOT EXISTS settle_mode text NOT NULL DEFAULT 'hack' CHECK (settle_mode IN ('hack', 'bank'));
+ALTER TABLE payees ADD COLUMN IF NOT EXISTS nessie_account_id text;
+
+-- One row per routed payment reported by a gateway (POST /feed/route), confirmed on chain before insert.
+CREATE TABLE IF NOT EXISTS routes (
+  tx_sig      text PRIMARY KEY,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  payer       text,
+  payee       text NOT NULL,
+  payee_name  text,
+  amount_raw  bigint NOT NULL,
+  req_id      text,
+  hop_count   int NOT NULL,
+  e2e_proof   boolean NOT NULL DEFAULT false,
+  gateway     text
+);
+
+CREATE INDEX IF NOT EXISTS routes_created_at_idx ON routes (created_at DESC);
+
+-- One row per hop. Rewards go only to hops with an active relay attestation; reward_sig is the treasury transfer.
+CREATE TABLE IF NOT EXISTS route_hops (
+  tx_sig       text NOT NULL REFERENCES routes (tx_sig),
+  position     int  NOT NULL,
+  relay        text NOT NULL,
+  verified     boolean NOT NULL,
+  reward_raw   bigint NOT NULL DEFAULT 0,
+  reward_sig   text,
+  reward_state text NOT NULL DEFAULT 'none' CHECK (reward_state IN ('none', 'pending', 'paid', 'failed')),
+  PRIMARY KEY (tx_sig, position)
+);
+
+-- Capital One settlement: one deposit per confirmed payment to a settle_mode='bank' payee (idempotent on tx_sig).
+CREATE TABLE IF NOT EXISTS settlements (
+  tx_sig            text PRIMARY KEY,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  payee             text NOT NULL,
+  amount_raw        bigint NOT NULL,
+  nessie_account_id text,
+  nessie_deposit_id text,
+  status            text NOT NULL CHECK (status IN ('pending', 'settled', 'failed', 'skipped')),
+  reason            text,
+  attempts          int NOT NULL DEFAULT 0,
+  updated_at        timestamptz NOT NULL DEFAULT now()
+);
+
+-- Top-ups: a Nessie withdrawal from the badge holder's account + HACK from the treasury to the badge.
+CREATE TABLE IF NOT EXISTS topups (
+  id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at           timestamptz NOT NULL DEFAULT now(),
+  badge_pubkey         text NOT NULL,
+  amount_raw           bigint NOT NULL,
+  nessie_account_id    text,
+  nessie_withdrawal_id text,
+  hack_sig             text,
+  status               text NOT NULL CHECK (status IN ('pending', 'done', 'failed')),
+  reason               text
+);
+
+DROP TRIGGER IF EXISTS routes_notify ON routes;
+CREATE TRIGGER routes_notify AFTER INSERT ON routes
+  FOR EACH ROW EXECUTE FUNCTION notify_feed('route', 'tx_sig');
+DROP TRIGGER IF EXISTS settlements_notify ON settlements;
+CREATE TRIGGER settlements_notify AFTER INSERT OR UPDATE ON settlements
+  FOR EACH ROW EXECUTE FUNCTION notify_feed('settlement', 'tx_sig');
+DROP TRIGGER IF EXISTS topups_notify ON topups;
+CREATE TRIGGER topups_notify AFTER INSERT OR UPDATE ON topups
+  FOR EACH ROW EXECUTE FUNCTION notify_feed('topup', 'id');
+-- Reward state changes (pending -> paid/failed) re-announce the route so the dashboard updates.
+DROP TRIGGER IF EXISTS route_hops_notify ON route_hops;
+CREATE TRIGGER route_hops_notify AFTER UPDATE ON route_hops
+  FOR EACH ROW EXECUTE FUNCTION notify_feed('route', 'tx_sig');
