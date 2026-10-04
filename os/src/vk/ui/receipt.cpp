@@ -11,9 +11,6 @@
 #include "../../hal/display.h"
 #include "../../hal/power.h"
 #include "../core/clock.h"
-#include "../core/config.h"
-#include "../host/notify.h"
-#include "../vk_build.h"
 
 namespace vk::ui::receipt {
 
@@ -237,19 +234,16 @@ void statusRight(char *out, size_t cap) {
     snprintf(part, sizeof part, "%02u:%02u", (unsigned)((t / 3600) % 24), (unsigned)((t / 60) % 60));
     add(part);
   }
-  int percent = (int)(power::percent() + 0.5f);
-  percent = clampInt(percent, 0, 100);
-  snprintf(part, sizeof part, "%d%%", percent);
-  add(part);
-  const size_t notes = vk::host::notify::count();
-  if (notes > 0) {
-    snprintf(part, sizeof part, "[%u]", (unsigned)notes);
+  // The badge has no fuel gauge: the only real measurement is the cell voltage. On external power the
+  // ADC reads the charger, not the cell, so a percentage there would be invented; say USB instead.
+  if (power::charging()) {
+    add("USB");
+  } else {
+    int percent = (int)(power::percent() + 0.5f);
+    percent = clampInt(percent, 0, 100);
+    snprintf(part, sizeof part, "%d%%", percent);
     add(part);
   }
-  if (!vk::config::provisioned()) add("SETUP");
-#if VK_PROFILE_DEV
-  add("DEV");
-#endif
 }
 
 void footer(const char *left, const char *right) {

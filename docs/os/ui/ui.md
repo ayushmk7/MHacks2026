@@ -198,7 +198,7 @@ Every Badge OS screen is drawn with one small set of functions, so that screens 
 namespace vk::ui::receipt {
 void page();                                              // fill PAPER
 void header(const char *left, const char *right);         // y 0..19: text at y=7, then a dashed rule at y=19
-void statusRight(char *out, size_t cap);                  // "14:32 . 87% . [2]" plus SETUP / DEV when they apply
+void statusRight(char *out, size_t cap);                  // "14:32 · 87%": the time (when the clock has a source) and the battery, nothing else
 void title(const char *text, int y);                      // centred, letter-spaced, FreeMonoBold9pt7b
 void rule(int y, int x0 = 10, int x1 = 310);              // dashed: 3 px on, 2 px off
 void perforation(int x, int y0, int y1);                  // dashed vertical line
@@ -225,12 +225,18 @@ Conventions every kit function follows (also in the comment at the top of `recei
 
 Layout constants (pixels): margins 10; list row pitch 18; subline 13 below its row; two-column split at x = 146 (left stub 0..145, body 147..319); content starts at y = 24 under the header. The barcode's bars come from the badge's public key, so each badge prints its own.
 
+### Header
+
+The right side of every header is `receipt::statusRight`: the time and the battery, and nothing else. No notification count, no setup or dev marker (waiting notifications show on the launcher's Inbox row; an unprovisioned badge says so on the launcher's balance row; the dev build is marked on the approval screen, where it matters).
+
+The battery figure is the measured one. The badge has no fuel gauge, so the only real measurement is the cell voltage, which upstream's `power::percent()` maps to a percentage. When the badge is on external power (`power::charging()`, cell line above 4.25 V) the ADC is reading the charger, not the cell, and any percentage would be invented: the header shows `USB` instead.
+
 ### Screens
 
 | Screen | Layout |
 |---|---|
 | Boot | header `BADGE OS` / `*** STARTING UP ***`; left stub: brand line, percent as an amount, a 14-cell block bar, the stage's detail text; body: title `CHECKLIST`, one row per stage with `OK`, `..` or blank. Replaces upstream's progress screen (hook H15 draws it; upstream's two splash images are kept) |
-| Launcher | header; title `MENU`; apps in a 2-column grid of rows `NN NAME`, selected row inverted with `◂`; rule; row `BALANCE … 142.50 HACK`; barcode; footer `SELECT open` / `CANCEL settings` |
+| Launcher | header; title `MENU`; apps in a 2-column grid of rows `NN NAME`, selected row inverted with `◂` (the `inbox` row shows the number of waiting notifications as its value when there are any); rule; row `BALANCE … 142.50 HACK`, or `SETUP NEEDED` while the badge is unprovisioned; barcode; footer `SELECT open` / `CANCEL settings` |
 | Home | left stub: `BALANCE` amount, barcode; body: rows ADDRESS, KEY, CLOCK, INBOX; a rule; `THANK YOU FOR HACKING` |
 | Any list (Pay, History, Contacts, Inbox, Wallet, settings, shop) | header; title; rows with optional sublines (5 rows with sublines or 9 without); footer with the action and `CANCEL back` |
 | Approval | [approval](../wallet/approval.md#screen) |
