@@ -48,6 +48,7 @@ Line numbers are for upstream commit `812b8c7`. Upstream's `solana-os.ino` is `o
 | H25 | `src/hal/buttons.cpp` `update()` | a key that wakes the dimmed or sleeping screen does nothing else: its edges are dropped until it is up (`vk_screen_filter_buttons`, `src/vk/ui/screen_power.h`) |
 | H26 | `src/hal/buttons.cpp` `update()` | upstream's one log line per key press is not written while the on-screen keyboard is open: a log of the presses would let a reader replay the cursor and recover a typed password (`vk::ui::keyboard::state()`) |
 | H27 | `src/apps/app_store.cpp` `refresh()` | the launcher's app catalogue is rebuilt after a rescan (two sites: the include and the call) |
+| H28 | `src/net/ble_mgr.cpp` `begin()`, `end()` | turning Bluetooth off stops advertising and drops the connection but keeps the stack; upstream's `BLEDevice::deinit(true)` released the controller memory for good, so Bluetooth could not be turned on again until a reboot (`createServer failed`) |
 
 ## The edits
 
@@ -544,7 +545,7 @@ grep -rn "// VK: H" os.ino src | grep -v "^src/vk/" | sed -E 's/.*VK: (H[0-9]+[a
   | sort -u | sort -t H -k 2n | tr '\n' ' '
 ```
 
-Expected output: `H1 H2 H3 H4 H5 H6 H7 H8a H8b H8c H8d H8e H8f H9 H10 H11 H12 H13 H16 H17 H19 H21 H23 H24 H25 H26 H27`, plus `H18` if used (and `H22` if Risk 5's fallback was applied).
+Expected output: `H1 H2 H3 H4 H5 H6 H7 H8a H8b H8c H8d H8e H8f H9 H10 H11 H12 H13 H16 H17 H19 H21 H23 H24 H25 H26 H27 H28`, plus `H18` if used (and `H22` if Risk 5's fallback was applied).
 
 The replaced files (pre-flash check 1, second half):
 

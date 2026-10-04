@@ -182,6 +182,12 @@ RxCallbacks sRxCallbacks;
 
 bool begin(const String &deviceName) {
   if (sEnabled) return true;
+  if (sServer != nullptr) {                                    // VK: H28
+    BLEDevice::startAdvertising();                             // VK: H28
+    sEnabled = true;                                           // VK: H28
+    badge_log::tagf("ble", "advertising again");               // VK: H28
+    return true;                                               // VK: H28
+  }                                                            // VK: H28
 
   BLEDevice::init(deviceName.c_str());
   BLEDevice::setMTU(185);  // request; the central decides what we actually get
@@ -221,9 +227,10 @@ bool begin(const String &deviceName) {
 
 void end() {
   if (!sEnabled) return;
-  BLEDevice::deinit(true);
-  sServer = nullptr;
-  sTx = nullptr;
+  // deinit(true) released the controller's memory for good: Bluetooth could not start again       // VK: H28
+  // until a reboot. The stack stays up; off = no advertising and no connection.                   // VK: H28
+  BLEDevice::stopAdvertising();                                                                    // VK: H28
+  if (sConnected) sServer->disconnect(sServer->getConnId());                                       // VK: H28
   sEnabled = false;
   sConnected = false;
   sQueueHead = 0;
