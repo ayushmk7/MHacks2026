@@ -17,7 +17,8 @@
     "server": "node --env-file-if-exists=.env server/src/index.js",
     "web": "npm run dev --prefix web",
     "dev": "npm run server & npm run web & wait",
-    "check": "node --test \"server/src/*.test.js\" \"web/src/*.test.js\" && npm run build --prefix web"
+    "check": "node --test \"server/src/*.test.js\" \"web/src/*.test.js\" && npm run build --prefix web",
+    "r3": "node --env-file-if-exists=.env scripts/r3-sign.mjs"
   },
   "dependencies": {
     "@solana/kit": "5.5.1",
