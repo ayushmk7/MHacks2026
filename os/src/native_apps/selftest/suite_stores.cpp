@@ -33,14 +33,14 @@ namespace {
 struct StoreFormat {
   const char *path;
   char magic[5];
-  uint16_t version;
+  uint16_t version;                      // the newest version; 1..version are all readable
   size_t headerSize;                     // the bytes before the first record
   size_t recordSize;
   size_t capacity;
 };
 
 // wallet/stores.md: "History", "Contacts", "Consent".
-const StoreFormat HISTORY = {"/vk/history.bin", "VKH1", 1, 12, 192, 128};
+const StoreFormat HISTORY = {"/vk/history.bin", "VKH1", 2, 12, 192, 128};   // v1 files are still read; the first append rewrites the header as v2
 const StoreFormat CONTACTS = {"/vk/contacts.bin", "VKC1", 1, 8, 72, 64};
 const StoreFormat CONSENT = {"/vk/consent.bin", "VKP1", 1, 8, 40, 32};
 
@@ -71,8 +71,8 @@ State readStore(const StoreFormat &f, size_t &count, char *value, size_t cap) {
     snprintf(value, cap, "wrong magic");
     return State::Fail;
   }
-  if (getU16(header + 4) != f.version) {
-    snprintf(value, cap, "version %u, expected %u", (unsigned)getU16(header + 4), (unsigned)f.version);
+  if (getU16(header + 4) < 1 || getU16(header + 4) > f.version) {
+    snprintf(value, cap, "version %u, expected 1..%u", (unsigned)getU16(header + 4), (unsigned)f.version);
     return State::Fail;
   }
   count = getU16(header + 6);
