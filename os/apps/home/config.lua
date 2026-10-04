@@ -39,7 +39,7 @@ return {
     back = "CANCEL back",
   },
 
-  -- The line under the barcode after a balance fetch that did not work. A reason that is not
+  -- The line under the barcode (or the QR code) after a balance fetch that did not work. A reason that is not
   -- listed shows nothing.
   fetch_text = {
     no_network = "no network",

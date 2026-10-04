@@ -150,6 +150,8 @@ uint16_t blend(Token a, Token b, uint8_t amount);   // a towards b, 0..255
 const char *activeName();
 void setActive(const char *name);    // writes config key `theme`; unknown name: no change
 size_t count();  const Theme *at(size_t i);
+const Theme *find(const char *name);                // the registered theme with that name, or nullptr
+bool colorByName(const char *name, uint16_t &out);  // the Lua names: a token ("paper", "stamp_ok", ...) or "green", "amber", "red"
 }
 ```
 
@@ -204,6 +206,7 @@ void holdBar(float progress);                             // y 204..209, x 40..2
 void footer(const char *left, const char *right);         // dashed rule at y=216, text at y=224
 void headerText(const char *left, const char *right);     // header() without its rule: the approval's band sits directly under it
 void title(const char *text, int y, int cx);              // title() centred on cx (the body column of a two-column screen is centred on 233)
+bool qr(int x, int y, int size, const char *text);        // QR code of `text` centred in a light size x size square; false when nothing was drawn
 }
 ```
 
@@ -215,6 +218,8 @@ Conventions every kit function follows (also in the comment at the top of `recei
 - `statusRight` separates its parts with that middle dot (`14:32 · 87%`, or `14:32 · USB` on external power). The time is UTC (there is no timezone key) and is left out when the clock has no source, leaving `87%` or `USB` alone. Seen on the badge: `03:00 · USB` and `USB` (`os/test/device/shots/header_clock_usb.png`, `header_noclock_usb.png`).
 - Upstream never sets a font on the canvas, so every kit function leaves it on `Font0`, size 1, top-left datum. Code that sets a font on the canvas must put it back.
 - The footer clears its strip to `PAPER` first and its rule runs edge to edge (x 0..319), as in the simulation. The hold bar is 240 px wide (x 40..279) over a half-tone `FAINT` track. Sublines and `sub` are not bold (`Font0` has no bold).
+
+**The QR code.** `qr(x, y, size, text)` fills the `size` × `size` square at (x, y) and draws the QR code of `text` (a link, at most 154 bytes) centred in it. The square is always the **light theme's** paper and the modules its ink, whatever the active theme: a phone reads dark modules on a light ground only, so in the dark theme the code sits on a light patch. The encoder is the one inside the graphics library (`lgfx_qrcode`, what LovyanGFX's own `canvas.qrcode()` uses; that function is not called, because it draws pure white and black). It takes the smallest QR version that holds the text, at the lowest error correction, up to version 7. A module is as many whole pixels as leave the standard quiet zone of 4 modules inside the square, or of 2 modules when that makes the modules larger; the rest of the square is margin. It returns false and draws nothing for an empty text, a text over 154 bytes, or a square too small for 1 px modules. The last code is kept, so a screen that redraws the same link does not encode it again. Sizes in use: 148 px on [About](shell.md#about) (a link of up to 53 characters is 29 modules: 4 px each with a 4-module quiet zone) and 102 px in Home's stub (3 px each, 7 px of margin). Both were read back from a screenshot with OpenCV's QR detector in both themes (`t_about.py`, `t_app_home.py`).
 
 Layout constants (pixels): margins 10; list row pitch 18; subline 13 below its row; two-column split at x = 146 (left stub 0..145, body 147..319); content starts at y = 24 under the header. The barcode's bars come from the badge's public key, so each badge prints its own.
 
@@ -231,12 +236,13 @@ The battery figure is the measured one. The badge has no fuel gauge, so the only
 | Boot | [shell: Boot](shell.md#boot). Header `BADGEOS` / `*** STARTING UP ***`; left stub: brand line `BadgeOS`, percent as an amount, a 14-cell block bar, the stage's detail text; body: title `CHECKLIST`, one row per stage with `OK`, `..` or blank. No splash images come before it |
 | Launcher | [shell: Launcher](shell.md#launcher). Header; title `MENU`; apps in a 2-column grid of rows `NN NAME`, selected row inverted with `◂` (the `inbox` row shows the number of waiting notifications as its value when there are any); rule; row `BALANCE … 142.50 HACK`, or `SETUP NEEDED` while the badge is unprovisioned; barcode; footer `SELECT open` / `CANCEL settings` |
 | Settings list, every settings page, delete confirmation, app-store offer, installing, app error | [shell](shell.md#settings-list): each is a receipt list or ticket drawn with the kit |
-| Home | left stub: `BALANCE` amount, barcode; body: rows NAME, ADDRESS, KEY, CLOCK; a rule; the app menu (four rows, scrolling); a rule; `THANK YOU FOR HACKING`. No INBOX row: the count is not readable from Lua, and the launcher and Settings show it ([apps](../apps/apps.md#home)) |
+| About | [shell: About](shell.md#about). Left stub: the name `BadgeOS` as a title, a rule, rows VERSION, API, KEY, ADDRESS; body: the QR code of config key `repo_url` (148 px) and the link as text under it, or `no link set` |
+| Home | left stub: `BALANCE` amount, then the QR code of `repo_url` (102 px), or the barcode when that key is empty; body: rows NAME, ADDRESS, KEY, CLOCK; a rule; the app menu (four rows, scrolling); a rule; `THANK YOU FOR HACKING`. No INBOX row: the count is not readable from Lua, and the launcher and Settings show it ([apps](../apps/apps.md#home)) |
 | Any list (Pay, History, Contacts, Inbox, Wallet, shop) | header; title at y = 26; rows from y = 46 with optional sublines: pitch 18 without sublines (9 rows, the last at y = 190) or 31 with them (5 rows, ending at y = 196); the line shown when the list is empty is centred at y = 112 in `SUB`; footer with the action and `CANCEL back`. The native Inbox and Wallet and `vk.ui.list` all use these positions |
 | Approval | [approval](../wallet/approval.md#screen) |
 | Request | left stub: amount with label `PAY ME`, `WAITING` or `RECEIVED`, barcode; body: title `REQUEST`, three rows. When the payment is confirmed the left stub's label reads `PAID`, drawn in the `STAMP_OK` colour |
 
-Lua apps get the same look through `lib/vk.lua`'s `vk.ui` helpers (`vk.ui.header`, `row`, `title`, `amount`, `footer`, `rule`), which draw with `badge.gfx` using colours from `badge.theme.color(name)`; `badge.theme.color` and `badge.theme.name()` are registered Lua functions with no permission.
+**Lua apps render through the same kit.** `lib/vk.lua`'s `vk.ui` helpers (`vk.ui.header`, `row`, `title`, `amount`, `footer`, `rule`, `qr` and the rest) each call the firmware function of the same name through the Lua module `badge.receipt` ([Lua API](../platform/lua-api.md#badgereceipt), `src/vk/ui/lua_receipt.cpp`; no permission). A Lua app's screen is therefore drawn by `receipt.cpp` itself: the same title font as the shell (the glyphs of `HISTORY` in the History app and of `SETTINGS` in the shell are pixel-identical), the same serif amounts, and one call into C per element instead of one per text run, rectangle and leader dot. On a firmware without `badge.receipt`, and in the host test, `vk.ui` falls back to its own drawing with `badge.gfx` and colours from `badge.theme.color(name)`, where a title and an amount are the built-in font scaled up; the geometry is the same. `badge.theme.color` and `badge.theme.name()` are registered Lua functions with no permission.
 
 ### Launcher and settings
 

@@ -32,7 +32,7 @@ Batch 2 (WP10, WP11, WP12, WP20, WP22) was flashed to the same badge on 2026-10-
 Batch 5 (WP37, WP40 to WP45) and the close-out were flashed to the same badge on 2026-10-04:
 
 - The banner reads `BadgeOS 0.1.0`; the boot log has no `[boot] splash` line; `[os] ready` comes about 4.5 s after the reset (it was about 8 s with the two splashes).
-- The registries line is `[vk] registries: services=8 commands=17 lua=37 domains=5 routes=3 permissions=9 patterns=6 native=3 config=17 pages=13` in the dev profile (`commands=9` in the release profile: the eight dev commands are absent).
+- The registries line is `[vk] registries: services=8 commands=17 lua=49 domains=5 routes=3 permissions=9 patterns=6 native=3 config=18 pages=14` in the dev profile (`commands=9` in the release profile: the eight dev commands are absent).
 - The network names changed with this flash: hostname `badgeos`, hotspot password `badgeos-setup`, ESP-NOW magic `BDOS`. **A badge still on an older build no longer hears this one over ESP-NOW.**
 - Upstream's six sample apps were deleted from this badge's filesystem (`AUTH`, `LIST`, `DEL <id>`); a badge flashed from upstream firmware still has them until that is done.
 - Images: dev 1,991,895 bytes (59.6 % of the 3,342,336-byte slot), release 1,983,131 bytes (59.3 %). The release profile compiled at the first attempt and passes pre-flash check 6; on the badge `VKINFO` says `profile=release` and every dev command (`VKSTATE`, `VKBTN`, `VKSHOT`, `VKTIME`, `VKPAIR`, `VKNOTE`, `VKDEMOAPPROVE`, `VKPERF`) is answered by upstream's push protocol with `ERR not authorised - send AUTH <code>`, never `OK` (T-REL2). The badge was then flashed with the dev profile again.
@@ -212,6 +212,7 @@ Values nothing fills in automatically. Each must be set by hand before the demo,
 | the hotspot's SSID and password | arguments of `vkdev.py provision --wifi "<SSID>" "<password>"` (or `VKWIFI`), per badge | the badge has no network: no clock (amber `CLOCK UNSYNCED`), no balance, no payment |
 | the listener address | `--listener http://<laptop hotspot IP>:8788` of the same command (config key `listener_url`) | no registry record: every payee is red `UNVERIFIED RECIPIENT` |
 | the public keys of the four badges | `dashboard/server/config/badges.json`, then `npm run devnet:setup` again to fund them | the badges hold no tokens |
+| the repository link: config key `repo_url` | `VKSET repo_url https://github.com/ayushmk7/MHacks2026` on each badge (a plain key: no confirmation, and it can be set after provisioning). `VKRESET` erases it with the rest of the config, and the provisioning tool does not set it | Settings → About says `no link set` and Home shows its barcode instead of the QR code ([shell](../ui/shell.md#about)) |
 
 After editing a `config.lua`, push the apps again (`scripts/push-apps.sh … release`). A badge provisioned by the device tests carries the **test** values (`rpc_url` `http://127.0.0.1:8899`, the test issuer key, `hold_ms` 1000, `approval_tmo_s` 10): reset it (`VKRESET`, hold SELECT) and provision it for real before a demo.
 

@@ -54,20 +54,12 @@ int l_name(lua_State *L) {
 
 // theme.color(token) -> RGB565 | nil
 int l_color(lua_State *L) {
-  const char *name = luaL_checkstring(L, 1);
-  for (const TokenName &t : kTokens) {
-    if (strcmp(t.name, name) == 0) {
-      lua_pushinteger(L, (lua_Integer)vk::ui::theme::color(t.token));
-      return 1;
-    }
+  uint16_t color = 0;
+  if (vk::ui::theme::colorByName(luaL_checkstring(L, 1), color)) {
+    lua_pushinteger(L, (lua_Integer)color);
+  } else {
+    lua_pushnil(L);
   }
-  for (const FixedColor &f : kFixedColors) {
-    if (strcmp(f.name, name) == 0) {
-      lua_pushinteger(L, (lua_Integer)f.color);
-      return 1;
-    }
-  }
-  lua_pushnil(L);
   return 1;
 }
 
@@ -75,3 +67,21 @@ VK_LUA_FUNCTION(theme_name, "theme", "name", nullptr, l_name);
 VK_LUA_FUNCTION(theme_color, "theme", "color", nullptr, l_color);
 
 }  // namespace
+
+// Declared in theme.h: badge.receipt.row takes the same names for a value's colour.
+bool vk::ui::theme::colorByName(const char *name, uint16_t &out) {
+  if (name == nullptr) return false;
+  for (const TokenName &t : kTokens) {
+    if (strcmp(t.name, name) == 0) {
+      out = color(t.token);
+      return true;
+    }
+  }
+  for (const FixedColor &f : kFixedColors) {
+    if (strcmp(f.name, name) == 0) {
+      out = f.color;
+      return true;
+    }
+  }
+  return false;
+}

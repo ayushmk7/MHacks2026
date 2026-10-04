@@ -1,8 +1,9 @@
 """Settings pages, group 2 (WP37; shell.md, "Settings pages"): App store, Identity, New identity,
 Display, LEDs, Device info, Console, and the action rows Wallet and Inbox.
 
-Needs one badge with a dev build that has the BadgeOS shell with all thirteen settings rows (the
-boot line says pages=13) and the native apps wallet_settings and inbox. No network, no hands.
+Needs one badge with a dev build that has the BadgeOS shell with all fourteen settings rows (the
+boot line says pages=14; the fourteenth, About, has its own test, t_about.py) and the native apps
+wallet_settings and inbox. No network, no hands.
 
 The test navigates by VKSTATE's `screen` field, never by comparing screenshots. Screenshots are
 saved as shots/shell_<screen>_<theme>.png for a person to look at.
@@ -41,7 +42,7 @@ SHOT_BYTES = ROW_BYTES * HEIGHT
 # The Settings list, in order (execution-plan.md, section 5.3). A row's index is the number of
 # DOWN taps from the top.
 ROWS = ["theme", "wifi", "bluetooth", "espnow", "push", "store", "identity", "display", "leds",
-        "wallet", "inbox", "info", "console"]
+        "wallet", "inbox", "info", "console", "about"]
 PAGES = ["store", "identity", "display", "leds", "info", "console"]
 
 

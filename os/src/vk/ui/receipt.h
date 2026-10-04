@@ -36,4 +36,13 @@ void footer(const char *left, const char *right);         // dashed rule at y=21
 // --- Added with receipt.cpp (WP12); not in the ui.md block. ---
 void headerText(const char *left, const char *right);     // header() without its rule: the approval's band sits directly under it
 void title(const char *text, int y, int cx);              // title() centred on cx instead of the screen (the body column of a two-column screen is centred on 233)
+
+// --- Added with the About page. ---
+// A QR code of `text` (a link, at most 154 bytes) centred in the size x size square at (x, y). The
+// square is filled first, and always with the light theme's paper, the modules with its ink: a phone
+// reads dark on light only, so the patch looks the same in the dark theme. The encoder picks the
+// smallest version that holds the text. A module is as many whole pixels as leave a quiet zone of 4
+// modules inside the square, or of 2 when that makes the modules larger. Returns false, with
+// nothing drawn, when the text is empty or too long, or the square too small for 1 px modules.
+bool qr(int x, int y, int size, const char *text);
 }

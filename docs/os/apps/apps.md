@@ -73,6 +73,7 @@ As built (WP40):
 - The menu is the ids of `config.lua` that `badge.system.apps()` reports, minus Home. UP/DOWN move, SELECT launches.
 - The balance is fetched after the first frame is on screen and then every `balance_poll_s` seconds (0: once only). It is skipped when unprovisioned or when Wi-Fi is not connected; a failure only changes one line under the barcode, and the next attempt is a whole period later. `wallet.refresh_balance()` blocks: with a route but a node that does not answer it holds the frame for up to about 6 s per attempt (the badge's own hotspot counts as connected).
 - Log lines: `HOME addr <short>` once, `HOME balance <ok|reason>` per attempted fetch.
+- The repository QR code. When `wallet.config("repo_url")` is not empty, the stub shows `vk.ui.qr(22, 98, 102, link)` in place of the barcode: the amount moves up (label at y = 28 instead of 40) and the line a failed fetch writes goes under the code (y = 204). With the project's link a module is 3 px. The key is read on every frame, so a `VKSET repo_url …` shows without restarting the app. With the key empty, or on a firmware whose kit has no QR code (`vk.ui.qr` returns false), the stub is as before: amount, barcode, line. `t_app_home.py` reads the code back from its screenshot.
 
 ## Pay
 

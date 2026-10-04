@@ -97,6 +97,7 @@ Each key is registered by the code that uses it. This table is the complete list
 | `balance_poll_s` | U32 | 15 | | 0–3600 | `balance` | balance poll period; 0 disables |
 | `pay_app` | STR | `pay` | | 1–24 | `requests` | app opened from a payment-request notification |
 | `theme` | STR | (empty) | | 0–24 | `ui` | active theme: `receipt-light` (also when empty) or `receipt-dark` ([ui](../ui/ui.md#theme)); Settings → Theme writes it |
+| `repo_url` | STR | (empty) | | 0–120 | shell (`pages/page_about.cpp`) | the link shown as a QR code on Settings → About and in Home's stub: the project's repository ([shell](../ui/shell.md#about)). Empty: About says `no link set` and Home shows its barcode. A public value; set it with `VKSET repo_url <url>` |
 
 There is no `home_app` key: the launcher is the shell itself, not an app ([shell](../ui/shell.md)). Secure keys are the ones whose change could turn a blocked payment into an approved one. Wi-Fi credentials are upstream settings, not config keys ([Wi-Fi](#wi-fi)).
 

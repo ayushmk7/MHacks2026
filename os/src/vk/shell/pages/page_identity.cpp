@@ -20,6 +20,7 @@ namespace receipt = vk::ui::receipt;
 namespace th = vk::ui::theme;
 
 constexpr int KEY_PER_LINE = 32;   // base58 is 43 or 44 characters: two lines
+constexpr int ID_Y = TITLE_Y + 11 + ROW_PITCH;   // 55: the BADGE ID label, a row pitch under the title
 
 // ---------------------------------------------------------------------------------------------
 // identity_new
@@ -101,23 +102,24 @@ void pageUpdate() {
 void pageDraw() {
   frame("IDENTITY", "SELECT new identity");
 
-  // The badge ID is the one string a stranger reads off this screen, so it is printed large.
+  // The badge ID is the one string a stranger reads off this screen, so it is printed large. Its
+  // label starts one row pitch under the title's capitals (26..36), like a row under a row.
   const String id = identity::ready() ? identity::badgeId() : String("--------");
-  receipt::amount(160, 44, "BADGE ID", id.c_str(), "");
+  receipt::amount(160, ID_Y, "BADGE ID", id.c_str(), "");
 
   // The two key paths promise different things; the colour must not hide a dead SE050.
   const bool secure = identity::source() == identity::Source::SecureElement;
-  receipt::row(X0, X1, 104, "KEY LIVES IN", identity::sourceName(), false,
+  receipt::row(X0, X1, 112, "KEY LIVES IN", identity::sourceName(), false,
                th::color(secure ? th::STAMP_OK : th::STAMP_WARN));
 
   const String status = identity::status();
-  text(10, 120, status.c_str(), th::SUB);
+  text(10, 127, status.c_str(), th::SUB);
 
-  text(10, 136, "PUBLIC KEY", th::SUB);
+  text(10, 141, "PUBLIC KEY", th::SUB);
   // Wrapped by hand: a half-shown key is useless for checking against a wallet.
   const String key = identity::publicKeyBase58();
-  int y = 148;
-  for (int offset = 0; offset < (int)key.length() && y <= 160; offset += KEY_PER_LINE, y += 12) {
+  int y = 153;
+  for (int offset = 0; offset < (int)key.length() && y <= 165; offset += KEY_PER_LINE, y += 12) {
     const String part = key.substring(offset, offset + KEY_PER_LINE);
     text(10, y, part.c_str());
   }

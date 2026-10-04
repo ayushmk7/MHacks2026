@@ -3,13 +3,14 @@
 -- The landing app (docs/os/apps/apps.md, "Home"; layout: docs/os/ui/ui.md, "Screens").
 --
 --   left stub   BALANCE, the default token's balance and its symbol (SETUP NEEDED on a badge
---               that is not provisioned), then this badge's barcode
+--               that is not provisioned), then a QR code of the config key repo_url (the
+--               project's repository) or, when that key is empty, this badge's barcode
 --   body        rows NAME, ADDRESS, KEY, CLOCK; a rule; a menu of the other installed apps;
 --               a rule; THANK YOU FOR HACKING
 --
 -- The firmware does not poll the balance while an app runs, so Home fetches it itself: once
 -- after its first frame is on screen, then every balance_poll_s seconds. A fetch that fails
--- changes one line under the barcode and is tried again at the next period, never sooner; with
+-- changes one line under the code and is tried again at the next period, never sooner; with
 -- no network no call is made at all.
 --
 -- UP/DOWN move in the menu, SELECT launches the selected app, CANCEL exits to the launcher.
@@ -30,6 +31,11 @@ local text = cfg.text
 local AMOUNT_Y = 40                    -- the stub's label; the value and the unit follow it
 local BARCODE_X, BARCODE_Y, BARCODE_W, BARCODE_H = 16, 122, 114, 40
 local NOTE_Y = 176                     -- the line under the barcode
+-- With a link to show, the stub is the amount (moved up), the QR code and the line under it.
+-- 102 px: 3 px modules for a link of up to 53 characters, with the quiet zone inside the square.
+local QR_AMOUNT_Y = 28
+local QR_SIZE, QR_Y = 102, 98
+local QR_NOTE_Y = 204
 local INFO_Y = 32                      -- first body row
 local MENU_RULE_Y = INFO_Y + 4 * ui.ROW_PITCH - 3
 local MENU_Y = MENU_RULE_Y + 11        -- first menu row
@@ -108,15 +114,20 @@ end
 
 local function draw_stub()
   local cx = ui.STUB_CX
+  -- The link is a provisioned setting, read on every frame: a VKSET shows without a restart.
+  -- ui.qr draws nothing on a firmware without the kit's QR code: the barcode stays then.
+  local link = wallet.config("repo_url")
+  local qr = type(link) == "string" and link ~= "" and ui.qr(cx - QR_SIZE // 2, QR_Y, QR_SIZE, link)
+  local amount_y = qr and QR_AMOUNT_Y or AMOUNT_Y
   if wallet.provisioned() then
     local tokens = wallet.tokens()
     local symbol = type(tokens) == "table" and tokens[1] and tokens[1].symbol or ""
-    ui.amount(cx, AMOUNT_Y, text.balance, wallet.balance() or text.unknown_amount, symbol)
+    ui.amount(cx, amount_y, text.balance, wallet.balance() or text.unknown_amount, symbol)
   else
-    ui.amount(cx, AMOUNT_Y, text.setup_needed, text.unknown_amount, "")
+    ui.amount(cx, amount_y, text.setup_needed, text.unknown_amount, "")
   end
-  ui.barcode(BARCODE_X, BARCODE_Y, BARCODE_W, BARCODE_H)
-  if note then ui.text_center(note, cx, NOTE_Y, ui.color("sub")) end
+  if not qr then ui.barcode(BARCODE_X, BARCODE_Y, BARCODE_W, BARCODE_H) end
+  if note then ui.text_center(note, cx, qr and QR_NOTE_Y or NOTE_Y, ui.color("sub")) end
 end
 
 local function draw_body()

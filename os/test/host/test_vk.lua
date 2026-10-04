@@ -1335,6 +1335,73 @@ do
   badge.theme = nil
 end
 
+-- With badge.receipt (the firmware's kit) every vk.ui element is one call into it, with the kit's
+-- argument order, and nothing is drawn with badge.gfx.
+do
+  local ui = vk.ui
+  reset_world()
+  local calls = {}
+  local function record(name, result)
+    return function(...)
+      local args = table.pack(...)
+      for i = 1, args.n do args[i] = tostring(args[i]) end
+      calls[#calls + 1] = name .. "(" .. table.concat(args, ",", 1, args.n) .. ")"
+      return result
+    end
+  end
+  badge.receipt = {}
+  for _, name in ipairs({"page", "header", "footer", "title", "rule", "perforation", "row", "subline",
+                         "amount", "barcode"}) do
+    badge.receipt[name] = record(name)
+  end
+  badge.receipt.qr = record("qr", true)
+
+  ui.page()
+  ui.header("BADGEOS")
+  ui.header("PAY", "USB")
+  ui.title("MENU", 26)
+  ui.title("REQUEST", 30, ui.BODY_CX)
+  ui.rule(100)
+  ui.rule(100, 156, 310)
+  ui.perforation(146, 24, 212)
+  ui.row(48, "KEY", "software")
+  ui.row(66, "CLOCK", nil, true, 99, ui.BODY_X0, ui.BODY_X1)
+  ui.subline(61, "find a badge nearby", true)
+  ui.amount(73, 40, "BALANCE", 12, nil)
+  ui.barcode(16, 122, 114, 40)
+  ui.barcode(16, 122, 114, 40, "\x15\x92")
+  ui.footer("SELECT open", nil)
+  eq(ui.qr(22, 98, 102, "https://example.org/x"), true, "ui.qr answers what the kit answers")
+  local expected = {
+    "page()", "header(BADGEOS,nil)", "header(PAY,USB)", "title(MENU,26,160)", "title(REQUEST,30,233)",
+    "rule(100,10,310)", "rule(100,156,310)", "perforation(146,24,212)",
+    "row(10,310,48,KEY,software,nil,nil)", "row(156,310,66,CLOCK,,true,99)",
+    "subline(10,310,61,find a badge nearby,true)", "amount(73,40,BALANCE,12,)",
+    "barcode(16,122,114,40,nil)", "barcode(16,122,114,40,\x15\x92)", "footer(SELECT open,)",
+    "qr(22,98,102,https://example.org/x)",
+  }
+  eq(#calls, #expected, "one kit call per element")
+  for i = 1, #expected do eq(calls[i], expected[i], "kit call " .. i) end
+  eq(#world.draws, 0, "with the kit nothing is drawn through badge.gfx")
+
+  -- A list is drawn by the same functions: the title goes to the kit, in capitals.
+  calls = {}
+  ui.list({title = "Pay", rows = {{l = "Judge B", r = "5.00", sub = "nearby", tone = "ok"}}, sel = 1, hint = "SELECT pay"})
+  check(has(calls, "title(PAY,26,160)"), "the list's title is the kit's")
+  check(has(calls, "row(10,310,46,JUDGE B,5.00,true," .. ui.color("stamp_ok") .. ")"), "the list's row is the kit's")
+  check(has(calls, "subline(10,310,59,nearby,true)"), "the list's subline is the kit's")
+
+  -- A kit without qr (a firmware between the two), and no kit: ui.qr draws nothing and says so.
+  badge.receipt.qr = nil
+  eq(ui.qr(22, 98, 102, "https://example.org/x"), false, "no qr in the kit")
+  badge.receipt = nil
+  reset_world()
+  eq(ui.qr(22, 98, 102, "https://example.org/x"), false, "no kit")
+  eq(#world.draws, 0, "ui.qr without the kit draws nothing")
+  ui.page()
+  eq(#drawn("clear"), 1, "without the kit the page is drawn with badge.gfx again")
+end
+
 -- ui.frame: draw only when the screen can have changed.
 do
   local ui = vk.ui

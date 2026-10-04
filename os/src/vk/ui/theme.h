@@ -22,4 +22,11 @@ uint16_t blend(Token a, Token b, uint8_t amount);   // a towards b, 0..255
 const char *activeName();
 void setActive(const char *name);    // writes config key `theme`; unknown name: no change
 size_t count();  const Theme *at(size_t i);
+
+// --- Added with the QR code and badge.receipt; nothing above changed. ---
+const Theme *find(const char *name);                // the registered theme with that name, or nullptr
+// The colour a Lua app names (lua_theme.cpp): a token ("paper", "ink", "faint", "sub", "stamp_ok",
+// "stamp_warn", "stamp_bad", "led") from the active theme, or the fixed "green", "amber", "red".
+// False for any other name; `out` is then untouched.
+bool colorByName(const char *name, uint16_t &out);
 }

@@ -22,9 +22,9 @@ def run(badge):
     print(registries)  # the integrator copies this line into the tracking notes
     counts = {name: int(value) for name, value in re.findall(r"(\w+)=(\d+)", registries)}
     assert counts.get("commands", 0) >= 2, "expected commands>=2 in: %s" % registries
-    # The status-item registry is gone; the settings pages are counted instead (13 shipped).
+    # The status-item registry is gone; the settings pages are counted instead (14 shipped).
     assert "status" not in counts, "the registries line still has status=: %s" % registries
-    assert counts.get("pages", 0) >= 1, "expected pages>=1 (settings pages) in: %s" % registries
+    assert counts.get("pages", 0) >= 14, "expected pages>=14 (settings pages) in: %s" % registries
 
     # The product is BadgeOS: no splash, and the names upstream printed are gone.
     assert not any("[boot] splash" in line for line in boot_log), "the boot log has a splash line"

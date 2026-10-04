@@ -12,6 +12,10 @@
 #include "../../hal/power.h"
 #include "../core/clock.h"
 
+// The QR encoder that LovyanGFX's own canvas.qrcode() uses. That function draws pure white and
+// black; qr() below draws the same modules in the light theme's paper and ink.
+#include <lgfx/utility/lgfx_qrcode.h>
+
 namespace vk::ui::receipt {
 
 namespace {
@@ -406,6 +410,75 @@ void holdBar(float progress) {
     for (int x = HOLD_X + filled + ((HOLD_X + filled + y) & 1); x < HOLD_X + HOLD_W; x += 2) c.drawPixel(x, y, track);
   }
   display::touch();
+}
+
+// ---- QR code ------------------------------------------------------------------------------------------
+
+namespace {
+
+constexpr int QR_MAX_VERSION = 7;                    // 45 modules: 154 bytes at the lowest error correction
+constexpr size_t QR_TEXT_MAX = 154;
+constexpr int QR_QUIET = 4, QR_QUIET_MIN = 2;        // quiet zone, in modules
+constexpr int QR_MAX_MODULES = 17 + 4 * QR_MAX_VERSION;
+
+// The last code made. Encoding tries eight masks, and a screen that shows a code redraws it with
+// every frame, so the modules are kept and made again only when the text changes.
+char sQrText[QR_TEXT_MAX + 1] = "";
+uint8_t sQrModules[(QR_MAX_MODULES * QR_MAX_MODULES + 7) / 8];
+QRCode sQr;
+bool sQrValid = false;
+
+bool qrEncode(const char *text) {
+  if (sQrValid && strcmp(text, sQrText) == 0) return true;
+  sQrValid = false;
+  if (strlen(text) > QR_TEXT_MAX) return false;
+  // The smallest version that holds the text, as canvas.qrcode() chooses it.
+  for (int version = 1; version <= QR_MAX_VERSION && !sQrValid; ++version) {
+    sQrValid = lgfx_qrcode_initText(&sQr, sQrModules, (uint8_t)version, ECC_LOW, text) == 0;
+  }
+  if (sQrValid) strlcpy(sQrText, text, sizeof sQrText);
+  return sQrValid;
+}
+
+int luma(uint16_t c) { return ((c >> 11) & 0x1F) * 2 + ((c >> 5) & 0x3F) + (c & 0x1F) * 2; }
+
+}  // namespace
+
+bool qr(int x, int y, int size, const char *text) {
+  if (text == nullptr || text[0] == '\0' || size <= 0) return false;
+  if (!qrEncode(text)) return false;
+  const int modules = sQr.size;
+  int px = size / (modules + 2 * QR_QUIET);
+  const int tight = size / (modules + 2 * QR_QUIET_MIN);
+  if (tight > px) px = tight;
+  if (px < 1) return false;
+
+  // The light theme's paper and ink whatever the active theme is. If that theme's line was deleted,
+  // the lighter of the active paper and ink is the ground.
+  uint16_t ground = theme::color(theme::PAPER), ink = theme::color(theme::INK);
+  if (const theme::Theme *light = theme::find("receipt-light")) {
+    ground = light->colors[theme::PAPER];
+    ink = light->colors[theme::INK];
+  } else if (luma(ground) < luma(ink)) {
+    const uint16_t swap = ground;
+    ground = ink;
+    ink = swap;
+  }
+
+  LGFX_Sprite &c = display::canvas();
+  c.fillRect(x, y, size, size, ground);
+  const int left = x + (size - modules * px) / 2, top = y + (size - modules * px) / 2;
+  for (int row = 0; row < modules; ++row) {
+    for (int col = 0; col < modules;) {
+      if (!lgfx_qrcode_getModule(&sQr, col, row)) { ++col; continue; }
+      int run = 1;                                   // dark modules side by side are one rectangle
+      while (col + run < modules && lgfx_qrcode_getModule(&sQr, col + run, row)) ++run;
+      c.fillRect(left + col * px, top + row * px, run * px, px, ink);
+      col += run;
+    }
+  }
+  display::touch();
+  return true;
 }
 
 }  // namespace vk::ui::receipt

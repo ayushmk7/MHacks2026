@@ -187,8 +187,9 @@ struct List { int cursor = 0; int scroll = 0; };
 // `visible` window. Returns true when the cursor moved (it has already called repaint()).
 bool listMove(List &list, int count, int visible = LIST_ROWS);
 // Draws rows scroll .. scroll+visible-1 with receipt::row(X0, X1, y0 + i * ROW_PITCH, ...); the row under
-// the cursor is selected (inverted). When count > visible it also draws "n/N" right-aligned at
-// (X1, TITLE_Y + 2) in FAINT. Pass a List with cursor -1 for rows that cannot be selected.
+// the cursor is selected (inverted). When count > visible it also draws "n/N" (selected row / rows)
+// right-aligned at (X1, TITLE_Y + 2) in FAINT. Pass a List with cursor -1 for rows that cannot be
+// selected: such a list has no mark.
 void listDraw(const List &list, const ListRow *rows, int count, int y0 = LIST_Y, int visible = LIST_ROWS);
 
 // ---- additions (the shell's owner may add declarations below this line; nothing above changes) ----
@@ -206,7 +207,7 @@ void showOver(const Screen *screen);
 As built:
 
 - `pulseLed(ms)` is `vk::ui::leds::pulseTheme(ms)` (`src/vk/ui/leds.h`), the same function the push code calls through hook H23.
-- `listDraw` draws the value of the selected row in the paper colour, like its label: a status ink on the ink ground would not be readable. With cursor −1 (nothing selectable) and more rows than fit, the `n/N` mark shows the number of the last visible row.
+- `listDraw` draws the value of the selected row in the paper colour, like its label: a status ink on the ink ground would not be readable. The `n/N` mark is always the selected row and the number of rows (`11/14` on the Settings list, as on the launcher and the offer). With cursor −1 (nothing selectable) no mark is drawn: it used to show the number of the last visible row (`9/12` on Device info), which read as a selection that does not exist. Such a page says in its footer that it scrolls.
 - `text()` cuts at `maxCols` characters; two pages pass their own value where a line of the specified text is longer than 50 columns from its x (New identity, 52) or starts at x = 22 (App push, 48).
 
 Rules for every screen and page:
@@ -237,6 +238,7 @@ Rules for every screen and page:
 | 110 | `inbox` | Inbox | action | the number of waiting notifications, or nothing | `pages/page_inbox.cpp` | 5G |
 | 120 | `info` | Device info | page | `SOLANA_OS_VERSION` (`0.1.0`) | `pages/page_info.cpp` | 5G |
 | 130 | `console` | Console | page | — | `pages/page_console.cpp` | 5G |
+| 140 | `about` | About | page | the host of config key `repo_url` (`github.com`), or `not set` | `pages/page_about.cpp` | added after the close-out |
 
 When SELECT is pressed on a page row, the list copies the page's `id`, `enter`, `update`, `draw` and `refresh_ms` into one static `Screen` and pushes it (only one page is open at a time). On an action row it calls `action()` and repaints.
 
@@ -244,7 +246,7 @@ When SELECT is pressed on a page row, the list copies the page's `id`, `enter`, 
 
 `shell::screenName()` returns one of these; device tests read it as the `screen` field of `VKSTATE` ([testing](../testing/testing.md#dev-hooks)).
 
-`launcher` · `app_delete` · `settings` · `wifi` · `bluetooth` · `espnow` · `push` · `store` · `identity` · `identity_new` · `display` · `leds` · `info` · `console` · `app_error` · `offer` · `installing`
+`launcher` · `app_delete` · `settings` · `wifi` · `bluetooth` · `espnow` · `push` · `store` · `identity` · `identity_new` · `display` · `leds` · `info` · `console` · `about` · `app_error` · `offer` · `installing`
 
 It is empty while an app runs. While an approval is open over the shell it keeps the name of the screen underneath (`VKSTATE.modal` tells). The boot screen has no name: nothing can ask during `setup()`.
 
@@ -442,7 +444,7 @@ Refresh: 1000 ms. Removing this file removes the row only; the offer screens sta
 
 Screen `identity`, `page_identity.cpp`. The badge ID is the one string a stranger reads off this screen, so it is printed large.
 
-Layout: `frame("IDENTITY", "SELECT new identity")`; `receipt::amount(160, 44, "BADGE ID", identity::ready() ? identity::badgeId() : "--------", "")`; `receipt::row(X0, X1, 104, "KEY LIVES IN", identity::sourceName(), false, secure ? STAMP_OK : STAMP_WARN)` where `secure = identity::source() == identity::Source::SecureElement` (the two key paths promise different things; the colour must not hide a dead SE050); `text(10, 120, identity::status(), SUB)`; `text(10, 136, "PUBLIC KEY", SUB)`; `identity::publicKeyBase58()` in lines of 32 characters at y = 148 and 160 (a half-shown key is useless for checking against a wallet); `receipt::row(X0, X1, 190, "New identity", "changes the badge ID", true)`.
+Layout: `frame("IDENTITY", "SELECT new identity")`; `receipt::amount(160, 55, "BADGE ID", identity::ready() ? identity::badgeId() : "--------", "")` (the label starts one row pitch, 18 px, under the title's capitals, which end at y = 36; at y = 44, as first built, it sat directly under the title); `receipt::row(X0, X1, 112, "KEY LIVES IN", identity::sourceName(), false, secure ? STAMP_OK : STAMP_WARN)` where `secure = identity::source() == identity::Source::SecureElement` (the two key paths promise different things; the colour must not hide a dead SE050); `text(10, 127, identity::status(), SUB)`; `text(10, 141, "PUBLIC KEY", SUB)`; `identity::publicKeyBase58()` in lines of 32 characters at y = 153 and 165 (a half-shown key is useless for checking against a wallet); `receipt::row(X0, X1, 190, "New identity", "changes the badge ID", true)`.
 
 Buttons: SELECT pushes the sub-screen `identity_new`; CANCEL back. Refresh: input only. On a badge with no identity the New identity confirmation still opens, with an empty `big`, as upstream allowed.
 
@@ -493,7 +495,7 @@ When the app is not compiled in, the value is `absent` (for the Inbox row too, w
 
 ### Device info
 
-Screen `info`, `page_info.cpp`. `frame("DEVICE INFO", "SELECT re-scan I2C")`; twelve rows that are not selectable, 9 visible, UP/DOWN scroll by one row:
+Screen `info`, `page_info.cpp`. `frame("DEVICE INFO", "UP/DOWN scroll  SELECT re-scan I2C")`; twelve rows that are not selectable, 9 visible, UP/DOWN scroll by one row. Nothing is selected, so there is no `n/N` mark beside the title; the footer says that the list scrolls:
 
 | Label | Value |
 |---|---|
@@ -519,6 +521,21 @@ The `STORAGE` value is read when the page opens and again on SELECT, not on ever
 Screen `console`, `page_console.cpp`: the log ring, newest at the bottom. `receipt::page()`, the header, `receipt::footer("UP/DOWN scroll", "CANCEL back")`; no title, to fit more lines. 17 lines at x = 6, y = 24 + 11 × i, 51 characters each: `badge_log::line(index)` for `index` from `first`, where `total = badge_log::lineCount()` and `first = total > 17 ? total - 17 - scroll : 0`. A line containing `error`, `failed` or `FATAL` is `STAMP_BAD`; the others `INK`. The background is paper (upstream's was black).
 
 UP (`buttons::repeated`): `scroll + 1` up to `total - 17`; DOWN: `scroll - 1` down to 0; CANCEL back. Refresh: 250 ms.
+
+### About
+
+Screen `about`, `page_about.cpp`: what the badge runs, and a QR code that opens the project's repository on a phone. The link is the config key `repo_url` ([config](../platform/config.md#keys)), which this file registers; no address is compiled into the firmware. A striped barcode cannot hold a link, so this is a QR code; the launcher's barcode stays as decoration.
+
+Layout, two columns like Home, with no page title: `receipt::page()`, the header, `receipt::perforation(146, 24, 212)`.
+
+- Left stub: `receipt::title("BadgeOS", 36, 73)` (the product's name, in the kit's title font), `receipt::rule(56, 10, 136)`, then four rows from x = 10 to 136 at y = 70, 88, 106, 124: `VERSION` `SOLANA_OS_VERSION` (`0.1.0`); `API` `VK_API_VERSION` (`2`); `KEY` `secure chip` in `STAMP_OK` when `vk::wallet::keyLocation()` is `se050`, otherwise the location (`software`, `none`) in `STAMP_WARN`; `ADDRESS` the first four and the last four characters of `vk::wallet::addressBase58()` joined by `..`, or `none`.
+- Body, with a link: `receipt::qr(159, 26, 148, repo_url)` ([the QR code](ui.md#the-receipt-kit): a light patch in both themes), then the link as text in `SUB`, centred on x = 233, in up to three lines of 26 characters at y = 181, 192, 203. A line ends after the last `/` that fits, or at the edge when that would leave less than half a line; what does not fit in three lines ends in `..`.
+- Body, with `repo_url` empty: `no link set` at y = 104 and the hint `VKSET repo_url <url>` in `SUB` at y = 122, both centred on x = 233.
+- `receipt::footer("SCAN to open the link", "CANCEL back")`; the left text is empty when there is no link.
+
+Row value in the Settings list: the host of the link (the text between `://` and the next `/`, `?` or `#`), or `not set`.
+
+Buttons: CANCEL back. Refresh: on change only. The page reads `repo_url` twice a second and repaints when it differs from what it last drew, so a `VKSET repo_url …` shows while the page is open. For this project: `VKSET repo_url https://github.com/ayushmk7/MHacks2026` (38 characters: QR version 3, 29 modules, 4 px each).
 
 ## App-store offer
 
@@ -626,4 +643,5 @@ No host suite: the shell is drawing and upstream calls. Device tests ([testing](
 
 - `t_shell.py`: boot lands on `launcher` with no app, with the backlight on and the canvas sent to the panel (`VKSTATE` `backlight` and `flushes`: a screenshot reads the canvas and would pass on a black screen); grid navigation; settings and back; an app that exits, an app that errors (`app_error`), the delete confirmation by holding RIGHT. Its two fixture apps are written to a temporary folder at run time.
 - `t_pages1.py`, `t_pages2.py`: every settings page reached by name, drawn, and left with CANCEL; Theme changes config key `theme`; Wallet and Inbox launch their apps. `identity_new` is only ever left with CANCEL.
+- `t_about.py`: the About page in both themes. The QR code in each screenshot is read back on the laptop (`common.qr_decode`: OpenCV's detector on the screenshot enlarged three times) and must be exactly `repo_url`; its patch is the light paper in both themes; a module is at least 3 px; with the key empty the page holds no code, and the code returns when the key is set again.
 - Not scriptable on one badge: the boot screen (a person), the offer and installing screens (a broker), the Wi-Fi actions (they would drop the test network).

@@ -8,7 +8,9 @@ In order:
   1. Push apps/home with lib/vk.lua added as vk.lua, start it with common.launch.
   2. The app logs "HOME addr <short>" once; <short> is the first four and the last four
      characters of VKINFO pubkey, joined by "..".
-  3. The screen is drawn: shots/home_<theme>.png holds more than paper and ink.
+  3. The screen is drawn: shots/home_<theme>.png holds more than paper and ink. When config key
+     `repo_url` is set, the stub's QR code decodes to it (skipped, and said, when the laptop has
+     no decoder: common.qr_decode).
   4. For 10 s the log has no "[lua]" error line, the app is still running and no approval opened.
   5. CANCEL returns to the launcher (VKSTATE app "" and screen "launcher").
 
@@ -19,7 +21,7 @@ import os
 import re
 import time
 
-from common import launch, provision_test, to_launcher
+from common import launch, provision_test, qr_decode, to_launcher
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.normpath(os.path.join(_HERE, "..", "..", "apps", "home"))
@@ -78,6 +80,15 @@ def run(badge):
     time.sleep(0.5)  # the first frames
     shot = badge.shot(os.path.join(SHOTS, "home_%s.png" % theme_name(badge)))
     assert colours(shot) >= 3, "the home screen looks blank: %d colours" % colours(shot)
+    reply = badge.cmd("VKGET repo_url")[-1]
+    link = reply[3:].strip() if reply.startswith("OK ") else ""
+    if link:
+        text = qr_decode(shot)
+        if text is None:
+            print("t_app_home: no QR decoder installed (opencv): the code was not read back")
+        else:
+            assert text == link, "home's QR code decodes to %r, expected %r" % (text, link)
+            print("t_app_home: decoded %r" % text)
 
     # 4. Ten quiet seconds with no network: no Lua error, still running, nothing opened.
     deadline = time.monotonic() + QUIET_S

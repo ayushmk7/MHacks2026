@@ -127,6 +127,27 @@ No permission needed. Lets an app match the active theme (light or dark).
 | `theme.name()` | `"receipt-light"` or `"receipt-dark"` (or another registered theme) |
 | `theme.color(token)` | the RGB565 colour for `"paper"`, `"ink"`, `"faint"`, `"sub"`, `"stamp_ok"`, `"stamp_warn"`, `"stamp_bad"` (the status inks for signed, warning and blocked text; nothing draws a stamp), `"led"`; also the fixed `"green"`, `"amber"`, `"red"`. `nil` for any other name |
 
+## `badge.receipt`
+
+No permission needed. The firmware's receipt kit ([ui](../ui/ui.md#the-receipt-kit)), so that a Lua app's screen is drawn by the same code and in the same fonts as the shell's. Implemented in `src/vk/ui/lua_receipt.cpp`: each function is a thin binding over the `vk::ui::receipt` function of the same name and draws into the canvas with the active theme's colours. Apps normally reach them through `vk.ui` ([below](#libvklua)), which has the same picture as a fallback for a firmware without this module.
+
+| Function | Draws |
+|---|---|
+| `receipt.page()` | the paper: fills the screen |
+| `receipt.header(left, [right])` | text at y 7 and the dashed rule at y 19. `right` nil: the time and the battery, as the shell's header (`receipt::statusRight`) |
+| `receipt.title(text, y, [cx])` | a title in the kit's title font, centred on `cx` (default 160) |
+| `receipt.rule(y, [x0, x1])` | a dashed line (defaults 10 and 310) |
+| `receipt.perforation(x, y0, y1)` | the dashed vertical line between a stub and its body |
+| `receipt.row(x0, x1, y, label, value, [selected], [value_token])` | label left, value right, dotted leader between; `selected` inverts the row. `value_token` colours the value: a `badge.theme.color` name (`"stamp_ok"`, `"stamp_warn"`, `"stamp_bad"`, `"faint"`, …, mapped in C; a name that is not a colour leaves the row's ink), or an RGB565 number |
+| `receipt.subline(x0, x1, y, text, [selected])` | the second line of a row, at the row's y + 13 |
+| `receipt.amount(cx, y, label, value, unit)` | label, the value in the large serif (never cut: a smaller font is chosen), unit; centred on `cx` |
+| `receipt.barcode(x, y, w, h, [seed])` | bars from the bytes of `seed`; by default this badge's public key |
+| `receipt.footer(left, right)` | clears the strip under y 216, the rule, text at y 224 |
+| `receipt.hold_bar(progress)` | the hold bar at y 204, `progress` from 0 to 1 |
+| `receipt.qr(x, y, size, text)` | a QR code of `text` centred in a light `size` × `size` square, in both themes ([the QR code](../ui/ui.md#the-receipt-kit)). Returns `true`, or `false` when nothing was drawn (an empty text, or one over 154 bytes) |
+
+A `y` is the top of the capital letters, as everywhere in the kit. What an app passes cannot hurt the firmware: an argument of the wrong type raises a Lua error (`luaL_check*`); coordinates may be integers or floats and are clamped to one screen beyond each edge (x −320 to 640, y −240 to 480), so no drawing loop runs long; a text is cut to 160 bytes before the kit sees it (which then cuts it to its space with `..`), may be a number, and may be nil, which is the empty text. The module is additive: the API version stays 2, and an app that must run on an older firmware checks `badge.receipt` for nil, as `vk.ui` does.
+
 ## `badge.codec`
 
 No permission needed. Implemented in `src/vk/wallet/lua_wallet.cpp`.
@@ -160,7 +181,8 @@ Shared, pure Lua. Source: `os/lib/vk.lua`. Upstream's push can write only under 
 | `vk.feed(sig_b58, req)` | `net` | `POST <listener_url>/feed/solana` after a confirmed payment; `req` may be nil |
 | `vk.app_frame(type, body)` / `vk.app_body(data, type)` | — | build / match an app-range frame |
 | `vk.pay.start(opts)` | `sign`, `net`, `espnow` | starts the whole payer flow; returns a flow object (below) |
-| `vk.ui.page()`, `vk.ui.header(left, right)`, `vk.ui.title(text, y)`, `vk.ui.rule(y)`, `vk.ui.row(y, label, value, selected)`, `vk.ui.subline(y, text, selected)`, `vk.ui.amount(cx, y, label, value, unit)`, `vk.ui.footer(left, right)`, `vk.ui.list(model)` | — | the receipt look for Lua apps, drawn with `badge.gfx` in the active theme's colours; same geometry as the firmware's receipt kit ([ui](../ui/ui.md#the-receipt-kit)). `vk.ui.list{title=, rows={{l=, r=, sub=, tone=}}, sel=, hint=}` draws a whole list screen |
+| `vk.ui.page()`, `vk.ui.header(left, right)`, `vk.ui.title(text, y)`, `vk.ui.rule(y)`, `vk.ui.row(y, label, value, selected)`, `vk.ui.subline(y, text, selected)`, `vk.ui.amount(cx, y, label, value, unit)`, `vk.ui.footer(left, right)`, `vk.ui.list(model)` | — | the receipt look for Lua apps. Each function calls the firmware's kit through [`badge.receipt`](#badgereceipt) when the firmware has it, and otherwise draws the same picture with `badge.gfx` in the active theme's colours; same geometry as the firmware's receipt kit ([ui](../ui/ui.md#the-receipt-kit)) either way. `vk.ui.list{title=, rows={{l=, r=, sub=, tone=}}, sel=, hint=}` draws a whole list screen |
+| `vk.ui.qr(x, y, size, text)` | — | a QR code of `text` (a link) on a light patch, through `badge.receipt.qr`. Returns `true` when it drew; `false`, with nothing drawn, on a firmware without the kit's QR code, for an empty text and for one over 154 bytes. Home shows `wallet.config("repo_url")` with it |
 | `vk.ui.frame(draw, [period_ms])`, `vk.ui.dirty()` | — | draw only when the screen changed (below, "Drawing only when something changed") |
 | `vk.short(text)`, `vk.timeout_ms`, `vk.commitment`, `vk.RESULT_OK` / `RESULT_REJECTED` / `RESULT_FAILED` | — | first 4 + `..` + last 4 of an address; the timeout of one HTTP request (4000); the commitment used for the blockhash, the send preflight and the confirmation (`"confirmed"`); RESULT status 0, 1, 2 |
 
@@ -172,12 +194,13 @@ Every network helper returns `nil, message` on any failure; nothing loops or rai
 - `header(left)` with no right text shows `vk.ui.status()`: the time and the battery, as the firmware's `receipt::statusRight` builds it. The time comes from `wallet.time()`, so it is left out exactly when the firmware's own header leaves it out.
 - Also: `ui.perforation(x, y0, y1)`, `ui.barcode(x, y, w, h, [seed])` (the kit's bars; the seed defaults to `wallet.pubkey()`), `ui.color(token)` (`badge.theme.color` with the Receipt-light values as the fallback when `badge.theme` is absent), `ui.text`, `ui.text_center`, and the layout constants `ui.W`, `MARGIN`, `CONTENT_Y`, `ROW_PITCH`, `SUB_PITCH`, `SPLIT_X`, `STUB_CX`, `TITLE_Y`, `LIST_Y`.
 - `list` draws the title and the labels in capitals, takes a 1-based `sel` (nil selects none) and scrolls to keep it in view, and also reads `header` (left header text), `back` (right footer text, default `CANCEL back`) and `empty` (a line shown when there are no rows). `tone` is `"ok"`, `"warn"`, `"bad"` or `"mut"`. Geometry is the native lists' ([ui](../ui/ui.md#screens)).
-- A title is the built-in font at size 2 (13 px per character, 14 px capitals; the kit's serif title has 11 px capitals): Lua has no access to the kit's fonts.
+- Through `badge.receipt` a title is the kit's own title font and an amount its large serif, as on the shell's screens. Only in the fallback (no `badge.receipt`) is a title the built-in font at size 2 (13 px per character, 14 px capitals; the kit's title has 11 px capitals) and an amount the built-in font at size 2 to 4.
+- The fallback is chosen per function and per call (`badge.receipt` and the function's name are looked up each time), so `lib/vk.lua` runs unchanged on an older firmware and in the host suite `test_vk.lua`, which checks both paths. `ui.text`, `ui.text_center` and `ui.color` have no kit function and always draw with `badge.gfx`.
 - `list` defaults its header to `BADGEOS`.
 
 #### Drawing only when something changed
 
-The runtime calls `on_update` and `on_draw` on every loop pass, with no frame limit. A full frame costs about 15 ms of `vk.ui` drawing and a 34 ms transfer of the canvas to the panel, so an app that draws on every pass holds the loop at about 20 passes a second (measured: 45 to 53 ms a pass), and the badge feels slow. Every shipped app therefore keeps its drawing in one function and lets `vk.ui.frame` decide:
+The runtime calls `on_update` and `on_draw` on every loop pass, with no frame limit. A full frame costs about 15 ms of `vk.ui` drawing (through `badge.receipt`; about 20 ms with the pure-Lua fallback) and a 34 ms transfer of the canvas to the panel, so an app that draws on every pass holds the loop at about 20 passes a second (measured: 45 to 53 ms a pass), and the badge feels slow. Every shipped app therefore keeps its drawing in one function and lets `vk.ui.frame` decide:
 
 ```lua
 local function draw() ... end                       -- the whole screen

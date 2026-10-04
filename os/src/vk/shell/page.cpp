@@ -168,10 +168,11 @@ void listDraw(const List &list, const ListRow *rows, int count, int y0, int visi
     vk::ui::receipt::row(X0, X1, y0 + i * ROW_PITCH, row.label ? row.label : "", row.value ? row.value : "",
                          selected, selected ? 0 : row.valueColor);
   }
-  if (count > visible) {
+  // The mark is "selected row / rows". A list with nothing selectable (cursor -1) has none: the
+  // number of the last visible row there read as a selection that does not exist.
+  if (count > visible && list.cursor >= 0) {
     char position[16];
-    const int at = list.cursor >= 0 ? list.cursor + 1 : (scroll + visible < count ? scroll + visible : count);
-    snprintf(position, sizeof position, "%d/%d", at, count);
+    snprintf(position, sizeof position, "%d/%d", list.cursor + 1, count);
     textRight(X1, TITLE_Y + 2, position, vk::ui::theme::FAINT);
   }
 }

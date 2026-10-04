@@ -57,7 +57,8 @@ void pageUpdate() {
 }
 
 void pageDraw() {
-  frame("DEVICE INFO", "SELECT re-scan I2C");
+  // The rows cannot be selected, so the list draws no "n/N" mark: the footer says that it scrolls.
+  frame("DEVICE INFO", "UP/DOWN scroll  SELECT re-scan I2C");
 
   const uint16_t ok = th::color(th::STAMP_OK);
   const uint16_t warn = th::color(th::STAMP_WARN);

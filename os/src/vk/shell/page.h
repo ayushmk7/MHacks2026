@@ -67,8 +67,9 @@ struct List { int cursor = 0; int scroll = 0; };
 // `visible` window. Returns true when the cursor moved (it has already called repaint()).
 bool listMove(List &list, int count, int visible = LIST_ROWS);
 // Draws rows scroll .. scroll+visible-1 with receipt::row(X0, X1, y0 + i * ROW_PITCH, ...); the row under
-// the cursor is selected (inverted). When count > visible it also draws "n/N" right-aligned at
-// (X1, TITLE_Y + 2) in FAINT. Pass a List with cursor -1 for rows that cannot be selected.
+// the cursor is selected (inverted). When count > visible it also draws "n/N" (selected row / rows)
+// right-aligned at (X1, TITLE_Y + 2) in FAINT. Pass a List with cursor -1 for rows that cannot be
+// selected: such a list has no mark.
 void listDraw(const List &list, const ListRow *rows, int count, int y0 = LIST_Y, int visible = LIST_ROWS);
 
 // ---- additions (the shell's owner may add declarations below this line; nothing above changes) ----

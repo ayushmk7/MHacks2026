@@ -26,14 +26,6 @@ Theme::Theme(const char *n, std::initializer_list<uint32_t> rgb888) : name(n), c
   }
 }
 
-namespace {
-
-constexpr char DEFAULT_THEME[] = "receipt-light";
-constexpr uint32_t RESOLVE_EVERY_MS = 500;
-
-const Theme *sActive = nullptr;
-uint32_t sResolvedAt = 0;
-
 const Theme *find(const char *name) {
   if (name == nullptr || name[0] == '\0') return nullptr;
   for (const Theme *t = Theme::first(); t; t = t->next()) {
@@ -41,6 +33,14 @@ const Theme *find(const char *name) {
   }
   return nullptr;
 }
+
+namespace {
+
+constexpr char DEFAULT_THEME[] = "receipt-light";
+constexpr uint32_t RESOLVE_EVERY_MS = 500;
+
+const Theme *sActive = nullptr;
+uint32_t sResolvedAt = 0;
 
 // An empty or unknown stored name means receipt-light. If that theme's line was deleted, any
 // registered theme serves.

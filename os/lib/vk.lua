@@ -10,7 +10,7 @@
 --   vk.record    report, feed                      the laptop at config listener_url (permission net)
 --   vk.frame_type, result_frame, result_parse, hello_parse, app_frame, app_body      ESP-NOW frames
 --   vk.pay       the payer flow as a state machine (permissions sign, net, espnow)
---   vk.ui        the Receipt look, drawn with badge.gfx in the active theme's colours
+--   vk.ui        the Receipt look: the firmware's kit (badge.receipt), or badge.gfx without it
 --
 -- Rules this file keeps:
 --   - Every network helper returns nil, message on any failure. Nothing waits without a timeout
@@ -804,8 +804,12 @@ end
 --   - Text that does not fit is cut and ends in "..". The middle dot and the small triangles
 --     (U+00B7, U+25C2, U+25B8) are drawn by hand; any other byte outside ASCII is drawn as "?".
 -- Colours come from badge.theme.color; without that module, the receipt-light values.
--- The firmware kit has more fonts than badge.gfx: here a title and an amount are the built-in
--- font scaled up.
+--
+-- Each function hands its work to the firmware's kit, badge.receipt, when the firmware has it:
+-- one call into C per element, and the shell's own fonts (the serif title and amount). Without
+-- that module (older firmware, the host tests) the same picture is drawn here with badge.gfx,
+-- where a title and an amount are the built-in font scaled up. The arguments and the geometry are
+-- the same either way.
 
 local ui = {}
 vk.ui = ui
@@ -822,6 +826,18 @@ ui.TITLE_Y = 26                 -- list screens: title, then rows from LIST_Y (a
 ui.LIST_Y = 46
 
 local CHAR_W = 6
+
+-- badge.receipt.<name>, or nil when the firmware has no such function.
+local function kit(name)
+  local receipt = badge.receipt
+  return receipt and receipt[name]
+end
+
+-- What the pure-Lua drawing accepts as a text, for the kit: nil is the empty text.
+local function str(value)
+  if value == nil then return "" end
+  return tostring(value)
+end
 local DOT, TRI_LEFT, TRI_RIGHT = "\1", "\2", "\3"
 
 local function rgb565(rgb)
@@ -966,13 +982,17 @@ function ui.frame(draw, period_ms)
 end
 
 function ui.page()
+  local native = kit("page")
+  if native then return native() end
   badge.gfx.clear(ui.color("paper"))
 end
 
 -- ui.rule(y, [x0], [x1]): a dashed line, 3 px on and 2 px off, from x0 to x1 (default 10..310).
 function ui.rule(y, x0, x1)
-  local gfx, ink = badge.gfx, ui.color("ink")
   x0, x1 = x0 or ui.MARGIN, x1 or ui.W - ui.MARGIN
+  local native = kit("rule")
+  if native then return native(y, x0, x1) end
+  local gfx, ink = badge.gfx, ui.color("ink")
   for x = x0, x1, 5 do
     gfx.fill_rect(x, y, math.min(3, x1 - x + 1), 1, ink)
   end
@@ -980,6 +1000,8 @@ end
 
 -- ui.perforation(x, y0, y1): the dashed vertical line between a stub and its body.
 function ui.perforation(x, y0, y1)
+  local native = kit("perforation")
+  if native then return native(x, y0, y1) end
   local gfx, ink = badge.gfx, ui.color("ink")
   for y = y0, y1, 5 do
     gfx.fill_rect(x, y, 1, math.min(3, y1 - y + 1), ink)
@@ -1021,20 +1043,26 @@ end
 
 -- ui.header(left, [right]): `right` defaults to ui.status(), the time and the battery.
 function ui.header(left, right)
+  local native = kit("header")
+  if native then return native(str(left), right ~= nil and str(right) or nil) end
   edge_texts(left, right == nil and ui.status() or right, 7)
   ui.rule(19)
 end
 
 -- ui.footer(left, right): clears the strip under y 216 first, like the firmware kit.
 function ui.footer(left, right)
+  local native = kit("footer")
+  if native then return native(str(left), str(right)) end
   badge.gfx.fill_rect(0, 216, ui.W, ui.H - 216, ui.color("paper"))
   ui.rule(216, 0, ui.W - 1)
   edge_texts(left, right, 224)
 end
 
--- ui.title(text, y, [cx]): a section title, centred on cx (default: the screen). The built-in
--- font at twice its size, 13 px per character like the firmware's title font.
+-- ui.title(text, y, [cx]): a section title, centred on cx (default: the screen). The kit's serif
+-- title font; without the kit, the built-in font at twice its size, 13 px per character like it.
 function ui.title(text, y, cx)
+  local native = kit("title")
+  if native then return native(str(text), y, cx or ui.W // 2) end
   local cols = columns(text)
   if cols == "" then return end
   draw_centered(cols:gsub("[\1-\3]", "?"), cx or ui.W // 2, y - 1, ui.color("ink"), 1, 2)
@@ -1043,8 +1071,10 @@ end
 -- ui.row(y, label, value, [selected], [value_color], [x0], [x1]): label left, value right, a
 -- dotted leader between. x0 and x1 default to the page margins (10 and 310).
 function ui.row(y, label, value, selected, value_color, x0, x1)
-  local gfx = badge.gfx
   x0, x1 = x0 or ui.MARGIN, x1 or ui.W - ui.MARGIN
+  local native = kit("row")
+  if native then return native(x0, x1, y, str(label), str(value), selected, value_color) end
+  local gfx = badge.gfx
   local text = ui.color(selected and "paper" or "ink")
   local leader = selected and text or ui.color("faint")
   if selected then gfx.fill_rect(x0 - 10, y - 5, (x1 - x0) + 20, ui.ROW_PITCH, ui.color("ink")) end
@@ -1067,6 +1097,8 @@ end
 -- ui.subline(y, text, [selected], [x0], [x1]): the second line of a row, at the row's y + 13.
 function ui.subline(y, text, selected, x0, x1)
   x0, x1 = x0 or ui.MARGIN, x1 or ui.W - ui.MARGIN
+  local native = kit("subline")
+  if native then return native(x0, x1, y, str(text), selected) end
   if selected then badge.gfx.fill_rect(x0 - 10, y, (x1 - x0) + 20, 13, ui.color("ink")) end
   draw(clip(columns(text), (x1 - x0 - 12) // CHAR_W), x0 + 12, y, ui.color(selected and "paper" or "sub"))
 end
@@ -1074,6 +1106,8 @@ end
 -- ui.amount(cx, y, label, value, unit): the label at y, the value as large as fits 136 px in the
 -- 34 rows from y+15, the unit at y+56; all centred on cx. `value` is a string and is never cut.
 function ui.amount(cx, y, label, value, unit)
+  local native = kit("amount")
+  if native then return native(cx, y, str(label), str(value), str(unit)) end
   local ink = ui.color("ink")
   draw_centered(columns(label), cx, y, ink, 2)
   local cols = columns(value):gsub("[\1-\3]", "?")
@@ -1091,6 +1125,8 @@ end
 -- public key, so each badge prints its own. The same bars as the firmware kit draws.
 function ui.barcode(x, y, w, h, seed)
   if w <= 0 or h <= 0 then return end
+  local native = kit("barcode")
+  if native then return native(x, y, w, h, type(seed) == "string" and seed ~= "" and seed or nil) end
   local gfx, ink = badge.gfx, ui.color("ink")
   if type(seed) ~= "string" or seed == "" then seed = badge.wallet and badge.wallet.pubkey() or "" end
   if seed == "" then seed = "\x15\x92\x6B\x04\xD3\x28\x7C\xA1" end
@@ -1104,6 +1140,14 @@ function ui.barcode(x, y, w, h, seed)
     px = px + bar + 1 + (nibble // 4) % 3
     i = i + 1
   end
+end
+
+-- ui.qr(x, y, size, text) -> boolean: a QR code of `text` (a link) in a size x size square at
+-- (x, y), on a light patch in every theme (a phone reads dark on light only). Only the firmware's
+-- kit can make one: false, with nothing drawn, without it, and for an empty or too long a text.
+function ui.qr(x, y, size, text)
+  local native = kit("qr")
+  return native ~= nil and native(x, y, size, str(text)) == true
 end
 
 local TONES = {ok = "stamp_ok", warn = "stamp_warn", bad = "stamp_bad", mut = "faint"}

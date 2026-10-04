@@ -88,7 +88,8 @@ src/vk/
     leds.h leds.cpp                VK_LED_PATTERN, boot fill bar
     repaint.h repaint.cpp          requestShellRepaint(), consumeShellRepaint()
     theme.h theme.cpp              theme tokens, VK_THEME; receipt-light and receipt-dark
-    receipt.h receipt.cpp          the receipt drawing kit every screen uses
+    receipt.h receipt.cpp          the receipt drawing kit every screen uses (with the QR code)
+    lua_theme.cpp lua_receipt.cpp  badge.theme and badge.receipt: the theme and the kit for Lua apps
     boot_screen.cpp                Receipt boot screen, called from the rewritten src/ui/boot.cpp
   shell/                           the BadgeOS shell (ui/shell.md)
     shell.cpp                      framework and screen stack; shell::begin(), update(), onAppStopped(), showError(), screenName()
@@ -98,7 +99,7 @@ src/vk/
     settings_list.cpp              the Settings list, built from the page registry
     dialogs.cpp                    delete confirmation, app error, app-store offer, installing
     pages/page_<id>.cpp            one file per settings page: theme wifi bluetooth espnow push store identity
-                                   display leds wallet inbox info console
+                                   display leds wallet inbox info console about
   sdk/
     badge_sdk.hpp                  native app SDK, BADGE_APP
   features/

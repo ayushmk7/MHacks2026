@@ -39,6 +39,8 @@ def test_config(vectors=None):
         "approval_tmo_s": "10",
         "hold_ms": "1000",
         "record_ttl_s": "3600",
+        # A public value: the link Settings > About and Home show as a QR code (t_about.py reads it back).
+        "repo_url": "https://github.com/ayushmk7/MHacks2026",
     }
 
 
@@ -76,7 +78,7 @@ def provision_test(badge):
 # "Settings page registry"). theme, wallet and inbox are action rows: SELECT acts in place or
 # launches an app, so they never become a screen.
 SETTINGS_ROWS = ("theme", "wifi", "bluetooth", "espnow", "push", "store", "identity", "display",
-                 "leds", "wallet", "inbox", "info", "console")
+                 "leds", "wallet", "inbox", "info", "console", "about")
 SETTINGS_ACTIONS = ("theme", "wallet", "inbox")
 # Screens opened from a page, as {screen: page}. SELECT on the page opens them.
 SETTINGS_SUBSCREENS = {"identity_new": "identity"}
@@ -101,6 +103,25 @@ def assert_screen_sent(badge, since, what):
     state = badge.wait_state(lambda s: s["flushes"] > since or s["backlight"] == 0, timeout=3)
     assert state["backlight"] > 0, "%s: the backlight is off (backlight=%r)" % (what, state["backlight"])
     return state["flushes"]
+
+
+def qr_decode(pixels, width=320, height=240, scale=3):
+    """The text of the QR code in a screenshot (the RGB565 bytes badge.shot returns), as a phone
+    would read it: "" when no code is found. None when no decoder is installed (it is OpenCV:
+    `pip install opencv-python-headless` into the repository's .venv).
+
+    The picture is turned to grey and enlarged `scale` times with nearest-neighbour first, so a
+    module of 3 or 4 screen pixels is 9 or 12 in the picture the detector sees."""
+    try:
+        import cv2
+        import numpy
+    except ImportError:
+        return None
+    values = numpy.frombuffer(pixels, dtype="<u2").reshape(height, width).astype(numpy.uint32)
+    red, green, blue = (values >> 11) & 0x1F, (values >> 5) & 0x3F, values & 0x1F
+    grey = ((red * 255 // 31) * 299 + (green * 255 // 63) * 587 + (blue * 255 // 31) * 114) // 1000
+    big = cv2.resize(grey.astype(numpy.uint8), (width * scale, height * scale), interpolation=cv2.INTER_NEAREST)
+    return cv2.QRCodeDetector().detectAndDecode(big)[0]
 
 
 def on_launcher(state):
@@ -145,7 +166,7 @@ def goto_screen(badge, name):
     """Leaves the shell screen called `name` on top and returns the state.
 
     `name` is "launcher", "settings", a settings page (wifi, bluetooth, espnow, push, store,
-    identity, display, leds, info, console) or "identity_new". The action rows (theme, wallet,
+    identity, display, leds, info, console, about) or "identity_new". The action rows (theme, wallet,
     inbox) are not screens: use settings_row() and press SELECT.
 
     The way there: to_launcher, CANCEL (the Settings list), DOWN to the page's row, SELECT. The
