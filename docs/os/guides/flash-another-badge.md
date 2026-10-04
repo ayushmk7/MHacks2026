@@ -52,7 +52,7 @@ cd os
 scripts/build.sh release --upload /dev/cu.usbserial-XX
 ```
 
-The script runs the pre-flash checks, builds into `build/release/` and uploads at 460800 baud (the default 921600 fails on the badge's serial chip). The first build takes several minutes; later ones are incremental.
+The script runs the pre-flash checks, builds into `build/release/`, uploads at 460800 baud (the default 921600 fails on the badge's serial chip), then flashes every app of the profile into the filesystem partition, so the badge comes up with its apps and launcher folders (GAMES, TESTS) with no separate push. That replaces the filesystem: history, contacts and app consents start empty; the key and the settings are kept. Add `--keep-apps` to flash only the firmware. The first build takes several minutes; later ones are incremental.
 
 ### Without the toolchain
 
@@ -87,7 +87,7 @@ The badge should show the BadgeOS boot screen and then the launcher (title `MENU
 
 ## 4. Install the apps
 
-The firmware carries the shell, the settings and the native apps. The Lua apps (Pay, Request, History, Contacts, the games, …) are files on the badge's filesystem and are pushed separately:
+`scripts/build.sh … --upload` has already done this. This step is for the no-toolchain route, for `--keep-apps`, or to update apps without reflashing. The firmware carries the shell, the settings and the native apps. The Lua apps (Pay, Request, History, Contacts, the games, …) are files on the badge's filesystem and are pushed separately:
 
 ```bash
 cd os

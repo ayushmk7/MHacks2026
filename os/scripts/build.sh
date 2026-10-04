@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/build.sh <dev|release> [--upload <port>]
+# scripts/build.sh <dev|release> [--upload <port>] [--keep-apps]
 #
 # Builds the firmware (docs/os/guides/build-flash-provision.md, "Build profiles" and "Build
 # directory"). In order:
@@ -9,7 +9,11 @@
 #      (one build directory per profile, so builds are incremental and a release upload can
 #      never send a dev image);
 #   4. prints the image size;
-#   5. with --upload <port>: arduino-cli upload from the same build directory, at 460800 baud.
+#   5. with --upload <port>: arduino-cli upload from the same build directory, at 460800 baud, then
+#      the apps: an image of the filesystem partition with every app of the profile, so a flashed
+#      badge shows its apps and folders at once. That replaces the filesystem: history, contacts and
+#      consents start empty; the key and the settings (NVS) are kept. --keep-apps flashes only the
+#      firmware and leaves the filesystem as it is.
 #
 # Works from any directory and with a space in the repository path.
 
@@ -19,7 +23,7 @@ FQBN="esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=custom,CDCOnBo
 UPLOAD_FQBN="$FQBN,UploadSpeed=460800"   # the default 921600 fails on the badge's CH340
 
 usage() {
-  echo "usage: scripts/build.sh <dev|release> [--upload <port>]" >&2
+  echo "usage: scripts/build.sh <dev|release> [--upload <port>] [--keep-apps]" >&2
   exit 2
 }
 
@@ -34,6 +38,7 @@ esac
 shift
 
 UPLOAD_PORT=""
+KEEP_APPS=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --upload)
@@ -41,6 +46,7 @@ while [ $# -gt 0 ]; do
       UPLOAD_PORT="$2"
       shift 2
       ;;
+    --keep-apps) KEEP_APPS=1; shift ;;
     *) usage ;;
   esac
 done
@@ -81,5 +87,12 @@ fi
 # 5. Upload the image that was just built.
 if [ -n "$UPLOAD_PORT" ]; then
   echo "[build] uploading the $PROFILE profile to $UPLOAD_PORT"
-  arduino-cli upload --fqbn "$UPLOAD_FQBN" --build-path "$BUILD" -p "$UPLOAD_PORT" "$FW"
+  arduino-cli upload --fqbn "$UPLOAD_FQBN" --build-path "$BUILD" -p "$UPLOAD_PORT" "$FW" || exit 1
+  if [ "$KEEP_APPS" -eq 0 ]; then
+    offset="$(awk -F, '$1 ~ /^spiffs/ {gsub(/ /, "", $4); print $4}' "$FW/partitions.csv")"
+    echo "[build] flashing the $PROFILE apps at $offset (history, contacts and consents start empty)"
+    "$FW/scripts/push-apps.sh" --image "$BUILD/apps.bin" "$PROFILE" || exit 1
+    PY="${VK_PYTHON:-$FW/../.venv/bin/python}"
+    "$PY" -m esptool --chip esp32s3 --port "$UPLOAD_PORT" --baud 460800 write_flash "$offset" "$BUILD/apps.bin" || exit 1
+  fi
 fi

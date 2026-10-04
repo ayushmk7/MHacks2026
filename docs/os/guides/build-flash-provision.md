@@ -162,6 +162,8 @@ How the script reads the table:
 
 ## Installing apps
 
+`scripts/build.sh <profile> --upload <port>` flashes the apps too: `push-apps.sh --image build/<profile>/apps.bin <profile>` builds a LittleFS image of the `spiffs` partition (every app of the profile under `/apps/<id>/`, with `vk.lua`), and it is written at the partition's offset after the firmware. A flashed badge therefore shows its apps and folders at once. The image replaces the whole filesystem, so history, contacts and consents start empty; the key and the settings (NVS) are kept. `--keep-apps` skips it. Pushing, below, updates apps without a flash.
+
 Upstream's push writes only under `/apps/<id>/`, so the shared library is copied into each app at push time.
 
 ```bash

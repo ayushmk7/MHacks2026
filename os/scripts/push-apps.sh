@@ -23,6 +23,9 @@
 #   --token <code>   the six-digit pairing code from Settings -> Push on the badge
 #                    (with --host it may also come from the environment variable BADGE_TOKEN)
 #   --dry-run        list what would be pushed and push nothing
+#   --image <file>   push nothing: write a LittleFS image of the filesystem partition holding every
+#                    app under /apps/<id>/, for build.sh to flash with the firmware. Flashing it
+#                    replaces the whole filesystem (history, contacts and consents start empty).
 #
 # Exit status: 0 if every app was pushed, 1 if any push failed, 2 for a usage error.
 # Works from any directory; the repository path may contain spaces.
@@ -35,6 +38,7 @@ PY="${VK_PYTHON:-$REPO/.venv/bin/python}"
 usage() {
   cat >&2 <<'EOF'
 usage: push-apps.sh --port <port> [--token <code>] [--dry-run] dev|release
+       push-apps.sh --image <file> dev|release
        push-apps.sh --host <ip> --token <code> [--dry-run] dev|release
 EOF
   exit 2
@@ -46,6 +50,7 @@ token="${BADGE_TOKEN:-}"
 token_given=0
 profile=""
 dry_run=0
+image=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -53,6 +58,7 @@ while [ "$#" -gt 0 ]; do
     --host)    [ "$#" -ge 2 ] || usage; host="$2"; shift 2 ;;
     --token)   [ "$#" -ge 2 ] || usage; token="$2"; token_given=1; shift 2 ;;
     --dry-run) dry_run=1; shift ;;
+    --image)   [ "$#" -ge 2 ] || usage; image="$2"; shift 2 ;;
     dev|release)
       [ -z "$profile" ] || usage
       profile="$1"; shift ;;
@@ -66,7 +72,7 @@ if [ -n "$port" ] && [ -n "$host" ]; then
   echo "push-apps.sh: give --port or --host, not both" >&2
   usage
 fi
-if [ -z "$port" ] && [ -z "$host" ]; then
+if [ -z "$port" ] && [ -z "$host" ] && [ -z "$image" ]; then
   echo "push-apps.sh: give --port <port> or --host <ip>" >&2
   usage
 fi
@@ -80,7 +86,7 @@ if [ ! -f "$FW/lib/vk.lua" ]; then
   exit 1
 fi
 
-if [ "$dry_run" -eq 0 ]; then
+if [ "$dry_run" -eq 0 ] && [ -z "$image" ]; then
   if [ -n "$port" ]; then
     if [ ! -x "$PY" ]; then
       echo "push-apps.sh: $PY not found; from the repository root run:" >&2
@@ -147,7 +153,9 @@ for dir in "$FW"/apps/*/; do
     failed+=("$id")
     continue
   fi
-  if [ "$dry_run" -eq 1 ]; then
+  if [ -n "$image" ]; then
+    mkdir -p "$TMP/.image/apps" && cp -R "$TMP/$id" "$TMP/.image/apps/$id" && pushed+=("$id") || failed+=("$id")
+  elif [ "$dry_run" -eq 1 ]; then
     echo "== $id"
     (cd "$TMP/$id" && find . -type f ! -name '.*' | sed 's|^\./|    |' | sort)
     pushed+=("$id")
@@ -181,7 +189,20 @@ if [ "${#serial_args[@]}" -gt 0 ]; then
   done
 fi
 
-verb="pushed"
+if [ -n "$image" ]; then
+  # The filesystem partition of partitions.csv (`spiffs`, mounted as LittleFS), with the Arduino
+  # core's LittleFS geometry: 4096-byte blocks, 256-byte pages.
+  size="$(awk -F, '$1 ~ /^spiffs/ {gsub(/ /, "", $5); print $5}' "$FW/partitions.csv")"
+  tool="${MKLITTLEFS:-$(ls -d "$HOME"/Library/Arduino15/packages/esp32/tools/mklittlefs/*/mklittlefs "$HOME"/.arduino15/packages/esp32/tools/mklittlefs/*/mklittlefs 2>/dev/null | tail -n 1)}"
+  if [ -z "$tool" ] || [ ! -x "$tool" ] || [ -z "$size" ]; then
+    echo "push-apps.sh: mklittlefs or the spiffs partition size not found (set MKLITTLEFS)" >&2
+    exit 1
+  fi
+  mkdir -p "$TMP/.image/apps"
+  "$tool" -c "$TMP/.image" -b 4096 -p 256 -s "$((size))" "$image" > /dev/null || exit 1
+  verb="put in $image"
+fi
+verb="${verb:-pushed}"
 [ "$dry_run" -eq 1 ] && verb="would push"
 echo "push-apps.sh: $profile: $verb ${#pushed[@]} app(s): ${pushed[*]-}"
 if [ "${#skipped[@]}" -gt 0 ]; then
