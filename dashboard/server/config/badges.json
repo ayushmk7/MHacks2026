@@ -4,10 +4,10 @@
     {
       "id": 1,
       "label": "Merchant (team)",
-      "pubkey": "Gn2GQYmcQkatE2594ov2ELKkYWZHwARG7FiAoPWSEcxq",
+      "pubkey": "ChPPKh4s47BMK3RGVCRc53fsUuw2xgSXw8jefRGhzA39",
       "keyLocation": "software",
       "tokenAccount": null,
-      "standIn": true
+      "standIn": false
     },
     {
       "id": 2,

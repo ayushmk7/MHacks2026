@@ -1,0 +1,17 @@
+# Solana OS partition table - 16 MB flash (ESP32-S3-WROOM-1-N16R8)
+#
+# Two OTA slots at 3.2 MB each (the image is ~1.8 MB, so there is headroom for
+# the firmware to grow without a repartition), and everything left over goes to
+# the LittleFS volume that holds installed apps. Apps are text and tiny, so
+# 9.5 MB is effectively unlimited for them - the space is there so an app can
+# ship images and data without anyone having to think about it.
+#
+# Build with PartitionScheme=custom; see README.md#building.
+#
+# Name,     Type, SubType,  Offset,    Size,      Flags
+nvs,        data, nvs,      0x9000,    0x5000,
+otadata,    data, ota,      0xe000,    0x2000,
+app0,       app,  ota_0,    0x10000,   0x330000,
+app1,       app,  ota_1,    0x340000,  0x330000,
+spiffs,     data, spiffs,   0x670000,  0x980000,
+coredump,   data, coredump, 0xFF0000,  0x10000,

@@ -88,6 +88,19 @@ export function DataProvider({ children }) {
         return next;
       });
       refetch('stats', 'stats/db', 'badges');
+    } else if (type === 'approval') {
+      // Every cached approvals list (any ?limit) gets the row; the same id again (pending -> approved) replaces it in place.
+      setStore(s => {
+        const next = { ...s };
+        for (const [k, v] of Object.entries(s)) {
+          const list = v?.data?.approvals;
+          if (!k.startsWith('approvals') || !list || !data?.id) continue;
+          const merged = [data, ...list.filter(a => a.id !== data.id)].sort((a, b) => String(b.time).localeCompare(String(a.time)));
+          next[k] = { ...v, data: { ...v.data, approvals: merged.slice(0, 200) } };
+        }
+        return next;
+      });
+      refetch('badges'); // bank balances moved
     } else if (type === 'attestation') refetch('attestations', 'badges');
     else if (type === 'attack') refetch('attacks');
     else if (type === 'status') refetch('*');
@@ -174,7 +187,7 @@ export function useGaps(page) {
 export const isGlobalGap = g => g.severity === 'blocker' && (g.pages?.length ?? 0) >= 4;
 
 /**
- * GET a resource: 'payments' | 'stats' | 'stats/db' | 'badges' | 'attestations' | 'attacks' (params become the query string).
+ * GET a resource: 'payments' | 'stats' | 'stats/db' | 'badges' | 'attestations' | 'attacks' | 'approvals' (params become the query string).
  * Returns { data, loading, error, refetch }. `data` is the response body exactly as in the API contract.
  * loading = nothing to show yet (render skeletons). error with data = stale data, keep rendering it.
  */

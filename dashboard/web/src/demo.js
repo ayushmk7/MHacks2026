@@ -7,6 +7,7 @@ let seed = 20261003;
 const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32; // LCG: fixtures are stable per load
 const pick = (...xs) => xs[Math.floor(rnd() * xs.length)];
 const b58 = (len, prefix = '') => prefix + Array.from({ length: len - prefix.length }, () => B58[Math.floor(rnd() * 58)]).join('');
+const hex = n => Array.from({ length: n }, () => Math.floor(rnd() * 16).toString(16)).join(''); // Nessie ids are 24 hex chars
 const b64 = n => btoa(String.fromCharCode(...Array.from({ length: n }, () => Math.floor(rnd() * 256))));
 const iso = ms => new Date(ms).toISOString();
 const clone = x => JSON.parse(JSON.stringify(x));
@@ -21,28 +22,39 @@ const DEC = 2;
 const MINT = b58(44, 'DemoHACK'), AUTH = b58(44, 'DemoAuth'), OLD = b58(44, 'DemoXMerch');
 const ATA = { [AUTH]: b58(44, 'DemoAta'), [OLD]: b58(44, 'DemoAta') };
 
-const none = { status: 'unverified', name: null, pda: null, issuedSig: null, revokedSig: null };
-const mkBadge = (id, label, prefix, keyLocation, standIn, hack) => {
+const none = { status: 'unverified', name: null, kind: null, pda: null, issuedSig: null, revokedSig: null };
+// usdCents = Nessie balance; null = the badge is not enrolled at the bank.
+const mkBadge = (id, label, prefix, keyLocation, standIn, hack, usdCents = null) => {
   const b = { id, label, pubkey: b58(44, prefix), tokenAccount: b58(44, 'DemoAta'), keyLocation, standIn,
-    sol: 0.05, hack, attestation: { ...none }, received: { count: 0, amount: 0 } };
+    sol: 0.05, hack, attestation: { ...none }, received: { count: 0, amount: 0 },
+    nessie: usdCents == null ? null : { accountId: hex(24), usdCents } };
   ATA[b.pubkey] = b.tokenAccount;
   return b;
 };
 const badges = [
-  mkBadge(1, 'Merchant (team)', 'DemoMerch1', 'se050', false, 1000),
+  mkBadge(1, 'Merchant (team)', 'DemoMerch1', 'se050', false, 1000, 482500),
   mkBadge(2, 'Impostor (team)', 'DemoFake2', 'software', true, 1000),
-  mkBadge(3, 'Judge A', 'DemoJudge3', 'se050', false, 1500),
+  mkBadge(3, 'Judge A', 'DemoJudge3', 'se050', false, 1500, 125000),
   mkBadge(4, 'Judge B', 'DemoJudge4', 'unknown', false, 1000),
 ];
 const badgeOf = pubkey => badges.find(b => b.pubkey === pubkey);
 
+const CAFE = b58(44, 'DemoXCafe'), RELAY = b58(44, 'DemoRelay');
 const attestations = [
-  { subject: badges[0].pubkey, badgeId: 1, label: badges[0].label, name: 'MHacks Merch', status: 'verified', pda: b58(44, 'DemoAtt'),
+  { subject: badges[0].pubkey, badgeId: 1, label: badges[0].label, name: 'MHacks Merch', kind: 'merchant', status: 'verified', pda: b58(44, 'DemoAtt'),
     issuedSig: b58(88), issuedAt: iso(T0 - 3 * 3600e3), revokedSig: null, revokedAt: null, expiresAt: iso(T0 + 30 * 86400e3) },
-  { subject: OLD, badgeId: null, label: null, name: 'Old Merch', status: 'revoked', pda: b58(44, 'DemoAtt'),
+  { subject: badges[2].pubkey, badgeId: 3, label: badges[2].label, name: 'Alice (judge)', kind: 'person', status: 'verified', pda: b58(44, 'DemoAtt'),
+    issuedSig: b58(88), issuedAt: iso(T0 - 2.5 * 3600e3), revokedSig: null, revokedAt: null, expiresAt: iso(T0 + 30 * 86400e3) },
+  { subject: RELAY, badgeId: null, label: null, name: 'Relay Hall B', kind: 'relay', status: 'verified', pda: b58(44, 'DemoAtt'),
+    issuedSig: b58(88), issuedAt: iso(T0 - 2 * 3600e3), revokedSig: null, revokedAt: null, expiresAt: iso(T0 + 30 * 86400e3) },
+  { subject: OLD, badgeId: null, label: null, name: 'Old Merch', kind: 'merchant', status: 'revoked', pda: b58(44, 'DemoAtt'),
     issuedSig: b58(88), issuedAt: iso(T0 - 26 * 3600e3), revokedSig: b58(88), revokedAt: iso(T0 - 2 * 3600e3), expiresAt: iso(T0 + 29 * 86400e3) },
+  // 'expired' is what the server reports once expiresAt has passed; the badge rejects the record from then on.
+  { subject: CAFE, badgeId: null, label: null, name: 'Pop-up Cafe', kind: 'merchant', status: 'expired', pda: b58(44, 'DemoAtt'),
+    issuedSig: b58(88), issuedAt: iso(T0 - 9 * 86400e3), revokedSig: null, revokedAt: null, expiresAt: iso(T0 - 86400e3) },
 ];
-const syncBadge = a => { const b = badgeOf(a.subject); if (b) b.attestation = { status: a.status, name: a.name, pda: a.pda, issuedSig: a.issuedSig, revokedSig: a.revokedSig }; };
+const operators = new Map([[RELAY, 'op-hallb-01']]); // relay subject -> operator id. Backend-only (never in a response), like the server's DB.
+const syncBadge = a => { const b = badgeOf(a.subject); if (b) b.attestation = { status: a.status, name: a.name, kind: a.kind, pda: a.pda, issuedSig: a.issuedSig, revokedSig: a.revokedSig }; };
 attestations.forEach(syncBadge);
 
 const party = pubkey => ({ pubkey, badgeId: badgeOf(pubkey)?.id ?? null, label: badgeOf(pubkey)?.label ?? null });
@@ -132,6 +144,37 @@ const attempts = [
     outcome: 'signed', signature: forged.signature, deliveredAt: iso(Date.parse(forged.blockTime) - 7000), resolvedAt: forged.blockTime },
 ];
 
+// Bank-rail approvals (and badge-reported refusals), newest first. Shape of GET /api/approvals.
+const approvals = [];
+function approve({ ms, rail = 'nessie', source = 'backend', payer = judgeA, payee = merchant, amountCents, status = 'approved', reason = null }) {
+  const att = attestations.find(a => a.subject === payee);
+  const memoSig = status === 'approved' ? b58(88) : null;
+  const a = { id: `appr_${b58(12)}`, time: iso(ms), rail, source, payer: { pubkey: payer }, payee: { pubkey: payee, name: att?.name ?? null },
+    amountCents, status, reason, nessieIds: status === 'approved' && rail === 'nessie' ? [hex(24)] : [], memoSig, links: { memo: memoSig ? txUrl(memoSig) : null } };
+  approvals.unshift(a);
+  if (approvals.length > 200) approvals.pop();
+  const from = badgeOf(payer)?.nessie, to = badgeOf(payee)?.nessie;
+  if (status === 'approved' && rail === 'nessie') { if (from) from.usdCents -= amountCents; if (to) to.usdCents += amountCents; }
+  return a;
+}
+// Oldest first, so the list ends up newest first. One row per blocked reason, so every label is on screen in DEMO.
+[
+  { amountCents: 1200 },
+  { amountCents: 1200, status: 'blocked', reason: 'replay' },
+  { amountCents: 500, rail: 'solana', source: 'badge_report', payee: impostor, status: 'blocked', reason: 'unverified' },
+  { amountCents: 800, payee: OLD, status: 'blocked', reason: 'revoked' },
+  { amountCents: 2000, status: 'blocked', reason: 'bad_proof' },
+  { amountCents: 1250, status: 'blocked', reason: 'amount_not_whole_dollars' },
+  { amountCents: 300, payee: CAFE, status: 'blocked', reason: 'expired' },
+  { amountCents: 1500, payer: judgeB, status: 'blocked', reason: 'not_enrolled' },
+  { amountCents: 900, source: 'badge_report', status: 'blocked', reason: 'payee_mismatch' },
+  { amountCents: 700, status: 'blocked', reason: 'bad_sig' },
+  { amountCents: 400, status: 'blocked', reason: 'stale' },
+  { amountCents: 2500, status: 'failed', reason: 'nessie_error' },
+  { amountCents: 600 },
+  { amountCents: 1000, status: 'pending' },
+].forEach((x, i, all) => approve({ ...x, ms: T0 - 4000 - (all.length - i) * 17000 }));
+
 export const demoStatus = {
   ok: true, app: 'badgepay', cluster: 'devnet', explorer: EXPLORER,
   db: { ok: true, schema: true, error: null },
@@ -140,7 +183,7 @@ export const demoStatus = {
   token: { mint: MINT, symbol: 'HACK', decimals: DEC },
   authority: { pubkey: AUTH, sol: 0.93 },
   registry: { program: '22zoJMtdu4tQc2PzL74ZUT7FrwgB1Udec8DdW4yw4BdG', credential: b58(44, 'DemoCred'), schema: b58(44, 'DemoSchema'),
-    credentialName: 'MHacks Verified', schemaName: 'badge-identity', schemaVersion: 1, ready: true },
+    credentialName: 'MHacks Verified Payees', schemaName: 'payee_v1', schemaVersion: 1, ready: true },
   badgeListener: { open: false, url: null },
   gaps: [
     // DEMO keeps the badge-dependent gaps on screen, so the placeholders are visible before any badge exists.
@@ -167,6 +210,7 @@ export function demoGet(resource, params = {}) {
     case 'stats/db': return clone(dbStats);
     case 'badges': return clone({ badges });
     case 'attestations': return clone({ attestations });
+    case 'approvals': return clone({ approvals: approvals.slice(0, Number(params.limit) || 50) });
     case 'attacks': return clone({ attempts: attempts.slice(0, Number(params.limit) || 20).map(a => // 'expired' is derived, never stored
       ({ ...a, outcome: a.outcome === 'pending' && Date.now() - Date.parse(a.createdAt) > 90000 ? 'expired' : a.outcome })) });
     default: throw fail('not_found', `No such resource: ${resource}`, 404);
@@ -174,6 +218,7 @@ export function demoGet(resource, params = {}) {
 }
 
 const isPubkey = v => typeof v === 'string' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v);
+const KINDS = ['merchant', 'person', 'relay'];
 const isAmount = v => Number.isFinite(v) && v <= 1e6 && Math.round(v * 10 ** DEC) >= 1 && Number.isInteger(+(v * 10 ** DEC).toFixed(6));
 
 /** POST, in memory. Same request/response/error shapes as the server, so the admin pages are fully clickable in DEMO. */
@@ -183,8 +228,15 @@ export function demoPost(path, body = {}) {
     const name = typeof body.name === 'string' ? body.name.trim() : '';
     if (!isPubkey(body.pubkey)) throw fail('invalid_pubkey', 'pubkey must be a base58 32-byte address');
     if (!/^[\x20-\x7E]{1,32}$/.test(name)) throw fail('invalid_name', 'name must be 1 to 32 printable ASCII characters');
+    if (!KINDS.includes(body.kind)) throw fail('invalid_kind', 'kind must be merchant, person or relay');
+    if (body.solanaWallet != null && !isPubkey(body.solanaWallet)) throw fail('invalid_pubkey', 'solanaWallet must be a base58 32-byte address');
+    if (body.kind === 'relay' && body.nessieRef) throw fail('invalid_param', 'a relay attestation carries no Nessie reference');
+    const op = body.kind === 'relay' && typeof body.operatorId === 'string' ? body.operatorId.trim() : '';
+    if (op && [...operators].some(([k, v]) => v === op && k !== body.pubkey && attestations.some(a => a.subject === k && a.status === 'verified')))
+      throw fail('conflict', 'This operator already holds a live relay attestation (one per verified operator)', 409);
     const b = badgeOf(body.pubkey), old = attestations.findIndex(a => a.subject === body.pubkey);
-    const a = { subject: body.pubkey, badgeId: b?.id ?? null, label: b?.label ?? null, name, status: 'verified',
+    if (op) operators.set(body.pubkey, op);
+    const a = { subject: body.pubkey, badgeId: b?.id ?? null, label: b?.label ?? null, name, kind: body.kind, status: 'verified',
       pda: old >= 0 ? attestations[old].pda : b58(44, 'DemoAtt'), issuedSig: b58(88), issuedAt: iso(now),
       revokedSig: null, revokedAt: null, expiresAt: iso(now + 30 * 86400e3) };
     if (old >= 0) attestations.splice(old, 1);
@@ -198,6 +250,13 @@ export function demoPost(path, body = {}) {
     Object.assign(a, { status: 'revoked', revokedSig: b58(88), revokedAt: iso(now) });
     attestations.unshift(...attestations.splice(attestations.indexOf(a), 1)); syncBadge(a);
     return clone({ attestation: a, signature: a.revokedSig, explorerUrl: txUrl(a.revokedSig) });
+  }
+  if (path === '/api/enroll') {
+    if (!isPubkey(body.pubkey)) throw fail('invalid_pubkey', 'pubkey must be a base58 32-byte address');
+    const b = badgeOf(body.pubkey);
+    const customerId = body.nessieCustomerId || hex(24), accountId = body.nessieAccountId || b?.nessie?.accountId || hex(24);
+    if (b) b.nessie = { accountId, usdCents: b.nessie?.usdCents ?? 100000 }; // a new demo account opens with $1,000
+    return { customerId, accountId };
   }
   if (path === '/api/attacks') {
     const { victim, displayAmount = 5, actualAmount = 500 } = body;
@@ -227,11 +286,21 @@ export function mintDemoPayment() {
   return clone(p);
 }
 
-/** Pushes `{type:'payment', data}` (the SSE message shape) about every 4 s, or 10 s under reduced motion. Returns stop(). */
+const BLOCKED = ['replay', 'bad_proof', 'payee_mismatch', 'revoked', 'stale'];
+/** Adds one bank-rail approval at the head of the demo list and returns it (the SSE 'approval' data shape). */
+export function mintDemoApproval() {
+  const blocked = rnd() < 0.35, badge = blocked && rnd() < 0.4;
+  return clone(approve({ ms: Date.now(), amountCents: (2 + Math.floor(rnd() * 24)) * 100, source: badge ? 'badge_report' : 'backend',
+    status: blocked ? 'blocked' : 'approved', reason: blocked ? pick(...BLOCKED) : null }));
+}
+
+/** Pushes `{type:'payment', data}` (the SSE message shape) about every 4 s, or 10 s under reduced motion, and an 'approval' every third tick. Returns stop(). */
 export function startDemoTicker(push) {
   const base = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 10000 : 4000;
+  let n = 0;
   let t = setTimeout(function tick() {
     push({ type: 'payment', data: mintDemoPayment() });
+    if (++n % 3 === 0) push({ type: 'approval', data: mintDemoApproval() });
     t = setTimeout(tick, base * (0.7 + Math.random() * 0.6));
   }, base * 0.6);
   return () => clearTimeout(t);

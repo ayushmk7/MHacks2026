@@ -1,0 +1,6 @@
+# R0 harness environment: python3.11 -m venv harness/.venv && harness/.venv/bin/pip install -r harness/requirements.txt
+pynacl==1.6.2
+solders==0.29.0
+solana==0.41.0
+requests==2.34.2
+pyserial==3.5  # se050_survey.py --port

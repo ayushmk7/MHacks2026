@@ -111,7 +111,7 @@ async function main() {
   if (merchant) {
     const pda = await attestationPda(merchant.pubkey);
     if ((await fetchEncodedAccount(rpc, pda, { commitment: 'confirmed' })).exists) attested = `already issued (${pda})`;
-    else attested = `issued "MHacks Merch" to badge 1, tx ${(await issue(merchant.pubkey, 'MHacks Merch')).signature}`;
+    else attested = `issued "MHacks Merch" to badge 1, tx ${(await issue(merchant.pubkey, { name: 'MHacks Merch', kind: 'merchant' })).signature}`;
   }
 
   // 8. summary

@@ -1,7 +1,7 @@
-// Badges: the four badge slots. Identity, where the signing key lives, balances, attestation status.
+// Badges: the four badge slots. Identity, where the signing key lives, balances (HACK and bank), attestation status, bank enrollment.
 import './admin.css';
 import { useData, useGaps, useStatus } from '../data.jsx';
-import { Empty, GapCard, Page, Pubkey, Skeleton, StatusDot, fmt } from '../ui.jsx';
+import { Empty, GapCard, Page, Pubkey, Skeleton, StatusDot, fmt, short, usd } from '../ui.jsx';
 
 // BADGE-GAP(key-location): each badge reports where its key lives (Settings > Identity); the value is copied into
 // server/config/badges.json. Anything else than se050 / software reads UNKNOWN: the panel never claims a secure element.
@@ -31,6 +31,7 @@ function Badge({ b, symbol }) {
       <div className="row">
         <StatusDot status={att.status ?? 'unverified'} />
         <span>{att.name ?? 'no verified name'}</span>
+        {att.kind && <span className="chip">{att.kind}</span>}
       </div>
       {/* --n: characters in the balance; admin.css shrinks a long one so it stays inside the card. */}
       <div className={`stat-value num badge-bal${b.hack == null ? ' t-mute' : ''}`} style={{ '--n': bal.length }}>{bal}<small className="label"> {symbol}</small></div>
@@ -41,6 +42,11 @@ function Badge({ b, symbol }) {
         <div><dt>SOL for fees</dt><dd className="num">{fmt(b.sol, 4)}</dd></div>
         <div><dt>Payments in</dt><dd className="num">{fmt(b.received?.count)}</dd></div>
         <div><dt>Received</dt><dd className="num">{fmt(b.received?.amount)} {symbol}</dd></div>
+        {/* nessie absent = a backend that does not report the bank yet: no row. null = not enrolled. */}
+        {b.nessie !== undefined && <div><dt>Bank · Nessie</dt><dd>{b.nessie ? <span className="chip chip--ok">enrolled</span>
+          : <span className="chip" title="Enroll it on the Issuer page">not enrolled</span>}</dd></div>}
+        {b.nessie && <div><dt>Bank balance</dt><dd className="num"><b>{usd(b.nessie.usdCents)}</b></dd></div>}
+        {b.nessie && <div><dt>Nessie account</dt><dd className="hash" title={b.nessie.accountId}>{short(b.nessie.accountId, 6)}</dd></div>}
       </dl>
     </article>
   );
@@ -50,7 +56,7 @@ export default function Badges() {
   const { status } = useStatus(), gaps = useGaps('badges'), { data, loading, error } = useData('badges');
   const symbol = status?.token?.symbol ?? 'HACK', list = data?.badges ?? [];
   return (
-    <Page title="Badges" subtitle="Four badges: where each key lives, what it holds, and whether its name is verified.">
+    <Page title="Badges" subtitle="Four badges: where each key lives, what it holds on chain and at the bank, and whether its name is verified.">
       {gaps.map(g => <GapCard key={g.code} gap={g} />)}
       {loading || list.length ? (
         <section className="grid badges" aria-label="Badges">

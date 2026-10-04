@@ -1,0 +1,556 @@
+{
+ "about": "R5 vectors for docs/specs/00-Interfaces.md \u00a75-\u00a77. TEST keys from fixed public seeds - never fund them. Regenerate with harness/make_vectors.py.",
+ "now": 1790000000,
+ "keys": {
+  "payee": "061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71",
+  "payer": "c3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3",
+  "issuer": "194485b670463908543ed83e36458edc4253bd15d1aa80279073f720d92851c0",
+  "other": "d4172fc29ea7b17f05e369633ddcf458c56cb9ea869b4054a22e72a99d1368db"
+ },
+ "vectors": [
+  {
+   "name": "req ok (HACK)",
+   "kind": "req",
+   "expect": "ok",
+   "input": {
+    "frame": "564b010101061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71a00f0000000000004841434b0102030405060708bc3bb16a0b4e6573736965204361666585f3959bd953269a1605fc542f17e1850b78c684571e4cc664c6f9314e17a76eabcf2cca2808a37f28466b9ef146d4806e4e172c80b9f1026c7789f401d5440f"
+   }
+  },
+  {
+   "name": "req ok (bank, USD)",
+   "kind": "req",
+   "expect": "ok",
+   "input": {
+    "frame": "564b010102061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71a00f000000000000555344000102030405060708bc3bb16a0b436f726e65722053686f7008c4868d9ba93bc3202892c7ab3f9d221f58c3b01e723a574ec38fa62d21843be6dbc484ef265e2ef13261a2b11b9353b504269437afce2f92ad63f85826ce0f"
+   }
+  },
+  {
+   "name": "req ok (empty name)",
+   "kind": "req",
+   "expect": "ok",
+   "input": {
+    "frame": "564b010101061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71a00f0000000000004841434b0102030405060708bc3bb16a00b8640fe40183fbcd3eee7ed84457ce520ef73d05d926246961ad027b36c5485794a51f5838f3d6253ac5653eec8dcaf038872279488ed124549d3ecb624c8b0c"
+   }
+  },
+  {
+   "name": "req tampered amount",
+   "kind": "req",
+   "expect": "bad_signature",
+   "input": {
+    "frame": "564b010101061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71a00f0001000000004841434b0102030405060708bc3bb16a0b4e6573736965204361666585f3959bd953269a1605fc542f17e1850b78c684571e4cc664c6f9314e17a76eabcf2cca2808a37f28466b9ef146d4806e4e172c80b9f1026c7789f401d5440f"
+   }
+  },
+  {
+   "name": "req signed by another key",
+   "kind": "req",
+   "expect": "bad_signature",
+   "input": {
+    "frame": "564b010101061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71a00f0000000000004841434b0102030405060708bc3bb16a0b4e65737369652043616665f407b07e0b7f6ec75d497adeb457bbe0318d943fbd5498b6df6bbc3c3c64a32675e7bc2a457b6a91f70159c987a57ae281aee9672444558fd21f1b31600db209"
+   }
+  },
+  {
+   "name": "req signed without prefix",
+   "kind": "req",
+   "expect": "bad_signature",
+   "input": {
+    "frame": "564b010101061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71a00f0000000000004841434b0102030405060708bc3bb16a0b4e65737369652043616665eb8fc41417149b906306eae60adb805e43c9dbb0b9ba38ef37c0600a143bf9816bfcb85fabf40bfbc7f015044bb0d0fd6453464f5ac37bc1b1e3d0f55580d40b"
+   }
+  },
+  {
+   "name": "req signed with pay-proof prefix",
+   "kind": "req",
+   "expect": "bad_signature",
+   "input": {
+    "frame": "564b010101061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71a00f0000000000004841434b0102030405060708bc3bb16a0b4e657373696520436166659419d47d2fef8bfa5069502c41786d21d62a3a8cc93b081d43add42a143b48eb2a05bfd95f2b725217bb1f026f834a64d90606ea0e35becab0a0766f845f8801"
+   }
+  },
+  {
+   "name": "req trailing byte",
+   "kind": "req",
+   "expect": "bad_length",
+   "input": {
+    "frame": "564b010101061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71a00f0000000000004841434b0102030405060708bc3bb16a0b4e6573736965204361666585f3959bd953269a1605fc542f17e1850b78c684571e4cc664c6f9314e17a76eabcf2cca2808a37f28466b9ef146d4806e4e172c80b9f1026c7789f401d5440f00"
+   }
+  },
+  {
+   "name": "req truncated",
+   "kind": "req",
+   "expect": "bad_length",
+   "input": {
+    "frame": "564b010101061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71a00f0000000000004841434b0102030405060708bc3bb16a0b4e6573736965204361666585f3959bd953269a1605fc542f17e1850b78c684571e4cc664c6f9314e17a76eabcf2cca2808a37f28466b9ef146d4806e4e172c80b9f1026c7789f401d544"
+   }
+  },
+  {
+   "name": "req bad magic",
+   "kind": "req",
+   "expect": "bad_magic",
+   "input": {
+    "frame": "584b010101061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71a00f0000000000004841434b0102030405060708bc3bb16a0b4e657373696520436166657aad4f22394b25af9e3bfd7143f93a005bdae183638b160b25ffde9165e948e1bc32d331ab1c271d97b8909d9eebf585ec4a6bfe28309759de9e49abdb552500"
+   }
+  },
+  {
+   "name": "req version 2",
+   "kind": "req",
+   "expect": "bad_version",
+   "input": {
+    "frame": "564b020101061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71a00f0000000000004841434b0102030405060708bc3bb16a0b4e6573736965204361666534fd97358527eafc5832d2a27999e8c3e5ba1d311642923015697e952acecc427d31bd071b89e5189cb13d7241a52143ddae8cd904cab6b8cdc9c0b933424001"
+   }
+  },
+  {
+   "name": "req wrong type",
+   "kind": "req",
+   "expect": "bad_type",
+   "input": {
+    "frame": "564b010301061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71a00f0000000000004841434b0102030405060708bc3bb16a0b4e657373696520436166656f5b6bedec1bfbf93e3a45d01b97327a3805c49acfc7eadb8f70b40c590add1bd382a488e1ab400b9620dbe38e49d6982ea7d2d3fc2744ce2cea10bb346d980b"
+   }
+  },
+  {
+   "name": "req name_len over 32",
+   "kind": "req",
+   "expect": "bad_field",
+   "input": {
+    "frame": "564b010101061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71a00f0000000000004841434b0102030405060708bc3bb16a2141414141414141414141414141414141414141414141414141414141414141414100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+   }
+  },
+  {
+   "name": "req rail/currency mismatch",
+   "kind": "req",
+   "expect": "bad_field",
+   "input": {
+    "frame": "564b010101061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71a00f000000000000555344000102030405060708bc3bb16a0b4e657373696520436166659d111b1b1f34f72da16510559d3c1e46399897c524916b41e21b6abd7dbf4fce44385c532fc38cbce9496b555ca750f46d749d29ebd25af8fceec13120f8b00d"
+   }
+  },
+  {
+   "name": "req unknown rail",
+   "kind": "req",
+   "expect": "bad_field",
+   "input": {
+    "frame": "564b010103061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71a00f0000000000004841434b0102030405060708bc3bb16a0b4e6573736965204361666532ec1a805ce673d141716a8ca035e2a760d383a26b77c684d3d203cf5fda8c5e74d6b7190dd69f696aea06f60deeabfa6a3333236d9be01d6c9d03e41d2fef03"
+   }
+  },
+  {
+   "name": "req zero amount",
+   "kind": "req",
+   "expect": "bad_field",
+   "input": {
+    "frame": "564b010101061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a7100000000000000004841434b0102030405060708bc3bb16a0b4e65737369652043616665b68637f5b0f4cf469dc7ad3760371e6c8e8f0b34724530970547b51d751106e5bdd1a64bb802627bca187e2adfb0c085fb9d81ba74663cc4c494885817aab102"
+   }
+  },
+  {
+   "name": "req non-printable name",
+   "kind": "req",
+   "expect": "bad_field",
+   "input": {
+    "frame": "564b010101061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71a00f0000000000004841434b0102030405060708bc3bb16a0443616607ce84b9a3bdb5401b485c8dab734836ddf3c7f674a853e357ce9149f5e5c1e434e5bcb64145dbac4483fb95c6ec605cda376356330a722efb4fe8c8ae75037b0c"
+   }
+  },
+  {
+   "name": "req expired",
+   "kind": "req",
+   "expect": "expired",
+   "input": {
+    "frame": "564b010101061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71a00f0000000000004841434b01020304050607087f3bb16a0b4e65737369652043616665f9178f5bedc60fd3660ac4238b8f9ae0df6b62a9a878a797c2adf5c9190e62ff7a4f68d7e72ec464fec65418b53541e0bc45f2fa4a03acfbe19259c3e7883e00"
+   }
+  },
+  {
+   "name": "proof ok",
+   "kind": "proof",
+   "expect": "ok",
+   "input": {
+    "proof": "564b0103010203040506070827d8d8bfc350f4abfb48e0bdce885370fcecf99968df5d6537af2f62acec5dd4957c182cc877e5bf3499d4120820f6bba466ef054d1ceefb897e6c08617a5009",
+    "chal": "564b01020102030405060708a0a1a2a3a4a5a6a7a8a9aaabacadaeafc3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3",
+    "payee_pubkey": "061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71"
+   }
+  },
+  {
+   "name": "proof replayed against a new nonce",
+   "kind": "proof",
+   "expect": "bad_signature",
+   "input": {
+    "proof": "564b0103010203040506070827d8d8bfc350f4abfb48e0bdce885370fcecf99968df5d6537af2f62acec5dd4957c182cc877e5bf3499d4120820f6bba466ef054d1ceefb897e6c08617a5009",
+    "chal": "564b0102010203040506070800000000000000000000000000000000c3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3",
+    "payee_pubkey": "061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71"
+   }
+  },
+  {
+   "name": "proof for a different payer",
+   "kind": "proof",
+   "expect": "bad_signature",
+   "input": {
+    "proof": "564b0103010203040506070827d8d8bfc350f4abfb48e0bdce885370fcecf99968df5d6537af2f62acec5dd4957c182cc877e5bf3499d4120820f6bba466ef054d1ceefb897e6c08617a5009",
+    "chal": "564b01020102030405060708a0a1a2a3a4a5a6a7a8a9aaabacadaeafd4172fc29ea7b17f05e369633ddcf458c56cb9ea869b4054a22e72a99d1368db",
+    "payee_pubkey": "061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71"
+   }
+  },
+  {
+   "name": "proof signed by impostor",
+   "kind": "proof",
+   "expect": "bad_signature",
+   "input": {
+    "proof": "564b01030102030405060708e30ac08905f93938173621bd7a5363bafe4f513b9cf1894a86ce4c8cab9515ff4f9dd061a0ede4750d6acd0a1095bc5d9cfc8b9d7b3a31dc45dfa4269eac4102",
+    "chal": "564b01020102030405060708a0a1a2a3a4a5a6a7a8a9aaabacadaeafc3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3",
+    "payee_pubkey": "061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71"
+   }
+  },
+  {
+   "name": "proof signed with pay-req prefix",
+   "kind": "proof",
+   "expect": "bad_signature",
+   "input": {
+    "proof": "564b010301020304050607081866fba2d574f0bbab3f376d640f41ff734fe6c10b71b90821c469ef114f04328b39d0bfbadf6c9aebc0de9bf31427d7c4fe94d94590c7f023e93d4369b4630a",
+    "chal": "564b01020102030405060708a0a1a2a3a4a5a6a7a8a9aaabacadaeafc3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3",
+    "payee_pubkey": "061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71"
+   }
+  },
+  {
+   "name": "proof for another req_id",
+   "kind": "proof",
+   "expect": "mismatch",
+   "input": {
+    "proof": "564b0103ffffffffffffffff27d8d8bfc350f4abfb48e0bdce885370fcecf99968df5d6537af2f62acec5dd4957c182cc877e5bf3499d4120820f6bba466ef054d1ceefb897e6c08617a5009",
+    "chal": "564b01020102030405060708a0a1a2a3a4a5a6a7a8a9aaabacadaeafc3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3",
+    "payee_pubkey": "061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71"
+   }
+  },
+  {
+   "name": "proof trailing byte",
+   "kind": "proof",
+   "expect": "bad_length",
+   "input": {
+    "proof": "564b0103010203040506070827d8d8bfc350f4abfb48e0bdce885370fcecf99968df5d6537af2f62acec5dd4957c182cc877e5bf3499d4120820f6bba466ef054d1ceefb897e6c08617a500900",
+    "chal": "564b01020102030405060708a0a1a2a3a4a5a6a7a8a9aaabacadaeafc3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3",
+    "payee_pubkey": "061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71"
+   }
+  },
+  {
+   "name": "proof wrong type",
+   "kind": "proof",
+   "expect": "bad_type",
+   "input": {
+    "proof": "564b0104010203040506070827d8d8bfc350f4abfb48e0bdce885370fcecf99968df5d6537af2f62acec5dd4957c182cc877e5bf3499d4120820f6bba466ef054d1ceefb897e6c08617a5009",
+    "chal": "564b01020102030405060708a0a1a2a3a4a5a6a7a8a9aaabacadaeafc3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3",
+    "payee_pubkey": "061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71"
+   }
+  },
+  {
+   "name": "proof with truncated chal",
+   "kind": "proof",
+   "expect": "bad_length",
+   "input": {
+    "proof": "564b0103010203040506070827d8d8bfc350f4abfb48e0bdce885370fcecf99968df5d6537af2f62acec5dd4957c182cc877e5bf3499d4120820f6bba466ef054d1ceefb897e6c08617a5009",
+    "chal": "564b01020102030405060708a0a1a2a3a4a5a6a7a8a9aaabacadaeafc3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11",
+    "payee_pubkey": "061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71"
+   }
+  },
+  {
+   "name": "bank ok",
+   "kind": "bank",
+   "expect": "ok",
+   "input": {
+    "payload": "v=1\nrail=nessie\naction=purchase\namount_cents=4000\ncurrency=USD\nfrom_acct=5f1b2c3d4e5f60718293a4b5\npayee_name=Nessie Cafe\npayee_ref=abababababababababababababababababababababababababababababababab\nattestation=none\nreq_id=0102030405060708\nproof_nonce=a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\nissued_at=1789999990",
+    "sig": "04df924ab20a99488270fa57112ba00a03671336574a258122643a30d73e193b4b47f5f0018c0ffd8d85e860a1b08ad6d76e73a9d29ee8bf29aa4eb1d6fe4d07",
+    "payer_pubkey": "c3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3"
+   }
+  },
+  {
+   "name": "bank ok (transfer)",
+   "kind": "bank",
+   "expect": "ok",
+   "input": {
+    "payload": "v=1\nrail=nessie\naction=transfer\namount_cents=4000\ncurrency=USD\nfrom_acct=5f1b2c3d4e5f60718293a4b5\npayee_name=Nessie Cafe\npayee_ref=abababababababababababababababababababababababababababababababab\nattestation=none\nreq_id=0102030405060708\nproof_nonce=a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\nissued_at=1789999990",
+    "sig": "4925773dfe56f516a2c7755c0f40e2c174de0e5e75270ea4bccd93f58d7308cb38b626e0650a8755ba8674cfc95f85c282b3a3cf6ef300ad3d07d0c5a2803807",
+    "payer_pubkey": "c3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3"
+   }
+  },
+  {
+   "name": "bank tampered amount",
+   "kind": "bank",
+   "expect": "bad_signature",
+   "input": {
+    "payload": "v=1\nrail=nessie\naction=purchase\namount_cents=4001\ncurrency=USD\nfrom_acct=5f1b2c3d4e5f60718293a4b5\npayee_name=Nessie Cafe\npayee_ref=abababababababababababababababababababababababababababababababab\nattestation=none\nreq_id=0102030405060708\nproof_nonce=a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\nissued_at=1789999990",
+    "sig": "04df924ab20a99488270fa57112ba00a03671336574a258122643a30d73e193b4b47f5f0018c0ffd8d85e860a1b08ad6d76e73a9d29ee8bf29aa4eb1d6fe4d07",
+    "payer_pubkey": "c3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3"
+   }
+  },
+  {
+   "name": "bank signed by another key",
+   "kind": "bank",
+   "expect": "bad_signature",
+   "input": {
+    "payload": "v=1\nrail=nessie\naction=purchase\namount_cents=4000\ncurrency=USD\nfrom_acct=5f1b2c3d4e5f60718293a4b5\npayee_name=Nessie Cafe\npayee_ref=abababababababababababababababababababababababababababababababab\nattestation=none\nreq_id=0102030405060708\nproof_nonce=a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\nissued_at=1789999990",
+    "sig": "f40657494914d4541bc28d5ce80bc4b5b3ed5fb6f9b9261eaf672ecc1b896608d5cdd041f3530e3acabf308b8d4be3d5bd8a64b11883dd2475ecf6735cb3da01",
+    "payer_pubkey": "c3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3"
+   }
+  },
+  {
+   "name": "bank signed without prefix",
+   "kind": "bank",
+   "expect": "bad_signature",
+   "input": {
+    "payload": "v=1\nrail=nessie\naction=purchase\namount_cents=4000\ncurrency=USD\nfrom_acct=5f1b2c3d4e5f60718293a4b5\npayee_name=Nessie Cafe\npayee_ref=abababababababababababababababababababababababababababababababab\nattestation=none\nreq_id=0102030405060708\nproof_nonce=a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\nissued_at=1789999990",
+    "sig": "6fc11bc78d6a49ca6dd963b627cb0d0e0acab95676833ae7de163cc3b3d71db96a26e4895bf77a4aba741e7252bcb00c6112d1b98a3205a2bdab50a846e04a08",
+    "payer_pubkey": "c3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3"
+   }
+  },
+  {
+   "name": "bank signed with registry prefix",
+   "kind": "bank",
+   "expect": "bad_signature",
+   "input": {
+    "payload": "v=1\nrail=nessie\naction=purchase\namount_cents=4000\ncurrency=USD\nfrom_acct=5f1b2c3d4e5f60718293a4b5\npayee_name=Nessie Cafe\npayee_ref=abababababababababababababababababababababababababababababababab\nattestation=none\nreq_id=0102030405060708\nproof_nonce=a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\nissued_at=1789999990",
+    "sig": "8acc9fd47a21454bef4459a9f82e54efd1dc5f695240fe116c8d673120dfe959a8322c76fd079ce6e08e9f90ab3ad522d6c195845d90c239a12396695bc22c06",
+    "payer_pubkey": "c3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3"
+   }
+  },
+  {
+   "name": "bank trailing newline",
+   "kind": "bank",
+   "expect": "bad_format",
+   "input": {
+    "payload": "v=1\nrail=nessie\naction=purchase\namount_cents=4000\ncurrency=USD\nfrom_acct=5f1b2c3d4e5f60718293a4b5\npayee_name=Nessie Cafe\npayee_ref=abababababababababababababababababababababababababababababababab\nattestation=none\nreq_id=0102030405060708\nproof_nonce=a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\nissued_at=1789999990\n",
+    "sig": "f7de61552ddc891b2123ea3bbd38d5be82e1235f6b58feaacdad49dbd779eb15a8ad53352e865da49512430def47cdde5ffb0c8375851df70edb3f342e6a6d0d",
+    "payer_pubkey": "c3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3"
+   }
+  },
+  {
+   "name": "bank keys out of order",
+   "kind": "bank",
+   "expect": "bad_format",
+   "input": {
+    "payload": "v=1\naction=purchase\nrail=nessie\namount_cents=4000\ncurrency=USD\nfrom_acct=5f1b2c3d4e5f60718293a4b5\npayee_name=Nessie Cafe\npayee_ref=abababababababababababababababababababababababababababababababab\nattestation=none\nreq_id=0102030405060708\nproof_nonce=a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\nissued_at=1789999990",
+    "sig": "9fccaaeea2e431c17ec4a37ca2504cf8414aa8a40b3918bfc46a464aaa344bc596e3b938dff657a992c566cf906c966cffbbab6b256bbaaedf545246f526b505",
+    "payer_pubkey": "c3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3"
+   }
+  },
+  {
+   "name": "bank missing line",
+   "kind": "bank",
+   "expect": "bad_format",
+   "input": {
+    "payload": "v=1\nrail=nessie\naction=purchase\namount_cents=4000\ncurrency=USD\nfrom_acct=5f1b2c3d4e5f60718293a4b5\npayee_name=Nessie Cafe\npayee_ref=abababababababababababababababababababababababababababababababab\nattestation=none\nreq_id=0102030405060708\nproof_nonce=a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+    "sig": "8b198fda6ec634d8e07b6beafa705a1f38bb6ee94dc3a77482e0dc2590da4323995e31e971ebb5ee24a6a6ec1c1298775a5e594b0451cf099872296bf275340e",
+    "payer_pubkey": "c3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3"
+   }
+  },
+  {
+   "name": "bank version 2",
+   "kind": "bank",
+   "expect": "bad_version",
+   "input": {
+    "payload": "v=2\nrail=nessie\naction=purchase\namount_cents=4000\ncurrency=USD\nfrom_acct=5f1b2c3d4e5f60718293a4b5\npayee_name=Nessie Cafe\npayee_ref=abababababababababababababababababababababababababababababababab\nattestation=none\nreq_id=0102030405060708\nproof_nonce=a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\nissued_at=1789999990",
+    "sig": "ecfa18bd5d00cc801fe8728671d438e5814d4d6d60291a890537d1e496ebd16e45db5dc8464bae74a70b49aef522352b1fc8940c40e37f719a764249a885a90b",
+    "payer_pubkey": "c3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3"
+   }
+  },
+  {
+   "name": "bank wrong currency",
+   "kind": "bank",
+   "expect": "bad_field",
+   "input": {
+    "payload": "v=1\nrail=nessie\naction=purchase\namount_cents=4000\ncurrency=EUR\nfrom_acct=5f1b2c3d4e5f60718293a4b5\npayee_name=Nessie Cafe\npayee_ref=abababababababababababababababababababababababababababababababab\nattestation=none\nreq_id=0102030405060708\nproof_nonce=a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\nissued_at=1789999990",
+    "sig": "91885b2e61a61551bc1459b7cf0dce990e497e29cda864d5b36813d81e17d0cf0a5f651aa5982ba3187a995d83436710657cee3e1d908c3b83317f647f296708",
+    "payer_pubkey": "c3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3"
+   }
+  },
+  {
+   "name": "bank uppercase hex",
+   "kind": "bank",
+   "expect": "bad_field",
+   "input": {
+    "payload": "v=1\nrail=nessie\naction=purchase\namount_cents=4000\ncurrency=USD\nfrom_acct=5f1b2c3d4e5f60718293a4b5\npayee_name=Nessie Cafe\npayee_ref=ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB\nattestation=none\nreq_id=0102030405060708\nproof_nonce=a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\nissued_at=1789999990",
+    "sig": "0bc78e05eca6988e78a75906454976e4a87aa4e6aff1c077ab70966051bcf9d67a83ecf268f052b783f268b880a9e83ad8ba468502c84f1a9b3f7817a8873102",
+    "payer_pubkey": "c3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3"
+   }
+  },
+  {
+   "name": "bank zero amount",
+   "kind": "bank",
+   "expect": "bad_field",
+   "input": {
+    "payload": "v=1\nrail=nessie\naction=purchase\namount_cents=0\ncurrency=USD\nfrom_acct=5f1b2c3d4e5f60718293a4b5\npayee_name=Nessie Cafe\npayee_ref=abababababababababababababababababababababababababababababababab\nattestation=none\nreq_id=0102030405060708\nproof_nonce=a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\nissued_at=1789999990",
+    "sig": "1e46abd079f7d37778c6762714acbde7f412e3000a82530dbdb39a8268f465b143441b72628e4159ae88c253cd8f66cccea49071e9e69342aad56aba6fce4504",
+    "payer_pubkey": "c3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3"
+   }
+  },
+  {
+   "name": "bank leading-zero amount",
+   "kind": "bank",
+   "expect": "bad_field",
+   "input": {
+    "payload": "v=1\nrail=nessie\naction=purchase\namount_cents=04000\ncurrency=USD\nfrom_acct=5f1b2c3d4e5f60718293a4b5\npayee_name=Nessie Cafe\npayee_ref=abababababababababababababababababababababababababababababababab\nattestation=none\nreq_id=0102030405060708\nproof_nonce=a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\nissued_at=1789999990",
+    "sig": "6832f721124025e7d01d97cdc463a839332d38453a3baeb084901154ea5a0e36c40bc40d2ea091550ec08dd03c35f9f2341a74bbbc1ce545f3b6ea4e6e135d00",
+    "payer_pubkey": "c3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3"
+   }
+  },
+  {
+   "name": "bank unknown action",
+   "kind": "bank",
+   "expect": "bad_field",
+   "input": {
+    "payload": "v=1\nrail=nessie\naction=refund\namount_cents=4000\ncurrency=USD\nfrom_acct=5f1b2c3d4e5f60718293a4b5\npayee_name=Nessie Cafe\npayee_ref=abababababababababababababababababababababababababababababababab\nattestation=none\nreq_id=0102030405060708\nproof_nonce=a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\nissued_at=1789999990",
+    "sig": "4536c77c73c142df1372fda85947c57b8c8766cad04a23f70b618d91544ce0365b86ec02a417cfadc5e562cf3014d31073bc26b755d72cdec1fb2f9bf09d230d",
+    "payer_pubkey": "c3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3"
+   }
+  },
+  {
+   "name": "bank stale issued_at",
+   "kind": "bank",
+   "expect": "stale",
+   "input": {
+    "payload": "v=1\nrail=nessie\naction=purchase\namount_cents=4000\ncurrency=USD\nfrom_acct=5f1b2c3d4e5f60718293a4b5\npayee_name=Nessie Cafe\npayee_ref=abababababababababababababababababababababababababababababababab\nattestation=none\nreq_id=0102030405060708\nproof_nonce=a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\nissued_at=1789999924",
+    "sig": "d046ecd83198076b71d8e510b4363583c9eec81ecf45cc8274dc5b301aa1c275b7f234e64974554d84c33f7d280ccd2e28336d53f248c31cb60c2d434d5eff08",
+    "payer_pubkey": "c3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3"
+   }
+  },
+  {
+   "name": "bank issued_at far in future",
+   "kind": "bank",
+   "expect": "stale",
+   "input": {
+    "payload": "v=1\nrail=nessie\naction=purchase\namount_cents=4000\ncurrency=USD\nfrom_acct=5f1b2c3d4e5f60718293a4b5\npayee_name=Nessie Cafe\npayee_ref=abababababababababababababababababababababababababababababababab\nattestation=none\nreq_id=0102030405060708\nproof_nonce=a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\nissued_at=1790000076",
+    "sig": "f2b96d3fac6adb764f6a4becf8341e4cdf68d453a20b52458a5fcc536dd93ee1ec7bb0e6991fac6fe80325c2cc9058816160f79e8a34a78a06d2085a55058a0e",
+    "payer_pubkey": "c3c1be80e2f74cbe18e987653cf608a5a84ad3a90cf97e355fbe8a4a447e11b3"
+   }
+  },
+  {
+   "name": "registry ok",
+   "kind": "registry",
+   "expect": "ok",
+   "input": {
+    "record": "v=1\nattestation=9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin\ndisplay_name=Nessie Cafe\ndevice_pubkey=061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71\nkind=merchant\nsolana_wallet=1111111111111111111111111111111111111111111111111111111111111111\nsolana_ata=2222222222222222222222222222222222222222222222222222222222222222\nbank_ref_hash=abababababababababababababababababababababababababababababababab\nexpiry=1790003600\nstatus=active\nissued_at=1789999995",
+    "sig": "f08f5b93ec14022d1479d051a2ce8632b0922c6a2315c41a4e794a9c71efe1f51b8025bc2e5215db153454a90f52641257d22ef2e4dbc73968bb2262a209be09",
+    "issuer_pubkey": "194485b670463908543ed83e36458edc4253bd15d1aa80279073f720d92851c0"
+   }
+  },
+  {
+   "name": "registry ok (person, no wallet)",
+   "kind": "registry",
+   "expect": "ok",
+   "input": {
+    "record": "v=1\nattestation=9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin\ndisplay_name=Nessie Cafe\ndevice_pubkey=061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71\nkind=person\nsolana_wallet=\nsolana_ata=\nbank_ref_hash=abababababababababababababababababababababababababababababababab\nexpiry=1790003600\nstatus=active\nissued_at=1789999995",
+    "sig": "9ad3a6c45678dd63cfd207eb54025bf619be4870ff071bfe697677228bd48316cc7b3b7af246b1a1e8425630d68d220af1df63424d3c5ed2aa6fd7b4488fcd0e",
+    "issuer_pubkey": "194485b670463908543ed83e36458edc4253bd15d1aa80279073f720d92851c0"
+   }
+  },
+  {
+   "name": "registry tampered device_pubkey",
+   "kind": "registry",
+   "expect": "bad_signature",
+   "input": {
+    "record": "v=1\nattestation=9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin\ndisplay_name=Nessie Cafe\ndevice_pubkey=d4172fc29ea7b17f05e369633ddcf458c56cb9ea869b4054a22e72a99d1368db\nkind=merchant\nsolana_wallet=1111111111111111111111111111111111111111111111111111111111111111\nsolana_ata=2222222222222222222222222222222222222222222222222222222222222222\nbank_ref_hash=abababababababababababababababababababababababababababababababab\nexpiry=1790003600\nstatus=active\nissued_at=1789999995",
+    "sig": "f08f5b93ec14022d1479d051a2ce8632b0922c6a2315c41a4e794a9c71efe1f51b8025bc2e5215db153454a90f52641257d22ef2e4dbc73968bb2262a209be09",
+    "issuer_pubkey": "194485b670463908543ed83e36458edc4253bd15d1aa80279073f720d92851c0"
+   }
+  },
+  {
+   "name": "registry signed by a badge key",
+   "kind": "registry",
+   "expect": "bad_signature",
+   "input": {
+    "record": "v=1\nattestation=9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin\ndisplay_name=Nessie Cafe\ndevice_pubkey=061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71\nkind=merchant\nsolana_wallet=1111111111111111111111111111111111111111111111111111111111111111\nsolana_ata=2222222222222222222222222222222222222222222222222222222222222222\nbank_ref_hash=abababababababababababababababababababababababababababababababab\nexpiry=1790003600\nstatus=active\nissued_at=1789999995",
+    "sig": "1e9be0002cd86d823dbbb96024e4dee845fb1830b10c6364e772ff7e32197a676a95a28559777dc78527be019fae2d7c83437e08f2c7dde6525a3b14d73f0405",
+    "issuer_pubkey": "194485b670463908543ed83e36458edc4253bd15d1aa80279073f720d92851c0"
+   }
+  },
+  {
+   "name": "registry signed without prefix",
+   "kind": "registry",
+   "expect": "bad_signature",
+   "input": {
+    "record": "v=1\nattestation=9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin\ndisplay_name=Nessie Cafe\ndevice_pubkey=061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71\nkind=merchant\nsolana_wallet=1111111111111111111111111111111111111111111111111111111111111111\nsolana_ata=2222222222222222222222222222222222222222222222222222222222222222\nbank_ref_hash=abababababababababababababababababababababababababababababababab\nexpiry=1790003600\nstatus=active\nissued_at=1789999995",
+    "sig": "a385804f3c6f5783180384f4b870530c3e1bbe7a5872b3d35cf51488f570dcae1a671c6f4548090d2540ff56b5b6e950ee9215ef36dcce682013e02eff94320b",
+    "issuer_pubkey": "194485b670463908543ed83e36458edc4253bd15d1aa80279073f720d92851c0"
+   }
+  },
+  {
+   "name": "registry trailing newline",
+   "kind": "registry",
+   "expect": "bad_format",
+   "input": {
+    "record": "v=1\nattestation=9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin\ndisplay_name=Nessie Cafe\ndevice_pubkey=061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71\nkind=merchant\nsolana_wallet=1111111111111111111111111111111111111111111111111111111111111111\nsolana_ata=2222222222222222222222222222222222222222222222222222222222222222\nbank_ref_hash=abababababababababababababababababababababababababababababababab\nexpiry=1790003600\nstatus=active\nissued_at=1789999995\n",
+    "sig": "e7e787414c2813dd8107b0b52c71db2bb86fe6f7e28487322e79de9fc34d48b30d96ec130f90da604311ec91996a63c35467fee3b58d109d96254bbe55e8d401",
+    "issuer_pubkey": "194485b670463908543ed83e36458edc4253bd15d1aa80279073f720d92851c0"
+   }
+  },
+  {
+   "name": "registry extra line",
+   "kind": "registry",
+   "expect": "bad_format",
+   "input": {
+    "record": "v=1\nattestation=9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin\ndisplay_name=Nessie Cafe\ndevice_pubkey=061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71\nkind=merchant\nsolana_wallet=1111111111111111111111111111111111111111111111111111111111111111\nsolana_ata=2222222222222222222222222222222222222222222222222222222222222222\nbank_ref_hash=abababababababababababababababababababababababababababababababab\nexpiry=1790003600\nstatus=active\nissued_at=1789999995\nnote=x",
+    "sig": "222cc6eda7b80df48638f716dbbc5052fd18d9454f83b768644b83ea138fdb92032959eea3d8544d8a56b9ae322bea6ec56e1f4bed61dbc0bb72ab41ea60e80b",
+    "issuer_pubkey": "194485b670463908543ed83e36458edc4253bd15d1aa80279073f720d92851c0"
+   }
+  },
+  {
+   "name": "registry version 2",
+   "kind": "registry",
+   "expect": "bad_version",
+   "input": {
+    "record": "v=2\nattestation=9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin\ndisplay_name=Nessie Cafe\ndevice_pubkey=061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71\nkind=merchant\nsolana_wallet=1111111111111111111111111111111111111111111111111111111111111111\nsolana_ata=2222222222222222222222222222222222222222222222222222222222222222\nbank_ref_hash=abababababababababababababababababababababababababababababababab\nexpiry=1790003600\nstatus=active\nissued_at=1789999995",
+    "sig": "0b908999c77125979e08b81f563d6dfdde698f6ce0687825d779e4bcbea477a0e77e0fed5175d2fa5b441d81639d85cb0044210c083bf44bc1de27e62a4ab303",
+    "issuer_pubkey": "194485b670463908543ed83e36458edc4253bd15d1aa80279073f720d92851c0"
+   }
+  },
+  {
+   "name": "registry ata without wallet",
+   "kind": "registry",
+   "expect": "bad_field",
+   "input": {
+    "record": "v=1\nattestation=9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin\ndisplay_name=Nessie Cafe\ndevice_pubkey=061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71\nkind=merchant\nsolana_wallet=\nsolana_ata=2222222222222222222222222222222222222222222222222222222222222222\nbank_ref_hash=abababababababababababababababababababababababababababababababab\nexpiry=1790003600\nstatus=active\nissued_at=1789999995",
+    "sig": "f210c3e0cf0aab5e222bb590c068373bed0f81704eb5f90e19eba1535649999ee6bb9da4b0571fe5388b6f4cbf28b205d2dd3edef89d7cf122becaf9bf3d090d",
+    "issuer_pubkey": "194485b670463908543ed83e36458edc4253bd15d1aa80279073f720d92851c0"
+   }
+  },
+  {
+   "name": "registry name over 32",
+   "kind": "registry",
+   "expect": "bad_field",
+   "input": {
+    "record": "v=1\nattestation=9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin\ndisplay_name=NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN\ndevice_pubkey=061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71\nkind=merchant\nsolana_wallet=1111111111111111111111111111111111111111111111111111111111111111\nsolana_ata=2222222222222222222222222222222222222222222222222222222222222222\nbank_ref_hash=abababababababababababababababababababababababababababababababab\nexpiry=1790003600\nstatus=active\nissued_at=1789999995",
+    "sig": "a35b51148e38e61c578f453f392b1ca5e94bf78b4df892093eb04a59265692b462a768023e6079e31942d2b1db8fd73519f97bc87298e0ae8e1467ad0715a005",
+    "issuer_pubkey": "194485b670463908543ed83e36458edc4253bd15d1aa80279073f720d92851c0"
+   }
+  },
+  {
+   "name": "registry bad kind",
+   "kind": "registry",
+   "expect": "bad_field",
+   "input": {
+    "record": "v=1\nattestation=9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin\ndisplay_name=Nessie Cafe\ndevice_pubkey=061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71\nkind=bank\nsolana_wallet=1111111111111111111111111111111111111111111111111111111111111111\nsolana_ata=2222222222222222222222222222222222222222222222222222222222222222\nbank_ref_hash=abababababababababababababababababababababababababababababababab\nexpiry=1790003600\nstatus=active\nissued_at=1789999995",
+    "sig": "983d5cca70e652cec8a3c47cb5de7997d3ff71587311f68159ce45fbbcb202000f4bd3694bee0f3e6c1831b0d99f27ebeca95d8119e934aa5d93c0113c008109",
+    "issuer_pubkey": "194485b670463908543ed83e36458edc4253bd15d1aa80279073f720d92851c0"
+   }
+  },
+  {
+   "name": "registry revoked",
+   "kind": "registry",
+   "expect": "revoked",
+   "input": {
+    "record": "v=1\nattestation=9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin\ndisplay_name=Nessie Cafe\ndevice_pubkey=061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71\nkind=merchant\nsolana_wallet=1111111111111111111111111111111111111111111111111111111111111111\nsolana_ata=2222222222222222222222222222222222222222222222222222222222222222\nbank_ref_hash=abababababababababababababababababababababababababababababababab\nexpiry=1790003600\nstatus=revoked\nissued_at=1789999995",
+    "sig": "00f8c79c6871b4281130e93fc8fe859c6138ffb543c6a9228128616a528fd2a76127d1bc07922187af8f9d472652a190fa49e0b522b890d6001261dc3ea62d0e",
+    "issuer_pubkey": "194485b670463908543ed83e36458edc4253bd15d1aa80279073f720d92851c0"
+   }
+  },
+  {
+   "name": "registry expired",
+   "kind": "registry",
+   "expect": "expired",
+   "input": {
+    "record": "v=1\nattestation=9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin\ndisplay_name=Nessie Cafe\ndevice_pubkey=061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71\nkind=merchant\nsolana_wallet=1111111111111111111111111111111111111111111111111111111111111111\nsolana_ata=2222222222222222222222222222222222222222222222222222222222222222\nbank_ref_hash=abababababababababababababababababababababababababababababababab\nexpiry=1789999999\nstatus=active\nissued_at=1789999995",
+    "sig": "e708486a6480f8bc56eaa7765045d970d64c79ab7f1b0c391ff20a7e19ca4247bc9da7f832cf28fbe1a7f2d7386590f4d754c9073c26ffd0d67d0961a324be06",
+    "issuer_pubkey": "194485b670463908543ed83e36458edc4253bd15d1aa80279073f720d92851c0"
+   }
+  },
+  {
+   "name": "registry older than TTL",
+   "kind": "registry",
+   "expect": "stale",
+   "input": {
+    "record": "v=1\nattestation=9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin\ndisplay_name=Nessie Cafe\ndevice_pubkey=061987879d88bd665b67cdfa89ad114d7d81f3920fbd197962acf93e35c48a71\nkind=merchant\nsolana_wallet=1111111111111111111111111111111111111111111111111111111111111111\nsolana_ata=2222222222222222222222222222222222222222222222222222222222222222\nbank_ref_hash=abababababababababababababababababababababababababababababababab\nexpiry=1790003600\nstatus=active\nissued_at=1789999969",
+    "sig": "c867c856e3f0f41735620b99d0b5787c97fb6557720f455b5c8a701e1868f6da9cdea3b54ee86380d3de6421a5864a2edf32021119bcc30b422801d80bd0740d",
+    "issuer_pubkey": "194485b670463908543ed83e36458edc4253bd15d1aa80279073f720d92851c0"
+   }
+  }
+ ]
+}
