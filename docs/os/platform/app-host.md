@@ -1,8 +1,8 @@
 # App host
 
-What Badge OS adds around apps: the manifest keys, permissions and first-run consent, the API version, the native runtime, notifications, and how Lua functions are registered. Files: `src/vk/host/`.
+What BadgeOS adds around apps: the manifest keys, permissions and first-run consent, the API version, the native runtime, notifications, and how Lua functions are registered. Files: `src/vk/host/`.
 
-Upstream already provides the Lua runtime, the sandbox (1 MB heap, 250 ms per callback), the launcher, app push and the app store ([baseline](../architecture/upstream-baseline.md)). None of that is rewritten.
+Upstream already provides the Lua runtime, the sandbox (1 MB heap, 250 ms per callback), app push and the app-store client ([baseline](../architecture/upstream-baseline.md)). None of that is rewritten. The launcher and settings are BadgeOS's own shell ([shell](../ui/shell.md)).
 
 ## Two kinds of app
 
@@ -15,7 +15,7 @@ Upstream already provides the Lua runtime, the sandbox (1 MB heap, 250 ms per ca
 | Manifest | `app.ini` | the `BADGE_APP(...)` line |
 | Consent prompt | yes, for sensitive permissions | no |
 
-Both appear in the same launcher list (hook H11), are launched and stopped the same way, receive the same callbacks, and are paused the same way by the approval.
+Both appear in the same launcher grid (hook H11; the shell's launcher lists `app_store::count()`/`at()`), are launched and stopped the same way, receive the same callbacks, and are paused the same way by the approval.
 
 | Callback | Lua global | Native `badge::App` method |
 |---|---|---|
@@ -30,7 +30,7 @@ Holding CANCEL for 1.5 s force-quits any app (upstream `APP_ESCAPE_HOLD_MS`).
 
 ## Manifest
 
-`app.ini`, `key=value` per line. Upstream keys: `name`, `version`, `author`, `description`, `entry`. Badge OS adds two, read by our own parser (upstream's `Info` struct is not changed):
+`app.ini`, `key=value` per line. Upstream keys: `name`, `version`, `author`, `description`, `entry`. BadgeOS adds two, read by our own parser (upstream's `Info` struct is not changed):
 
 | Key | Form | Default | Meaning |
 |---|---|---|---|
@@ -98,7 +98,7 @@ How it is enforced:
 3. The router delivers `on_espnow` only with `espnow` ([protocol](../protocol/espnow.md#router)).
 4. The wallet core checks `granted(domain->permission)` again inside `begin()`; that check also covers native apps.
 
-An app with no `permissions=` line gets none. Upstream's sample apps get a `permissions=` line added: `radar`: `espnow`; `whosnear`: `espnow,net`; `vumeter`: `mic,storage`; `gallery`: `storage`. Apps installed from upstream's app store arrive with an `app.ini` the firmware generates (name, version, author, description, entry only), so **a store app has no permissions**: it can draw, read buttons and drive the LEDs, and nothing else. That is the intended default for code from strangers.
+An app with no `permissions=` line gets none. Upstream's sample apps are not shipped. Apps installed from upstream's app store arrive with an `app.ini` the firmware generates (name, version, author, description, entry only), so **a store app has no permissions**: it can draw, read buttons and drive the LEDs, and nothing else. That is the intended default for code from strangers.
 
 `vk::lua::open` also removes the Lua globals `loadfile` and `dofile`: upstream leaves them in, and they can open any path on the filesystem as a Lua chunk, which leaks whether a file exists (finding F13).
 
@@ -107,7 +107,7 @@ An app with no `permissions=` line gets none. Upstream's sample apps get a `perm
 A permission marked "consent" needs the user's approval the first time an app that requests it is launched, and again whenever the app's permission list changes.
 
 - Store: `/vk/consent.bin`, up to 32 entries of `app_id[33]` + `hash u32` (FNV-1a of the sorted permission list); format in [stores](../wallet/stores.md#consent). The oldest entry is replaced when full. It registers a `VK_ON_RESET` listener that erases it.
-- `preLaunch` finds no matching entry → raises a confirmation ([approval](../wallet/approval.md)): title `Allow app`, headline `NEW PERMISSIONS`, big = the app's name, one line per consent permission (`May` / the label), amber, hold. It returns false with an empty error, so no error screen is shown. Upstream still runs its "app stopped" branch for a failed launch: the launcher cursor returns to the first row and any open push session is reset.
+- `preLaunch` finds no matching entry → raises a confirmation ([approval](../wallet/approval.md)): title `Allow app`, headline `NEW PERMISSIONS`, big = the app's name, one line per consent permission (`May` / the label), amber, hold. It returns false with an empty error, so no error screen is shown. Upstream's main loop still runs its "app stopped" branch for a failed launch: the shell returns to the launcher (its cursor stays where it was) and any open push session is reset.
 - Approved → the entry is saved and the app is launched with `runtime::requestLaunch`. Rejected → nothing happens.
 
 This covers every install path (push, serial, BLE, store) with no change to any of them. Native apps skip consent: they were reviewed and compiled in.
@@ -144,7 +144,7 @@ Listeners: the approval engine (drops an approval or result owned by that app), 
 
 ## API version
 
-`badge.api_version` is 2 (hook H16). `preLaunch` refuses an app whose `min_api` is higher with `needs a newer Badge OS (API <n>)`. Bump `VK_API_VERSION` and H16 together when a Lua function is added; never change the meaning of an existing function.
+`badge.api_version` is 2 (hook H16). `preLaunch` refuses an app whose `min_api` is higher with `needs a newer BadgeOS (API <n>)`. Bump `VK_API_VERSION` and H16 together when a Lua function is added; never change the meaning of an existing function.
 
 ## Lua function registry
 
@@ -205,12 +205,12 @@ void clear();
 ```
 
 - Eight notes, in RAM, oldest dropped. Nothing is persisted.
-- Shown by: the `inbox` status item (`[n]` in the bar), the `notify` LED pattern while a note is waiting and the badge is idle (`vk::host::idle()`, [ui](../ui/ui.md#launcher-and-settings)), and the **Inbox** native app, which lists the notes; SELECT launches `app_id`, RIGHT dismisses.
+- Shown by: the launcher's `inbox` cell and the Settings list's Inbox row, whose value is the waiting count ([shell](../ui/shell.md#launcher)); the `notify` LED pattern while a note is waiting and the badge is idle (`vk::host::idle()`, [ui](../ui/ui.md#launcher-and-settings)), and the **Inbox** native app, which lists the notes; SELECT launches `app_id`, RIGHT dismisses.
 - Posted by firmware features only (a payment request seen, a contact saved). Apps cannot post.
 
 ## System apps
 
-Badge OS's own screens are native apps, so upstream's shell is not edited and each screen can be removed by deleting its folder:
+The launcher and the settings are the shell, not apps ([shell](../ui/shell.md)). The screens below are native apps, each removable by deleting its folder. They appear in the launcher; `inbox` and `wallet_settings` are also opened by the Settings rows Inbox and Wallet:
 
 | App id | Launcher name | What it shows |
 |---|---|---|

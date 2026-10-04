@@ -8,7 +8,7 @@ The trust decision (who the recipient is, whether they are present) is in [check
 
 `docs/os/reference/code/` holds a host-tested decoder and builder (`sol_tx.c`), base58 (`sol_b58.c`), SHA-256 (`sol_sha256.c`), their header (`sol.h`), a test (`test_sol.c`) and vectors generated with `@solana/kit` (`vectors.*`). Work package WP02 copies `sol.h`, `sol_b58.c`, `sol_sha256.c`, `sol_tx.c` to `src/vk/wallet/pure/` and `test_sol.c`, `vectors.*` to `test/host/`, then makes the changes below. `sol_curve.c` and `sol_pda.c` are not copied: the badge derives no addresses (the recipient's token account comes from the signed registry record, the badge's own from the RPC node).
 
-The reference accepts exactly one instruction, five account keys, legacy or v0, up to 256 bytes. Badge OS needs: legacy only, an optional Memo, up to 1232 bytes.
+The reference accepts exactly one instruction, five account keys, legacy or v0, up to 256 bytes. BadgeOS needs: legacy only, an optional Memo, up to 1232 bytes.
 
 ## Message format
 

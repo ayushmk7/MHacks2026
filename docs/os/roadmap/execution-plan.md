@@ -1,4 +1,4 @@
-# Badge OS execution plan
+# BadgeOS execution plan
 
 > **Orchestrator notes (2026-10-03), which override the text below where they differ:**
 > - The firmware folder is `os/` at the repository root and its main file is `os.ino` (upstream's `solana-os.ino` renamed). It already exists and is committed unmodified (commit `f7a05d7`), so step 1 of Brief 0 is done.
@@ -6,6 +6,7 @@
 > - The connected badge's key is a **software key** (its SE050 refuses the applet select).
 > - Hook id **H21 is reserved for the button/I2C fix** being developed separately; the loop-stack fallback is H22.
 > - The upstream clone for reference and diffing is at the `UPSTREAM` path below (pristine).
+> - **Batch 5 was redefined by a design change (2026-10-03).** The OS is named BadgeOS; upstream's shell is deleted and rewritten as BadgeOS's own (`src/vk/shell/`, [ui/shell.md](../ui/shell.md)); the native `launcher` and `settings` apps, the home service, the status-item registry, the splash images and hooks H14, H15 and H20 are gone; hook H23 carries the renames. Sections 2 to 9 below are updated; the briefs of Batches 0 to 4 are kept as they were run and are history where they mention those things.
 
 
 Save this file as `docs/os/roadmap/execution-plan.md` **before dispatching anything**: every brief tells its agent to read sections of it from disk.
@@ -30,7 +31,7 @@ Agent 0 applies these to `docs/os/` before any code is written. None changes a r
 
 | # | File(s) | Conflict | Resolution |
 |---|---|---|---|
-| F1 | `ui/ui.md` (Balance; LED patterns), `platform/app-host.md` (Notifications) | Balance polls "only while no app is running"; `notify` plays "while … no app is running"; a finished pattern resumes idle "if no app is running". But `ui.md` "Launcher and settings" keeps the native `launcher` running at all times, and hook H8c makes `runtime::running()` true for it. As written the balance is never fetched. | Add `bool vk::host::idle()` to `host/home.h`: true when no app is running or the running app is config `home_app`. Replace "no app is running" with "the badge is idle (`vk::host::idle()`)" in those three places. |
+| F1 | `ui/ui.md` (Balance; LED patterns), `platform/app-host.md` (Notifications) | Balance polls "only while no app is running"; `notify` plays "while … no app is running"; a finished pattern resumes idle "if no app is running". But `ui.md` "Launcher and settings" keeps the native `launcher` running at all times, and hook H8c makes `runtime::running()` true for it. As written the balance is never fetched. | Add `bool vk::host::idle()` to `host/home.h`: true when no app is running or the running app is config `home_app`. Replace "no app is running" with "the badge is idle (`vk::host::idle()`)" in those three places. *(Superseded by the Batch 5 design change: there is no launcher app and no `home_app`; `idle()` stays and is simply `!runtime::running()`.)* |
 | F2 | `wallet/approval.md` (Screen) | The signature is `drawApproval(const ApprovalRequest &, Phase, float holdProgress)`. The same section needs the outcome to draw the RESULT band (SIGNED / APPROVED / CANCELLED / TIMED OUT / BLOCKED / SIGN FAILED) and "footer blinks once" for DISABLED. Neither is in the arguments. | Signature becomes `void drawApproval(const ApprovalRequest &, approval::Phase, float holdProgress, const ApprovalOutcome *outcome, bool footerBlink)`, declared in `src/vk/ui/approval_screen.h`. `outcome` is non-null only in RESULT. |
 | F3 | `platform/app-host.md` (Permissions) | Step 1 says "`vk::lua::open` (or `native::start`) promotes pending to active", but the `permissions.h` block declares only `granted` and `preLaunch`. | Add `void promotePending();` to `namespace vk::host` in that block. |
 | F4 | `platform/app-host.md` (Consent), `roadmap/implementation-plan.md` (WP01) | WP01 must create `host/consent.h` "exactly as in the spec"; no document declares its functions. The Wallet app (apps.md page 4) needs to enumerate stored consent. | Add the `vk::host::consent` block from section 4 of this plan to `app-host.md`. |
@@ -71,7 +72,7 @@ Choices made where the spec leaves one open:
 | 2 | One signing path, config, approval engine and screen, clock, router | 10, 11, 12, 20, 22 | **2A** config · **2B** signer, crypto, `store_reg` · **2C** approval engine, LEDs, demo command · **2D** theme, receipt kit, approval screen · **2E** clock, router | **I2** | + suites `config domains approval`; T-BOOT2, T-BOOT3, T-CFG1–3, T-APR2, T-APR3, demo approvals in three severities and both themes |
 | 3 | Payments decoded, checked, shown, signed; requests; history; balance | 13, 21, 23, 24, 33 | **3A** `domain_solana.cpp` · **3B** Lua wallet bindings · **3C** `signtest`, `checktest`, fixtures, device tests · **3D** requests and presence · **3E** history, balance | **I3** | + suites `stores requests`; T-APR1 (offline half), T-APR4, T-APR5, T-CHK2–9, T-STO1; M2 recorded. Gates 1 and 2 are met only in their offline halves. |
 | 4 | App platform: permissions, native apps, notifications, contacts, `vk.lua` | 30, 31, 32, 34, 35, 36 (+51 Monocypher if needed) | **4A** permissions, consent, manifest · **4B** native runtime, notify, Inbox · **4C** contacts feature · **4D** `vk.lua`, `badge.theme`, push script · **4E** Wallet app · **4F** (conditional) Monocypher | **I4** | + suites `manifest consent contacts vk`; T-APP1–7, T-STO2, `VKNOTE` → Inbox; Batch 3 tests still pass with consent |
-| 5 | Receipt launcher and every shipped app | 37, 40–45 | **5A** launcher, settings, home service, boot screen · **5B** Home, History · **5C** Pay, Request · **5D** Contacts, Game, Evil game · **5E** Duel | **I5** | launcher is home; every app launches, navigates and returns to the launcher on CANCEL; screenshots in both themes saved |
+| 5 | BadgeOS shell (launcher, settings, dialogs, boot) replacing upstream's, the rebrand, and every shipped app | 37, 40–45 | **5A** shell framework, launcher, dialogs, boot · **5F** settings pages 1 · **5G** settings pages 2 · **5R** rebrand and test tooling · **5B** Home, History · **5C** Pay, Request · **5D** Contacts, Game, Evil game · **5E** Duel | **I5** | the badge boots with no splash into the shell's launcher; every settings page is reached and screenshotted in both themes; every app launches, navigates and returns to the launcher on CANCEL (`VKSTATE` app empty and `screen == "launcher"`); the "Solana" grep of brief I5 prints nothing; the pre-flash check passes with the new hook list |
 | 6 | Measurements, SE050 check, release build, optional bank rail | 50, 51, 52 (single-badge part), 54 | **6A** (optional) bank rail | **I6** | M2–M4, M6 recorded; release build compiles, passes pre-flash check 6 and T-REL2; full single-badge regression on the dev build; deferred list final |
 
 ## 3. Common rules for implementers
@@ -89,8 +90,9 @@ Every implementer brief points here.
    - Inside `namespace vk::ui`, upstream's palette is `::theme::…` and upstream's LEDs are `::leds::…`.
    - Lua headers are included as `extern "C" { #include "<rel>/lua/lua.h" #include "<rel>/lua/lauxlib.h" }`.
    - No exceptions, no RTTI. No heap in `pure/`.
-   - Never include anything from `src/identity/` outside `src/vk/wallet/signer.cpp` and `crypto.cpp`. `crypto.cpp` may include `identity/ed25519.h` for `verify` only.
-9. **Registries.** Section 5 lists who registers each config key, Lua function, permission, command, status item, LED pattern, domain and route. Register only yours.
+   - Never include anything from `src/identity/` outside `src/vk/wallet/signer.cpp` and `crypto.cpp`. `crypto.cpp` may include `identity/ed25519.h` for `verify` only. (The shell's Identity page is the one other reader of `identity.h`, for display and for New identity; it never signs. See [ui/shell.md](../ui/shell.md).)
+   - The shell's internals are `vk::shell::…` (`src/vk/shell/`). Upstream's four functions (`begin`, `update`, `onAppStopped`, `showError`) and `screenName()` are in the global `shell` namespace, so from code inside `namespace vk` write `::shell::screenName()`: a bare `shell::` there means `vk::shell`.
+9. **Registries.** Section 5 lists who registers each config key, Lua function, permission, command, settings page, LED pattern, domain and route. Register only yours.
 10. **No deployment literals** (keys, mints, URLs, names, limits): use config keys. Never assume the LED count: use `RGB_LED_COUNT`. Amounts are decimal strings or raw bytes, never Lua numbers.
 11. **Lua bindings.** Use `luaL_check*` for types and return `nil, "<reason>"` for refusals. Call `runtime::extendDeadline(2500)` before each signature or verification, and with the timeout before a network call.
 12. **Device tests** you write go in `test/device/`, use only the section 5 API, and declare `NEEDS` when they need more than one badge. You cannot run them; the integrator will.
@@ -141,6 +143,13 @@ After Batch 1 every header below exists under `FW/src/vk/` with its full declara
 Created later, by one owner, before any consumer exists: `wallet/lua_wallet.h` (3B, F12), `features/*/…h` (private to each feature).
 
 Include trace: every `#include` a later package needs is one of the rows above, an upstream header listed in `upstream-baseline.md`, or a header private to its own feature.
+
+**Changed by the Batch 5 design change.** The table above is what Batch 1 froze; four things in it change in Batch 5, and nothing else does:
+
+- `host/home.h` loses `showShell()`. It keeps `bool vk::host::idle()`, which is `!runtime::running()` (owner 5R). There is no home service and no config key `home_app`.
+- `ui/statusbar.h` and `statusbar.cpp` are deleted with the status-item registry (`VK_STATUS_ITEM`). The repaint pair moves, unchanged, to `ui/repaint.h`: `namespace vk::ui { void requestShellRepaint(); bool consumeShellRepaint(); }` (owner 5R; hooks H14 and H20 are retired, and the new shell consumes the request itself).
+- `ui/leds.h`: `vk::ui::bootScreen(step, detail, percent)` keeps its signature, now always returns true, and is called from the rewritten `src/ui/boot.cpp` (owner 5A; hook H15 is retired: `boot.cpp` is a replaced upstream file).
+- New headers `shell/screens.h` (the screen stack; `::shell::screenName()`) and `shell/page.h` (the `SettingsPage` registry, `VK_SETTINGS_PAGE`, `VK_SETTINGS_ACTION`, and the helpers pages draw with), owner 5A. Their content is in [ui/shell.md](../ui/shell.md) ("Framework", "page.h"); the block in "page.h" is the contract 5F, 5G and 5R code against before the file exists.
 
 ## 5. Shared contracts
 
@@ -197,7 +206,8 @@ A test is `test/device/t_<name>.py` with `def run(badge):` (or `def run(badge, b
 `test/device/common.py` (1D): `b58enc`, `b58dec`, `load_vectors()`, `provision_test(badge)`, `to_launcher(badge)`, `launch(badge, app_id)`.
 
 - `provision_test`: if provisioned, `VKRESET` and an injected hold; then `VKSET` every key the firmware lists in `VKKEYS` with the values in section 1, then `VKCOMMIT`.
-- `to_launcher`: cancels an open approval, then `stop`, `b`, `stop`. A single `b` is not enough: it dismisses upstream's error screen, but on the launcher it opens Settings, and `VKSTATE` cannot tell the two apart. A `stop` with nothing running always puts the launcher back.
+- `to_launcher`: cancels an open approval, stops the running app, then taps `b` until `state()["screen"] == "launcher"` (at most 6 taps). Until Batch 5 it was `stop`, `b`, `stop`, because `VKSTATE` could not tell upstream's launcher from its error screen; the `screen` field removes the guess.
+- `goto_screen(badge, name)` (Batch 5): `to_launcher`, then through Settings to the shell screen called `name` ([ui/shell.md](../ui/shell.md), "Framework").
 - `launch`: `run`, and if a modal with title `Allow app` appears, an injected hold of `VKGET hold_ms` + 300 ms (1300 under test provisioning).
 
 As built in Batch 1 (integrator I1, confirmed on the badge):
@@ -232,17 +242,27 @@ As built in Batch 3 (integrator I3, confirmed on the badge):
 - The device tests leave about 55 history records per full run; a history append then costs about 145 ms (stores.md).
 - `checktest`, `reqtest` and `hello` stay installed on the badge after the tests.
 
+As changed by the Batch 5 design change (specified; integrator I5 confirms on the badge):
+
+- `VKSTATE` has a field `screen`: the shell's current screen (`launcher`, `app_delete`, `settings`, `wifi`, `bluetooth`, `espnow`, `push`, `store`, `identity`, `identity_new`, `display`, `leds`, `info`, `console`, `app_error`, `offer`, `installing`), or `""` while an app runs. Tests use it instead of comparing screenshots to know where they are. "The launcher" is `app == ""` and `screen == "launcher"`; there is no launcher app.
+- The boot line has no `status=` count and has `pages=13` (settings pages).
+- Upstream's sample apps (`hello`, `dice`, `gallery`, `radar`, `vumeter`, `whosnear`) are deleted. The smallest app to launch in a test is the native `hello_native` or a pushed fixture.
+- Nothing reads upstream's status bar any more (it is never drawn): `t_cfg.py`'s SETUP check uses `VKSTATE` `provisioned`. The header shows only the time and the battery.
+- Screenshots of shell screens are saved as `test/device/shots/shell_<screen>_<theme>.png`.
+- Never send SELECT on screen `identity_new`: it replaces the badge's key.
+
 ### 5.3 Who registers what
 
 | Kind | Name → owner file |
 |---|---|
-| Config keys | `listener_url`, `display_name`, `rpc_url` → `core/config.cpp` · `ntp_server` → `core/clock.cpp` · `approval_tmo_s`, `hold_ms` → `wallet/approval.cpp` · `theme` → `ui/theme.cpp` · `issuer_key`, `tokens`, `record_ttl_s` → `features/solana_pay/domain_solana.cpp` · `presence_ms`, `req_ttl_s`, `req_period_ms`, `req_max_proofs`, `req_gap_ms`, `pay_app` → `features/requests/` · `balance_poll_s` → `features/balance/` · `home_app` → `host/home.cpp` |
+| Config keys | `listener_url`, `display_name`, `rpc_url` → `core/config.cpp` · `ntp_server` → `core/clock.cpp` · `approval_tmo_s`, `hold_ms` → `wallet/approval.cpp` · `theme` → `ui/theme.cpp` · `issuer_key`, `tokens`, `record_ttl_s` → `features/solana_pay/domain_solana.cpp` · `presence_ms`, `req_ttl_s`, `req_period_ms`, `req_max_proofs`, `req_gap_ms`, `pay_app` → `features/requests/` · `balance_poll_s` → `features/balance/` |
 | Serial commands | `VKHELP`, `VKINFO` → `core/serial.cpp` · `VKKEYS`, `VKGET`, `VKSET`, `VKCOMMIT`, `VKRESET`, `VKWIFI`, `VKAUTOSTART` → `core/config.cpp` · `VKSTATE`, `VKBTN`, `VKSHOT`, `VKTIME`, `VKPAIR`, `VKNOTE` → `features/devtools/devtools.cpp` · `VKDEMOAPPROVE` → `features/devtools/demo_approve.cpp` |
 | Info fields | `profile`, `api` → `serial.cpp` · `provisioned`, `wifi` → `config.cpp` · `pubkey`, `key`, `selfcheck` → `signer.cpp` · `time` → `clock.cpp` |
 | Signing domains | `store-reg` → `features/store_reg/domain_store_reg.cpp` · `solana` → `features/solana_pay/domain_solana.cpp` · `pay-req`, `pay-proof` → `features/requests/domain_pay_*.cpp` · `contact` → `features/contacts/domain_contact.cpp` · `bank` → `features/bank/domain_bank.cpp` |
 | Lua functions | `wallet.pubkey/address/key_location/provisioned/time_ok/tokens/config/begin/poll`, `codec.*` → `wallet/lua_wallet.cpp` · `wallet.check_record/build_transfer/begin_solana/wire_tx` → `features/solana_pay/lua_solana.cpp` · `wallet.request_open/request_close/request_status/requests/challenge/presence` → `features/requests/lua_requests.cpp` · `wallet.history` → `features/history/lua_history.cpp` · `wallet.balance/token_account/refresh_balance` → `features/balance/lua_balance.cpp` · `wallet.contact_hello/contact_card/contact_accept/contacts/contact_remove` → `features/contacts/lua_contacts.cpp` · `theme.name/color` → `ui/lua_theme.cpp` · `wallet.begin_bank` → `features/bank/` |
 | Permissions | `sign`, `net`, `espnow`, `ble`, `mic`, `storage` → `host/permissions.cpp` · `request` → `features/requests/` · `history` → `features/history/` · `contacts` → `features/contacts/` |
-| Status items | `setup` → `config.cpp` · `dev` → `ui/status_dev.cpp` · `inbox` → `host/notify.cpp` · `balance` → `features/balance/` |
+| Settings pages (id, order → file under `shell/pages/`) | 5F: `theme` 10 → `page_theme.cpp` · `wifi` 20 → `page_wifi.cpp` · `bluetooth` 30 → `page_bluetooth.cpp` · `espnow` 40 → `page_espnow.cpp` · `push` 50 → `page_push.cpp` · 5G: `store` 60 → `page_store.cpp` · `identity` 70 → `page_identity.cpp` (also the screen `identity_new`) · `display` 80 → `page_display.cpp` · `leds` 90 → `page_leds.cpp` · `wallet` 100 → `page_wallet.cpp` · `inbox` 110 → `page_inbox.cpp` · `info` 120 → `page_info.cpp` · `console` 130 → `page_console.cpp`. `theme`, `wallet` and `inbox` are action rows (`VK_SETTINGS_ACTION`) and never become a screen |
+| Shell screens that are not pages | `launcher` → `shell/launcher.cpp` · `settings` → `shell/settings_list.cpp` · `app_delete`, `app_error`, `offer`, `installing` → `shell/dialogs.cpp` (all 5A) |
 | LED patterns | `approve_green`, `approve_amber`, `approve_red`, `signed`, `refused`, boot bar → `ui/leds.cpp` · `notify` → `host/notify.cpp` |
 | Routes | types 1, 2, 3 → `features/requests/` |
 | Listeners | `VK_ON_APP_STOP`: approval, permissions, requests · `VK_ON_APPROVAL`: LEDs (in `leds.cpp`), history · `VK_ON_RESET`: consent |
@@ -296,7 +316,7 @@ Each block is pasted verbatim as the agent's prompt. Integrator prompts addition
 ```text
 BRIEF 0 — Fork agent (runs alone; may compile and commit; must not use the serial port)
 
-You are preparing the repository for a team of coding agents that will build "Badge OS", firmware for an ESP32-S3 badge, as a fork of the upstream "Solana OS" firmware. REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (the path contains a space: quote it everywhere). FW=$REPO/os. UPSTREAM=/private/tmp/claude-502/-Users-ayush-Downloads-My-Projects-Hackathons-MHacks2026/41bb931f-51cc-40a5-9e9e-f24006cd3c71/scratchpad/upstream/firmware/solana-os. Git branch badge-os is checked out; never push.
+You are preparing the repository for a team of coding agents that will build "BadgeOS", firmware for an ESP32-S3 badge, as a fork of the upstream "Solana OS" firmware. REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (the path contains a space: quote it everywhere). FW=$REPO/os. UPSTREAM=/private/tmp/claude-502/-Users-ayush-Downloads-My-Projects-Hackathons-MHacks2026/41bb931f-51cc-40a5-9e9e-f24006cd3c71/scratchpad/upstream/firmware/solana-os. Git branch badge-os is checked out; never push.
 
 Read first: $REPO/docs/os/roadmap/execution-plan.md sections 1, 4 and 6; $REPO/docs/os/README.md; $REPO/docs/os/guides/build-flash-provision.md.
 
@@ -317,7 +337,7 @@ Final report: the two commit hashes; the diff -r result; the exact compile comma
 ```text
 BRIEF 1A — Hooks, vk core, build scripts (WP01, part 1)
 
-You are one of four coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os, which already holds unmodified upstream. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/README.md.
+You are one of four coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os, which already holds unmodified upstream. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/README.md.
 
 Goal: apply every upstream hook exactly as specified and write the core of src/vk/ so that, together with agent 1B's stubs and agent 1C's pure headers, the firmware compiles and behaves exactly like upstream, and logs one line counting every registry.
 
@@ -351,7 +371,7 @@ Final report: the format in section 3, rule 13, plus the output of the hook-id g
 ```text
 BRIEF 1B — Host, UI, wallet and SDK stubs (WP01, part 2)
 
-You are one of four coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/README.md.
+You are one of four coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/README.md.
 
 Goal: create every header under src/vk/host, ui, wallet and sdk with its full, final declarations, and the stub or complete bodies listed in section 4, so that every later agent compiles against stable interfaces and the firmware still behaves exactly like upstream.
 
@@ -380,7 +400,7 @@ Final report: the format in section 3, rule 13.
 ```text
 BRIEF 1C — Pure code and host-test infrastructure (WP02)
 
-You are one of four coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge. REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5 (5.1 is yours to build), then docs/os/README.md.
+You are one of four coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge. REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5 (5.1 is yours to build), then docs/os/README.md.
 
 Goal: every host-testable C99 module of the wallet exists under src/vk/wallet/pure/ and passes its suite on this laptop, and the host-test runner and shim that every later agent will use exist and are complete.
 
@@ -405,7 +425,7 @@ Final report: the format in section 3, rule 13.
 ```text
 BRIEF 1D — Dev tools and the serial tool (WP03)
 
-You are one of four coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5 (5.2 is yours to build), then docs/os/README.md.
+You are one of four coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5 (5.2 is yours to build), then docs/os/README.md.
 
 Goal: a script can flash-wait, read the badge's state, press buttons, take screenshots, push apps and provision over USB serial with no person present.
 
@@ -433,7 +453,7 @@ Final report: the format in section 3, rule 13.
 ```text
 BRIEF I1 — Integrator, Batch 1
 
-You integrate the first batch of Badge OS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. PY=$REPO/.venv/bin/python. One badge is on /dev/cu.usbserial-10; you are the only agent allowed to compile, flash, use the port, edit docs/ and commit. Read $REPO/docs/os/roadmap/execution-plan.md sections 1, 4, 5 and 6 (section 6 is your procedure; follow it step by step), docs/os/README.md, architecture/overview.md, architecture/upstream-hooks.md, roadmap/implementation-plan.md (WP01 to WP03). The four implementer reports follow this brief.
+You integrate the first batch of BadgeOS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. PY=$REPO/.venv/bin/python. One badge is on /dev/cu.usbserial-10; you are the only agent allowed to compile, flash, use the port, edit docs/ and commit. Read $REPO/docs/os/roadmap/execution-plan.md sections 1, 4, 5 and 6 (section 6 is your procedure; follow it step by step), docs/os/README.md, architecture/overview.md, architecture/upstream-hooks.md, roadmap/implementation-plan.md (WP01 to WP03). The four implementer reports follow this brief.
 
 Batch-specific steps, in the order of section 6:
 - Before the first build, add the temporary file FW/src/vk/zz_linkcheck.cpp containing: #include "core/service.h" / #include "../badge_log.h" / static void lcBegin() { badge_log::tagf("vk", "linkcheck alive"); } / VK_SERVICE(zz_linkcheck, lcBegin, nullptr);
@@ -457,7 +477,7 @@ Final report: the format in section 6, step 11, plus the "[vk] registries:" line
 ```text
 BRIEF 2A — Config store and provisioning (WP10)
 
-You are one of five coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
+You are one of five coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
 
 Goal: the NVS-backed config store, its serial commands and provisioning work, so a badge can be provisioned with one command and the values survive a reboot.
 
@@ -482,7 +502,7 @@ Final report: the format in section 3, rule 13.
 ```text
 BRIEF 2B — Signer, domain table, crypto, store registration (WP11)
 
-You are one of five coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
+You are one of five coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
 
 Goal: one signing path exists (signRaw in signer.cpp is the only caller of identity::sign), the domain self-check runs at boot, and upstream's store registration signs through the auto domain "store-reg".
 
@@ -505,7 +525,7 @@ Final report: the format in section 3, rule 13.
 ```text
 BRIEF 2C — Approval engine, LED patterns, demo command (WP12, engine)
 
-You are one of five coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 1 (F2, F6), 3, 4 and 5, then docs/os/README.md and architecture/overview.md (section 5).
+You are one of five coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 1 (F2, F6), 3, 4 and 5, then docs/os/README.md and architecture/overview.md (section 5).
 
 Goal: the approval state machine: any firmware code can raise an approval with a filled struct and get a yes or no, the rules (fresh press, hold, timeout, red is closed, result ownership, keys up before closing) hold and are host-tested, and the LEDs follow.
 
@@ -533,7 +553,7 @@ Final report: the format in section 3, rule 13.
 ```text
 BRIEF 2D — Theme, receipt kit, approval screen (WP12, drawing)
 
-You are one of five coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 1 (F2), 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
+You are one of five coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 1 (F2), 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
 
 Goal: the Receipt look exists in firmware: two themes, the drawing kit every screen uses, and the fixed approval screen, in light and dark.
 
@@ -558,7 +578,7 @@ Final report: the format in section 3, rule 13, plus a table of every screen reg
 ```text
 BRIEF 2E — Clock and ESP-NOW router (WP20, WP22)
 
-You are one of five coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
+You are one of five coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
 
 Goal: a clock that knows where its time came from and never blocks boot, and the router that owns the one ESP-NOW receive handler.
 
@@ -583,7 +603,7 @@ Final report: the format in section 3, rule 13.
 ```text
 BRIEF I2 — Integrator, Batch 2
 
-You integrate the second batch of Badge OS (config, signer, approval engine and screen, clock, router). REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. PY=$REPO/.venv/bin/python. Port /dev/cu.usbserial-10. Read $REPO/docs/os/roadmap/execution-plan.md sections 1, 4, 5 and 6 (follow section 6 step by step), docs/os/wallet/signing.md, wallet/approval.md, platform/config.md, ui/ui.md, roadmap/implementation-plan.md (WP10, WP11, WP12, WP20, WP22). The five implementer reports follow this brief.
+You integrate the second batch of BadgeOS (config, signer, approval engine and screen, clock, router). REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. PY=$REPO/.venv/bin/python. Port /dev/cu.usbserial-10. Read $REPO/docs/os/roadmap/execution-plan.md sections 1, 4, 5 and 6 (follow section 6 step by step), docs/os/wallet/signing.md, wallet/approval.md, platform/config.md, ui/ui.md, roadmap/implementation-plan.md (WP10, WP11, WP12, WP20, WP22). The five implementer reports follow this brief.
 
 Batch-specific steps:
 - Host: run.sh must now print seven "all … tests passed" lines (sol, record, frames, checks, config, domains, approval).
@@ -605,7 +625,7 @@ Final report: the format in section 6, step 11.
 ```text
 BRIEF 3A — The solana signing domain (WP13 and WP21, decoder glue)
 
-You are one of five coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
+You are one of five coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
 
 Goal: the "solana" domain: bytes handed to the wallet are decoded, checked by the host-tested chain, and turned into the approval the user sees.
 
@@ -627,7 +647,7 @@ Final report: the format in section 3, rule 13, plus a table mapping each "Verdi
 ```text
 BRIEF 3B — Lua wallet bindings (WP13, Lua side)
 
-You are one of five coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 1 (F12), 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
+You are one of five coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 1 (F12), 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
 
 Goal: Lua apps can read the badge's identity, build a transfer, open the firmware approval and poll for the signature.
 
@@ -652,7 +672,7 @@ Final report: the format in section 3, rule 13.
 ```text
 BRIEF 3C — Sign test, check test, fixtures and device tests (WP13, WP21, WP24 tests)
 
-You are one of five coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 1 (F13 and "Choices made"), 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
+You are one of five coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 1 (F13 and "Choices made"), 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
 
 Goal: the two dev-only Lua test apps and the scripted tests that prove, on one badge with no network, that the firmware shows the right verdict for every kind of payment and signs only after the button.
 
@@ -681,7 +701,7 @@ Final report: the format in section 3, rule 13.
 ```text
 BRIEF 3D — Payment requests and presence (WP23)
 
-You are one of five coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
+You are one of five coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
 
 Goal: a badge can ask to be paid (signed REQ, rebroadcast, answering presence challenges in firmware) and a payer badge can cache requests, challenge the payee and judge the proof. No second badge is available, so correctness rests on your host suite.
 
@@ -713,7 +733,7 @@ Final report: the format in section 3, rule 13.
 ```text
 BRIEF 3E — History and balance features (WP24, WP33)
 
-You are one of five coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 1 (F1, F8, F11), 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
+You are one of five coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 1 (F1, F8, F11), 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
 
 Goal: two independent feature folders: every approval outcome is logged to a ring file that survives reboots, and the badge learns and shows its token balance.
 
@@ -740,7 +760,7 @@ Final report: the format in section 3, rule 13.
 ```text
 BRIEF I3 — Integrator, Batch 3
 
-You integrate the third batch of Badge OS (solana domain, Lua wallet, test apps, requests, history, balance). REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. PY=$REPO/.venv/bin/python. Port /dev/cu.usbserial-10. Read $REPO/docs/os/roadmap/execution-plan.md sections 1, 4, 5, 6 (follow section 6 step by step), 8 and 9, docs/os/wallet/checks.md, platform/lua-api.md, protocol/espnow.md, wallet/stores.md, roadmap/implementation-plan.md (WP13, WP21, WP23, WP24, WP33). The five implementer reports follow this brief.
+You integrate the third batch of BadgeOS (solana domain, Lua wallet, test apps, requests, history, balance). REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. PY=$REPO/.venv/bin/python. Port /dev/cu.usbserial-10. Read $REPO/docs/os/roadmap/execution-plan.md sections 1, 4, 5, 6 (follow section 6 step by step), 8 and 9, docs/os/wallet/checks.md, platform/lua-api.md, protocol/espnow.md, wallet/stores.md, roadmap/implementation-plan.md (WP13, WP21, WP23, WP24, WP33). The five implementer reports follow this brief.
 
 Batch-specific steps:
 - Host: nine suites (add stores, requests). Run "$PY" test/device/fixtures.py (its self-check) before any device test.
@@ -761,7 +781,7 @@ Final report: the format in section 6, step 11, plus the VERIFY_MS line.
 ```text
 BRIEF 4A — Permissions, consent, manifest (WP30)
 
-You are one of five coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 1 (F3, F4), 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
+You are one of five coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 1 (F3, F4), 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
 
 Goal: an app can use only what its app.ini asks for, sensitive permissions need the user's approval once, and an app that needs a newer API is refused.
 
@@ -770,7 +790,7 @@ Read: docs/os/platform/app-host.md (Manifest, Permissions, Consent, Lifecycle ev
 Files you own (relative to FW; touch nothing else): src/vk/host/permissions.cpp (fill) · src/vk/host/lua_registry.cpp (add filtering) · src/vk/host/manifest.cpp, consent.cpp (create; headers exist; you may add declarations to manifest.h, e.g. a pure parse(const String &iniText, Extra &out)) · test/host/test_manifest.cpp, test_consent.cpp · test/device/t_app.py · test/device/fixtures/noperm/, needsign/, minapi99/, nonet/ (each app.ini and main.lua) · the app.ini of upstream samples: apps/radar (permissions=espnow), apps/whosnear (espnow,net), apps/vumeter (mic,storage), apps/gallery (storage).
 
 Implement:
-- permissions.cpp: VK_PERMISSION lines for sign, net, espnow, ble, mic, storage with the labels, consent flags and upstream tables of the table in app-host.md; granted() reading the active slot (true when no app is active; for a native app, its BADGE_APP permissions; native apps always have espnow); promotePending(); a VK_ON_APP_STOP listener clearing the active slot; preLaunch() doing everything in "How it is enforced" step 1 and "Consent": manifest load, unknown permission → "unknown permission: <name>", id longer than 32, a Lua folder /apps/<id> whose id is also a native id (check the folder with LittleFS, not app_store::exists, which is true for native ids after H11), min_api → "needs a newer Badge OS (API <n>)", native apps skip consent, missing consent → raise the "Allow app" confirmation and return false with an empty error, and on approval save the entry and call runtime::requestLaunch(appId).
+- permissions.cpp: VK_PERMISSION lines for sign, net, espnow, ble, mic, storage with the labels, consent flags and upstream tables of the table in app-host.md; granted() reading the active slot (true when no app is active; for a native app, its BADGE_APP permissions; native apps always have espnow); promotePending(); a VK_ON_APP_STOP listener clearing the active slot; preLaunch() doing everything in "How it is enforced" step 1 and "Consent": manifest load, unknown permission → "unknown permission: <name>", id longer than 32, a Lua folder /apps/<id> whose id is also a native id (check the folder with LittleFS, not app_store::exists, which is true for native ids after H11), min_api → "needs a newer BadgeOS (API <n>)", native apps skip consent, missing consent → raise the "Allow app" confirmation and return false with an empty error, and on approval save the entry and call runtime::requestLaunch(appId).
 - lua_registry.cpp: a registered function whose permission is not granted is replaced by a stub raising "permission '<name>' not granted (add it to permissions= in app.ini)"; each upstream module table named by an ungranted permission is replaced by a table whose every access raises the same message.
 - manifest.cpp: load() via app_store::readFile and a pure parser. consent.cpp: the API in section 4 over /vk/consent.bin (stores.md format, through vk::fileio::ops, oldest replaced at 32) and a VK_ON_RESET listener calling eraseAll().
 
@@ -779,7 +799,7 @@ Already on disk: host/permissions.h, manifest.h, consent.h, lifecycle.h, native.
 Host tests first: test_manifest.cpp ("// LINK: src/vk/host/manifest.cpp": both keys, defaults, spaces, comments, unknown keys ignored, bad min_api) and test_consent.cpp ("// LINK: src/vk/host/consent.cpp": the hash is order-independent and differs when a name changes; save, has, replace same id, oldest replaced at 33, eraseAll, bad magic recovery, a failing write returns false).
 Command: cd "$FW" && test/host/run.sh test_manifest test_consent.
 
-Device test to write (t_app.py; you cannot run it; push fixtures with badge.push): T-APP1 (noperm calls wallet.begin_solana → log shows "permission 'sign' not granted"), T-APP2 (needsign: first run shows title "Allow app", headline "NEW PERMISSIONS", amber, hold; hold starts the app; a second run has no prompt), T-APP3 (push needsign with permissions=sign,net → asked again), T-APP4 (minapi99 → error containing "needs a newer Badge OS"), T-APP7 (nonet uses badge.http.get → error naming "net"). After each refused launch call common.to_launcher.
+Device test to write (t_app.py; you cannot run it; push fixtures with badge.push): T-APP1 (noperm calls wallet.begin_solana → log shows "permission 'sign' not granted"), T-APP2 (needsign: first run shows title "Allow app", headline "NEW PERMISSIONS", amber, hold; hold starts the app; a second run has no prompt), T-APP3 (push needsign with permissions=sign,net → asked again), T-APP4 (minapi99 → error containing "needs a newer BadgeOS"), T-APP7 (nonet uses badge.http.get → error naming "net"). After each refused launch call common.to_launcher.
 
 Do not: run arduino-cli or scripts/build.sh, open the serial port, edit any file outside your list (native.cpp belongs to agent 4B), or run git add/commit.
 
@@ -789,7 +809,7 @@ Final report: the format in section 3, rule 13.
 ```text
 BRIEF 4B — Native runtime, notifications, Inbox (WP31, WP32)
 
-You are one of five coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 1 (F1, F9), 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
+You are one of five coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 1 (F1, F9), 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
 
 Goal: C++ apps compiled into the firmware run like Lua apps, and a small notification inbox exists with its status item, LED pattern and Inbox app.
 
@@ -816,7 +836,7 @@ Final report: the format in section 3, rule 13.
 ```text
 BRIEF 4C — Contacts feature (WP34)
 
-You are one of five coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
+You are one of five coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
 
 Goal: two badges can exchange signed contact cards that are valid for one receiver and one swap, and the saved contacts persist. No second badge is available, so correctness rests on your host suite.
 
@@ -841,7 +861,7 @@ Final report: the format in section 3, rule 13.
 ```text
 BRIEF 4D — lib/vk.lua, badge.theme, app push script (WP35)
 
-You are one of five coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
+You are one of five coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
 
 Goal: the shared Lua library every app uses (JSON, RPC, registry record, frames, the payer flow, the Receipt look), the two Lua theme functions it draws with, and the script that installs apps.
 
@@ -868,7 +888,7 @@ Final report: the format in section 3, rule 13.
 ```text
 BRIEF 4E — Wallet settings app (WP36)
 
-You are one of five coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
+You are one of five coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
 
 Goal: the native "Wallet" app: five read-only pages showing what this badge is provisioned with, and the wallet reset.
 
@@ -890,7 +910,7 @@ Final report: the format in section 3, rule 13.
 ```text
 BRIEF 4F — Monocypher verification backend (WP51 fallback; dispatched only if integrator I3 reported VERIFY_MS above 400)
 
-You are one of several coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge. REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/wallet/signing.md (Crypto backend) and roadmap/implementation-plan.md (WP51).
+You are one of several coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge. REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/wallet/signing.md (Crypto backend) and roadmap/implementation-plan.md (WP51).
 
 Goal: Ed25519 verification can be switched to Monocypher 4.0.2 by setting VK_ED25519_BACKEND to 1, because TweetNaCl proved too slow on the badge.
 
@@ -909,7 +929,7 @@ Final report: the format in section 3, rule 13.
 ```text
 BRIEF I4 — Integrator, Batch 4
 
-You integrate the fourth batch of Badge OS (permissions and consent, native runtime, notifications and Inbox, contacts, lib/vk.lua, Wallet app, and Monocypher if agent 4F ran). REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. PY=$REPO/.venv/bin/python. Port /dev/cu.usbserial-10. Read $REPO/docs/os/roadmap/execution-plan.md sections 1, 4, 5, 6 (follow section 6 step by step), 8 and 9, docs/os/platform/app-host.md, platform/native-apps.md, platform/lua-api.md, roadmap/implementation-plan.md (WP30 to WP36). The implementer reports follow this brief.
+You integrate the fourth batch of BadgeOS (permissions and consent, native runtime, notifications and Inbox, contacts, lib/vk.lua, Wallet app, and Monocypher if agent 4F ran). REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. PY=$REPO/.venv/bin/python. Port /dev/cu.usbserial-10. Read $REPO/docs/os/roadmap/execution-plan.md sections 1, 4, 5, 6 (follow section 6 step by step), 8 and 9, docs/os/platform/app-host.md, platform/native-apps.md, platform/lua-api.md, roadmap/implementation-plan.md (WP30 to WP36). The implementer reports follow this brief.
 
 Batch-specific steps:
 - Host: thirteen suites (add manifest, consent, contacts, vk; plus mono if 4F ran).
@@ -928,28 +948,120 @@ Final report: the format in section 6, step 11.
 
 ### Batch 5
 
+Batch 5 was redefined by a design change (2026-10-03): the UI as a whole is BadgeOS's own. Upstream's shell is deleted and rewritten in the Receipt layout as `src/vk/shell/` ([ui/shell.md](../ui/shell.md)); there is no native `launcher` app, no native `settings` app and no home service; boot shows no splash; nothing a user can see says "Solana". Eight implementers run at once: 5A (shell framework, launcher, dialogs, boot), 5F and 5G (settings pages, written against the header `src/vk/shell/page.h` whose exact content is in shell.md "page.h"), 5R (rebrand and test tooling), 5B to 5E (the Lua apps). Their file lists are disjoint. Three interfaces cross agents and are fixed by the documents, so each side codes against the document, not against the other agent's file: `src/vk/shell/page.h` and `screens.h` (5A creates; 5F, 5G and 5R include), `src/vk/ui/repaint.h` (5R creates; 5A includes).
+
 ```text
-BRIEF 5A — Receipt launcher, settings, home service, boot screen (WP37)
+BRIEF 5A — BadgeOS shell: framework, launcher, dialogs, boot screen (WP37)
 
-You are one of five coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 1 (F1), 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
+You are one of eight coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 (with the paragraph "Changed by the Batch 5 design change") and 5, then docs/os/README.md and architecture/overview.md.
 
-Goal: the badge boots into the Receipt boot screen and lands on the Receipt launcher; every app that exits, fails or is force-quit returns there; upstream's own screens are reachable only through System settings.
+Goal: upstream's shell is gone and BadgeOS's own shell replaces it. The badge powers on straight into the Receipt boot screen (no splash images), lands on the Receipt launcher (the MENU screen), and every screen upstream's shell had (settings list, delete confirmation, app-store offer, installing, app error) exists in the Receipt layout with no behaviour lost. You write the framework, the launcher, the settings list, the dialogs and the boot screen. Two other agents (5F, 5G) write the settings pages at the same time against the header you create.
 
-Read: docs/os/ui/ui.md (Theme to the end; Boot bar), apps/apps.md (Launcher, Settings), platform/native-apps.md, architecture/upstream-hooks.md (H2, H15, H20), architecture/upstream-baseline.md (shell, boot), roadmap/implementation-plan.md (WP37), and docs/design/os-mockups/index.html (boot, launcher, settings; the STAGES list). Upstream: FW/src/ui/boot.cpp, FW/src/ui/shell.cpp (onAppStopped, update), FW/src/lua_sdk/lua_runtime.h, FW/src/apps/app_store.h.
+Read: docs/os/ui/shell.md (all of it; it is your specification), ui/ui.md (Theme to the end; Boot bar), architecture/upstream-hooks.md (Rules, Table, Replaced upstream files, H23, Checking the hooks), architecture/upstream-baseline.md (shell, boot), roadmap/implementation-plan.md (WP37), and docs/design/os-mockups/index.html (boot, launcher, settings list; the STAGES list). Upstream, BEFORE you delete anything: all of FW/src/ui/shell.cpp (every screen, every button, every upstream call: each must survive exactly as shell.md says), FW/src/ui/shell.h, FW/src/ui/boot.cpp, boot.h, FW/os.ino (where boot:: and shell:: are called), FW/src/vk/ui/receipt.h, theme.h, leds.h, FW/src/apps/app_store.h, FW/src/lua_sdk/lua_runtime.h, FW/src/net/broker_client.h, FW/src/vk/host/native.h, notify.h, FW/src/vk/wallet/signer.h (publicKey, tokenInfoLookup).
 
-Files you own (relative to FW; touch nothing else): src/native_apps/launcher/launcher.cpp · src/native_apps/settings/settings.cpp · src/vk/host/home.cpp (fill; may add to home.h) · src/vk/ui/boot_screen.cpp (fill) · test/device/t_shell.py.
+Files you own (relative to FW; touch nothing else): src/vk/shell/shell.cpp · src/vk/shell/screens.h · src/vk/shell/page.h · src/vk/shell/page.cpp · src/vk/shell/launcher.cpp · src/vk/shell/settings_list.cpp · src/vk/shell/dialogs.cpp · src/ui/shell.cpp (delete it) · src/ui/boot.cpp (rewrite) · splash_images.h (in FW's root; delete it) · src/vk/ui/boot_screen.cpp (fill) · UPSTREAM-HOOKS.md · scripts/preflash-check.sh · test/device/t_shell.py. You do not write any file under src/vk/shell/pages/. src/ui/shell.h stays untouched: it is the interface os.ino and the runtime keep calling.
 
-Implement:
-- launcher.cpp: BADGE_APP(Launcher, "launcher", "Launcher", "1.0.0", ""), the MENU screen of ui.md "Screens" and apps.md "Launcher": every app from app_store::count()/at() except itself in a two-column grid of "NN NAME" rows, selected row inverted, UP/DOWN by row, LEFT/RIGHT by column, scrolling when there are more than fit, SELECT → runtime::requestLaunch(id), CANCEL → runtime::requestLaunch("settings"); below: rule, row BALANCE (vk::wallet::tokenInfoLookup with the default token from vk::config::tokens, sol_format_amount; "--" when null or unknown), barcode from vk::wallet::publicKey(); header right side from receipt::statusRight; footer "SELECT open" / "CANCEL settings". It redraws every frame.
-- settings.cpp: BADGE_APP(Settings, "settings", "Settings", "1.0.0", ""), rows Theme (SELECT cycles vk::ui::theme::at()/setActive), Wallet (launch wallet_settings), Inbox (launch inbox), System settings (vk::host::showShell()); CANCEL → requestLaunch("launcher").
-- home.cpp: config key home_app (STR, default "launcher", 0 to 32); idle() per F1; showShell() sets the "shell asked for" flag and requests the app to stop; a VK_SERVICE that calls runtime::requestLaunch(home_app) when no app is running, no approval is active, runtime::lastError() is empty, the flag is clear and home_app is not empty and exists; a VK_ON_APP_STOP or start observation that clears the flag the next time any app starts (ui.md "Launcher and settings", four bullets).
-- boot_screen.cpp: vk::ui::bootScreen(step, detail, percent) storing the percent (vk::ui::leds::bootProgress), drawing the Boot screen of ui.md "Screens" (header, brand line in FreeSerifBoldItalic12pt7b, percent as an amount, 14-cell block bar, detail text, CHECKLIST rows for the seven stages 20, 45, 55, 65, 75, 85, 100 with OK, "..", or blank), flushing the display, advancing the LED boot bar one frame, and returning true. It runs before vk::begin(): use only theme::color (lazy) and the receipt kit.
+Implement, section by section of shell.md:
+- "Source layout" and "Framework" (shell.cpp, screens.h): the screen stack (vk::shell::Screen, push, pop, home, repaint), the four upstream functions shell::begin(), update(), onAppStopped(), showError(const String &) with upstream's behaviour, and ::shell::screenName() (the top screen's name; "" while an app runs). The shell repaints on input, on a screen's refresh timer, when vk::ui::consumeShellRepaint() says so, and when the header text or the theme changes, as shell.md states. Include "../ui/repaint.h" for the repaint pair: agent 5R creates that file at the same time (content: namespace vk::ui { void requestShellRepaint(); bool consumeShellRepaint(); }); do not create it.
+- "page.h" and "Settings page registry" (page.h, page.cpp): create page.h with EXACTLY the content of the block in shell.md "page.h" (5F and 5G are coding against that block right now; do not rename, reorder or drop anything, and add only below the marked line if you must). Implement every helper it declares in page.cpp.
+- "Boot" (src/ui/boot.cpp, src/vk/ui/boot_screen.cpp): boot.cpp becomes the thin file shell.md gives: no splash, no include of splash_images.h, boot::run() sets the backlight and draws the 0 % frame, boot::progress() calls vk::ui::bootScreen. boot_screen.cpp draws the Receipt boot screen (header, brand line "BadgeOS", percent, block bar, detail text, CHECKLIST of the seven stages), flushes the display, calls vk::ui::leds::bootProgress(percent) and returns true. It runs before vk::begin(): use only theme::color (lazy) and the receipt kit.
+- "Launcher" (launcher.cpp) and "Delete confirmation" (dialogs.cpp): the MENU screen with every app from app_store::count()/at() in a two-column grid, UP/DOWN by row, a short LEFT or RIGHT press by column, RIGHT held for 800 ms opens the delete confirmation for the selected Lua app (never for a native app), SELECT launches, CANCEL opens Settings; the inbox row's count; the BALANCE or SETUP NEEDED row; the barcode; the footer.
+- "Settings list" (settings_list.cpp): the registered pages sorted by order; SELECT opens a page's screen or runs an action row's function.
+- "App-store offer", "Installing", "App error" (dialogs.cpp): including the entry-tick guard on the offer, the 20 s escape on a stalled install, and retry on the error screen.
+- "Approval, notifications, themes": nothing in the shell runs while vk::modalActive() (os.ino already skips shell::update(); the shell must redraw fully on the first pass after the approval closes).
+- Bookkeeping. UPSTREAM-HOOKS.md: replace its content with a copy of both tables of docs/os/architecture/upstream-hooks.md ("Table" and "Replaced upstream files"), keeping the file's short introduction. scripts/preflash-check.sh: check 1 expects the new id list (no H14, H15, H20; H23 present; H18 and H22 optional) and additionally fails if a path listed as deleted in the "Replaced upstream files" table exists or a path listed as rewritten or edited does not; add check 7, which runs the "no Solana in user-visible strings" command (written out in brief I5 in this file; upstream-hooks.md "Checking the hooks" has the same one) and fails if it prints anything. Keep the script's existing structure (fail/pass helpers, numbering).
 
-Already on disk: everything in section 4, src/vk/ui/receipt.h and its implementation, host/native.h, the inbox and wallet_settings apps.
+Already on disk: src/vk/ui/receipt.{h,cpp}, theme.{h,cpp}, leds.{h,cpp}, src/vk/host/native.h, notify.h, home.h, the native apps inbox and wallet_settings (Batch 4). Not on disk yet, written in parallel: src/vk/ui/repaint.h (5R), src/vk/shell/pages/*.cpp (5F, 5G). 5R removes the H14 lines from src/hal/display.cpp and adds the H23 lines; you only describe them in UPSTREAM-HOOKS.md.
 
-Host tests: none specified. Device test to write (t_shell.py; you cannot run it): after badge.reset(), VKSTATE app is "launcher" and native true; a screenshot saved as test/device/shots/launcher_<theme>.png; btn down, right taps change the screenshot; launching hello then btn b returns to "launcher"; an app that errors (push a fixture whose main.lua calls error()) shows upstream's error screen, and after btn b tap the app is "launcher"; btn b tap from the launcher gives app "settings" (screenshot settings_<theme>.png); SELECT on Theme changes VKGET theme; SELECT on System settings leaves no app running (VKSTATE app empty) and running hello and exiting returns to "launcher". Boot screenshots cannot be taken over serial during setup(): state that in the test as a comment.
+Host tests: none. Device test to write (t_shell.py; you cannot run it; use common.to_launcher and badge.wait_state): after badge.reset(), VKSTATE app is "" and screen is "launcher"; a screenshot saved as test/device/shots/shell_launcher_<theme>.png (theme from VKGET theme, "receipt-light" when empty) and not uniform; btn down and btn right taps each change the screenshot; btn b tap gives screen "settings" (screenshot shell_settings_<theme>.png); btn b tap gives "launcher"; launching hello_native and btn b gives app "" and screen "launcher"; a pushed fixture whose main.lua calls error() gives screen "app_error" (screenshot shell_app_error_<theme>.png) and btn b tap gives "launcher"; pushing a tiny Lua fixture, moving the cursor to it (it is listed before the native apps; count taps from the app list) and VKBTN right hold 900 gives screen "app_delete" (screenshot shell_app_delete_<theme>.png), btn b keeps the app and returns to "launcher", the same again and btn a deletes it (the LIST reply no longer names it) and returns to "launcher". The offer and installing screens cannot be raised without a broker, and the boot screen cannot be captured over serial during setup(): say both in a comment at the top of the test.
 
-Do not: run arduino-cli or scripts/build.sh, open the serial port, edit any file outside your list (not shell.cpp, not boot.cpp), or run git add/commit.
+Do not: run arduino-cli or scripts/build.sh, open the serial port, edit any file outside your list (not os.ino, not src/ui/shell.h, not src/hal/display.cpp, not src/config.h, nothing under src/vk/shell/pages/), or run git add/commit. Deleting your two files with rm is expected.
+
+Final report: the format in section 3, rule 13.
+```
+
+```text
+BRIEF 5F — Settings pages, group 1: Theme, Wi-Fi, Bluetooth, ESP-NOW, App push (WP37)
+
+You are one of eight coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
+
+Goal: five of BadgeOS's settings pages, each one self-registering file, rewritten from upstream's screens in the Receipt layout with no behaviour lost. Upstream's shell is being deleted by agent 5A while you work; the pages are its replacement.
+
+Read first, before anything else, because 5A deletes it: FW/src/ui/shell.cpp, functions drawWifi/updateWifi, drawBluetooth/updateBluetooth, drawEspnow/updateEspnow, drawPush/updatePush and the helpers they use (if the file is already gone: git show HEAD:os/src/ui/shell.cpp, run from REPO). Then: docs/os/ui/shell.md ("page.h", "Settings page registry", "Settings list", "Settings pages": Theme, Wi-Fi, Bluetooth, ESP-NOW, App push; "Add a settings page"; "Approval, notifications, themes"), ui/ui.md (Theme: tokens, the receipt kit, its conventions), and the headers FW/src/net/wifi_mgr.h, ble_mgr.h, espnow_mgr.h, push_server.h, FW/src/settings.h, FW/src/hal/buttons.h, leds.h, FW/src/badge_log.h, FW/src/vk/ui/receipt.h, theme.h.
+
+Files you own (relative to FW; touch nothing else): src/vk/shell/pages/page_theme.cpp · page_wifi.cpp · page_bluetooth.cpp · page_espnow.cpp · page_push.cpp · test/device/t_pages1.py.
+
+Implement: one file per page, each ending in one VK_SETTINGS_PAGE or VK_SETTINGS_ACTION line with the id and order of section 5.3 (theme 10, wifi 20, bluetooth 30, espnow 40, push 50). Code only against src/vk/shell/page.h as given in the block in shell.md "page.h": the header may not exist on disk yet, and you do not create or edit it. Each page's layout (receipt-kit calls and pixel positions), buttons, value text for the Settings row, refresh interval and the exact upstream calls are in its subsection of shell.md; follow it call for call:
+- Theme (action row): SELECT cycles the registered themes with vk::ui::theme::count()/at()/setActive().
+- Wi-Fi: status block, the five actions (scan, connect saved, start hotspot, disconnect, forget) and the scan results, with upstream's calls (wifi_mgr::startScan, connect, connectEnterprise, startAccessPoint, disconnect; push_server::begin/stop; settings::wifiSsid, wifiIsEnterprise, enterpriseConfig, wifiPassword, forgetWifi), open networks joined directly, secured ones refused with the log line and the footer hint.
+- Bluetooth: ble_mgr::enabled, connected, address, begin(settings::deviceName()), end; settings::bleEnabledAtBoot, setBleEnabledAtBoot.
+- ESP-NOW: the radar list of peers (espnow_mgr::peerCount, peerAt, channel), SELECT toggles (begin/end with settings::espnowChannel and setEspnowEnabledAtBoot), LEFT/RIGHT change the channel 1 to 13 (settings::setEspnowChannel, restart when enabled).
+- App push: the two addresses, the pairing code, the three rows (settings::pushRequiresPairing, setPushRequiresPairing, regeneratePairingCode, pairingCode; BLE push toggle).
+Draw only with the receipt kit and the page.h helpers, colours only from vk::ui::theme (inside namespace vk, upstream's palette is ::theme:: and must not be used). LED pulses use the helper in page.h (theme LED colour), never upstream's purple. Each page file is independent: deleting one removes that page and breaks nothing.
+
+Host tests: none. Device test to write (t_pages1.py; you cannot run it; use common.to_launcher): from the launcher, btn b gives screen "settings". Rows are in order, so page n is reached with n-1 btn down taps from the top (or: tap down until SELECT lands on the wanted screen). For wifi, bluetooth, espnow and push: SELECT, assert VKSTATE screen equals the id, screenshot test/device/shots/shell_<id>_<theme>.png and assert it is not uniform, btn b, assert screen "settings". Theme: SELECT changes VKGET theme, the screen stays "settings" and the screenshot changes; a second SELECT restores the first theme. ESP-NOW: SELECT toggles (the screenshot differs), a second SELECT restores the original state. Do not start the hotspot, disconnect or forget Wi-Fi, or regenerate the pairing code in the test (the test tooling depends on them).
+
+Do not: run arduino-cli or scripts/build.sh, open the serial port, edit any file outside your list (not page.h, not anything else under src/vk/shell/), or run git add/commit.
+
+Final report: the format in section 3, rule 13.
+```
+
+```text
+BRIEF 5G — Settings pages, group 2: Identity, Display, LEDs, Device info, Console, App store, Wallet and Inbox entries (WP37)
+
+You are one of eight coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
+
+Goal: the other eight entries of BadgeOS's Settings list, each one self-registering file, rewritten from upstream's screens in the Receipt layout with no behaviour lost. Upstream's shell is being deleted by agent 5A while you work; the pages are its replacement.
+
+Read first, before anything else, because 5A deletes it: FW/src/ui/shell.cpp, functions drawIdentity, updateIdentity, drawIdentityNew, updateIdentityNew, drawBroker, updateBroker, drawSlider, updateDisplayScreen, updateLedScreen, drawInfo, updateInfo, drawConsole, updateConsole and the helpers they use (if the file is already gone: git show HEAD:os/src/ui/shell.cpp, run from REPO). Then: docs/os/ui/shell.md ("page.h", "Settings page registry", "Settings list", "Settings pages": App store, Identity, New identity, Display, LEDs, Wallet and Inbox, Device info, Console; "Add a settings page"), ui/ui.md (Theme: tokens, the receipt kit, its conventions), and the headers FW/src/identity/identity.h, FW/src/net/broker_client.h, wifi_mgr.h, FW/src/settings.h, FW/src/hal/display.h, leds.h, power.h, badge_i2c.h, buttons.h, se050.h, FW/src/apps/app_store.h, FW/src/badge_log.h, FW/src/config.h, FW/src/lua_sdk/lua_runtime.h, FW/src/vk/host/notify.h, FW/src/vk/core/config.h, FW/src/vk/ui/receipt.h, theme.h.
+
+Files you own (relative to FW; touch nothing else): src/vk/shell/pages/page_store.cpp · page_identity.cpp (screens "identity" and "identity_new") · page_display.cpp · page_leds.cpp · page_wallet.cpp · page_inbox.cpp · page_info.cpp · page_console.cpp · test/device/t_pages2.py.
+
+Implement: one file per entry, each ending in one VK_SETTINGS_PAGE or VK_SETTINGS_ACTION line with the id and order of section 5.3 (store 60, identity 70, display 80, leds 90, wallet 100, inbox 110, info 120, console 130). Code only against src/vk/shell/page.h as given in the block in shell.md "page.h": the header may not exist on disk yet, and you do not create or edit it. Each entry's layout, buttons, value text, refresh interval and exact upstream calls are in its subsection of shell.md; follow it call for call:
+- App store: state, registration, address, last error, the note that the address is set from the web page; rows "App store" (broker::setEnabled(!broker::enabled())) and "Forget registration" (broker::forget()). With the default empty address the page reads "off".
+- Identity: badge id, key location (identity::sourceName, source), status, the full public key wrapped by hand; SELECT pushes the second screen "identity_new" (vk::shell::push), whose SELECT raises the hold-SELECT firmware confirmation of shell.md "New identity" (vk::wallet::approval::confirm: title "New identity", headline "ERASE BADGE KEY", amber, hold) and only on approval calls identity::regenerate() then broker::forget(), logs, pulses, pops and requests a repaint; CANCEL returns without doing anything. Never regenerate on a plain press: the identity is the wallet key.
+- Display: backlight with LEFT/RIGHT in steps of 8, floor 8, applied live (settings::setBrightness, display::setBrightness).
+- LEDs: brightness with LEFT/RIGHT in steps of 8 (settings::setLedBrightness, ::leds::setBrightness); SELECT previews; CANCEL stops the animation, turns the LEDs off and leaves, as upstream does.
+- Wallet and Inbox (action rows): runtime::requestLaunch("wallet_settings") and runtime::requestLaunch("inbox") after ::leds::stopAnimation(); the Inbox row's value is the waiting-notification count.
+- Device info: the twelve fields upstream shows, firmware as SOLANA_OS_NAME " " SOLANA_OS_VERSION (the macro's value is "BadgeOS"); SELECT re-scans (badge_i2c::retry, buttons::retry, se050::test, badge_i2c::scan).
+- Console: the log ring (badge_log::lineCount, line), newest at the bottom, UP/DOWN scroll, lines containing "error", "failed" or "FATAL" in the STAMP_BAD ink.
+Draw only with the receipt kit and the page.h helpers, colours only from vk::ui::theme (inside namespace vk, upstream's palette is ::theme:: and must not be used). LED pulses use the helper in page.h. Each file is independent: deleting one removes that entry and breaks nothing.
+
+Host tests: none. Device test to write (t_pages2.py; you cannot run it; use common.to_launcher): from the launcher, btn b gives screen "settings"; rows are in order. For store, identity, display, leds, info, console: SELECT, assert VKSTATE screen equals the id, screenshot test/device/shots/shell_<id>_<theme>.png (not uniform), btn b, assert screen "settings". Identity: SELECT on the page gives screen "identity_new" (screenshot); leave it with btn b ONLY. NEVER send SELECT on "identity_new": it destroys the badge's key and address; put that warning in a comment above the step. Display: btn left then btn right each change the screenshot and VKSTATE stays on "display"; leave the brightness as found. Wallet row: SELECT gives VKSTATE app "wallet_settings"; common.to_launcher returns to screen "launcher". Inbox row: SELECT gives app "inbox"; with VKNOTE a|b|c posted first, the Settings row and the launcher screenshots differ from the empty case.
+
+Do not: run arduino-cli or scripts/build.sh, open the serial port, edit any file outside your list (not page.h, not anything else under src/vk/shell/), or run git add/commit.
+
+Final report: the format in section 3, rule 13.
+```
+
+```text
+BRIEF 5R — Rebrand to BadgeOS, removal of the status-item registry and the home service, test tooling (WP37)
+
+You are one of eight coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge built as a fork of "Solana OS". REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 (with the paragraph "Changed by the Batch 5 design change") and 5, then docs/os/README.md and architecture/overview.md.
+
+Goal: nothing a user can see, and no network identifier, says "Solana" or "SKYRIZZ" or carries upstream's purple and green; the two mechanisms the new shell makes unnecessary (status items, home service) are removed; the test tooling knows which shell screen is showing. Agent 5A rewrites the shell and the boot screen at the same time; you do everything else in this list.
+
+Read: docs/os/architecture/upstream-hooks.md (Rules, Table, H23, Replaced upstream files, Checking the hooks), ui/shell.md ("Framework" for ::shell::screenName(), "What was removed", "Tests"), ui/ui.md (Header, Theme tokens), testing/testing.md (Dev hooks: VKSTATE), platform/config.md, guides/build-flash-provision.md. Code: FW/src/config.h, FW/src/net/espnow_mgr.cpp, FW/src/lua_sdk/lib_gfx.cpp, FW/src/net/push_server.cpp (its embedded web page), FW/src/ui/theme.h, FW/src/hal/display.cpp (statusBar), FW/tools/badge-push.py, FW/README.md, FW/src/vk/ui/statusbar.{h,cpp}, FW/src/vk/vk.cpp, FW/src/vk/host/home.{h,cpp}, FW/src/vk/features/devtools/devtools.cpp (cmdState), FW/test/device/common.py and every test/device/t_*.py and fixtures.py.
+
+Files you own (relative to FW; touch nothing else, and in a file marked "only" change only what is named):
+- Names, hook H23, each changed line ending in "// VK: H23": src/config.h (only: SOLANA_OS_NAME value "BadgeOS"; DEFAULT_HOSTNAME "badgeos"; DEFAULT_AP_PASSWORD "badgeos-setup"; DEFAULT_BROKER_URL ""; the macro and constant names stay) · src/net/espnow_mgr.cpp (only: MAGIC becomes 'B','D','O','S') · src/lua_sdk/lib_gfx.cpp (only: the four constants SOLANA_PURPLE, SOLANA_GREEN, SOLANA_TEAL, SOLANA_MAGENTA are removed and one tagged comment line takes their place; gfx.PAPER and gfx.INK are NOT added: apps take colours from badge.theme.color).
+- Edited without tags (listed in upstream-hooks.md "Replaced upstream files"): src/net/push_server.cpp (only the embedded page: title and heading "BadgeOS", the :root colours to Receipt-light: paper #F3EFE4, ink #1B1A17, faint #8A8474, sub #6D6759, ok #17804F, bad #C8321E; no purple, no brand green, no gradient) · src/ui/theme.h (only the palette values, to the ones in upstream-hooks.md "Replaced upstream files"; every constant name stays) · tools/badge-push.py (only texts: "BadgeOS badge", example host badgeos.local) · README.md (rewrite, short: what BadgeOS is in a few lines, the one line "BadgeOS is built on Solana OS by spacemandev.", and a pointer to docs/os/, naming docs/os/reference/upstream-readme.md as the copy of upstream's README with the Lua API).
+- Deleted: apps/dice, apps/gallery, apps/hello, apps/radar, apps/vumeter, apps/whosnear (whole folders) · src/vk/ui/statusbar.h, statusbar.cpp, status_dev.cpp.
+- Status items removed: src/hal/display.cpp (only: remove the two "// VK: H14" lines, the include and the call, so the file is upstream's text again) · src/vk/ui/repaint.h, repaint.cpp (create: namespace vk::ui { void requestShellRepaint(); bool consumeShellRepaint(); } with the bodies statusbar.cpp had; 5A's shell includes this header) · src/vk/core/config.cpp, src/vk/features/balance/balance.cpp, src/vk/host/notify.cpp (only: delete the VK_STATUS_ITEM line and its draw function, include "repaint.h" by the right relative path instead of "statusbar.h"; every requestShellRepaint() call stays, and notify.cpp calls it when a note is posted or removed) · src/vk/wallet/approval.cpp (only the include) · src/vk/vk.cpp (only the "[vk] registries:" line: drop status=, add pages=%u with countOf<shell::SettingsPage>(), including "shell/page.h", which 5A creates from the block in shell.md "page.h").
+- Home service removed: src/vk/host/home.h, home.cpp (only bool vk::host::idle() stays, returning !runtime::running(); showShell() goes; fix the comments). No config key home_app is registered anywhere: check with grep and remove it if a Batch 4 file added it.
+- Test tooling: src/vk/features/devtools/devtools.cpp (only cmdState: add ,"screen":"<name>" directly after "native", from ::shell::screenName(), declared in "../../shell/screens.h", which 5A creates: namespace shell { const char *screenName(); }; inside namespace vk write ::shell::, see section 3 rule 8) · test/device/common.py (to_launcher: dismiss an open approval with b, stop the app, then tap b until state()["screen"] == "launcher", at most 6 taps, asserting at the end; new helper goto_screen(badge, name): to_launcher, b, then down/SELECT/b through the Settings rows until state()["screen"] == name, for "settings" just the first b; launch unchanged) · every existing test and fixture that assumed upstream's launcher, upstream's status bar or an upstream sample app: t_boot.py (the registries line and the navigation check), t_cfg.py (the SETUP check: assert VKSTATE provisioned false and screen "launcher" instead of reading upstream's bar), t_apr.py (repaint check: screen "launcher"), t_hook.py, t_clock.py, fixtures.py (launch a pushed fixture or the native hello_native, never hello) · scripts/push-apps.sh (only if it names an upstream sample: drop it) · every user-visible "BadgeOS" string under FW becomes "BadgeOS": scripts/vkdev.py (the argparse description only), fixture author= lines in test/device/, and the "needs a newer … (API <n>)" error text in src/vk/host/permissions.cpp (that one string only). Comments may be left.
+
+What stays, on purpose (do not rename): the store registration text "solana-badge-register:" (upstream's store protocol, used only if a broker is configured); everything named after the Solana blockchain (feature folder solana_pay, signing domain "solana", wallet.begin_solana, sol_*.c, rpc_url examples); upstream's macro names SOLANA_OS_NAME, SOLANA_OS_VERSION, SOLANA_OS_API_VERSION (invisible to users; only the value changes); the identity self-test text in src/identity/identity.cpp (never shown or sent); the device name default badge-XXXX; comments in upstream files.
+
+Check before finishing, from FW (must print nothing; if a line you do not own prints, report it, do not edit it):
+grep -rniE 'solana|skyrizz' os.ino src tools/badge-push.py README.md | grep -v -e '^src/lua/' -e '^src/vk/features/solana_pay/' -e '^src/vk/wallet/pure/sol' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|/\*|\*)' | grep -vE 'SOLANA_OS_(NAME|VERSION|API_VERSION)|solana_pay|begin_solana|"solana"|solana-badge-register:|solana-badge identity self test|Solana OS by spacemandev'
+(src/ui/boot.cpp and src/ui/shell.cpp still print until 5A's work lands; ignore those two.) Run python3 -m py_compile on every Python file you edit, and test/host/run.sh for any suite that links a file you touched.
+
+Device tests to write: none of your own; the tooling and the repaired tests are run by the integrator.
+
+Also yours: in src/vk/host/notify.cpp the `notify` LED pattern must draw in the active theme's LED colour (vk::ui::theme::color(vk::ui::theme::LED)), not upstream's purple (ui.md "LED patterns"); and any other literal of upstream's brand colours (0x9945FF, 0x14F195, 0x00FFA3, 0xDC1FFF, or 0x99,0x45,0xFF as bytes) left under src/vk/ or src/native_apps/ is replaced by a theme colour: grep for them and list what you changed.
+
+Do not: run arduino-cli or scripts/build.sh, open the serial port, edit any file outside your list (not src/ui/shell.cpp, boot.cpp, splash_images.h, UPSTREAM-HOOKS.md, scripts/preflash-check.sh or anything under src/vk/shell/: those are 5A's), or run git add/commit. Deleting the listed files and folders with rm is expected.
 
 Final report: the format in section 3, rule 13.
 ```
@@ -957,17 +1069,19 @@ Final report: the format in section 3, rule 13.
 ```text
 BRIEF 5B — Home and History apps (WP40, WP42)
 
-You are one of five coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge whose apps are written in Lua 5.4 (32-bit integers). REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3 and 5, then docs/os/README.md and architecture/overview.md.
+You are one of eight coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge whose apps are written in Lua 5.4 (32-bit integers). REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3 and 5, then docs/os/README.md and architecture/overview.md.
 
 Goal: the Home app (the badge's landing screen) and the History app (the signature log), in the Receipt look.
 
-Read: docs/os/apps/apps.md (Rules for every Lua app, Home, History), platform/lua-api.md (identity, history, balance, lib/vk.lua: vk.ui), ui/ui.md (Screens: Home, Any list), reference/reasons.md, FW/lib/vk.lua (read vk.ui before drawing), FW/README.md (upstream Lua API), docs/design/os-mockups/index.html (home and history screens).
+Read: docs/os/apps/apps.md (Rules for every Lua app, Home, History), platform/lua-api.md (identity, history, balance, lib/vk.lua: vk.ui), ui/ui.md (Screens: Home, Any list), reference/reasons.md, FW/lib/vk.lua (read vk.ui before drawing), docs/os/reference/upstream-readme.md (the copy of upstream's README: the upstream Lua API and the app format; FW/README.md is being rewritten by another agent), docs/design/os-mockups/index.html (home and history screens).
 
 Files you own (relative to FW; touch nothing else): apps/home/app.ini, main.lua, config.lua · apps/history/app.ini, main.lua, config.lua · test/device/t_app_home.py, t_app_history.py.
 
-Implement: Home (permissions=net; min_api=2) exactly as apps.md "Home" and the Home layout in ui.md (left stub BALANCE amount and barcode-like block; body rows ADDRESS, KEY, CLOCK, INBOX is not readable from Lua: show the rows the Lua API can fill and omit the rest; rule; THANK YOU FOR HACKING), menu of apps from config.lua filtered by badge.system.apps(), refresh_balance on start and every wallet.config("balance_poll_s") seconds without ever blocking the UI on failure. History (permissions=history; min_api=2) exactly as apps.md "History", list of wallet.history(64) with a detail view. Both draw only with vk.ui, keep every tunable in config.lua, use strings for amounts, and exit on CANCEL.
+Implement: Home (permissions=net; min_api=2) exactly as apps.md "Home" and the Home layout in ui.md (left stub BALANCE amount and barcode-like block; body rows ADDRESS, KEY, CLOCK, INBOX is not readable from Lua: show the rows the Lua API can fill and omit the rest; rule; THANK YOU FOR HACKING), menu of apps from config.lua filtered by badge.system.apps(), refresh_balance on start and every wallet.config("balance_poll_s") seconds without ever blocking the UI on failure. History (permissions=history; min_api=2) exactly as apps.md "History", list of wallet.history(64) with a detail view. Both draw only with vk.ui, keep every tunable in config.lua, use strings for amounts, and exit on CANCEL (badge.system.exit(): back to the launcher, which is the firmware's shell, not an app).
 
 Device tests to write (you cannot run them; push with extra file vk.lua = lib/vk.lua; launch with common.launch): t_app_home.py: screen drawn (screenshot saved to test/device/shots/home_<theme>.png and not uniform), the address shown matches VKINFO pubkey's first and last 4 characters (assert through a badge.log line "HOME addr <short>" the app prints once), no "[lua]" error line in the log for 10 s with no network, btn b returns to the launcher. t_app_history.py: after at least one approval exists (run VKDEMOAPPROVE green and approve it first), the app logs "HIST n <count>" with count >= 1, btn a opens the detail view (screenshot differs), btn b twice returns to the launcher.
+
+Batch 5 rules: there is no launcher app. The launcher is the firmware's own shell: in a test, "returns to the launcher" means VKSTATE app is "" and screen is "launcher" (badge.wait_state(lambda s: s["app"] == "" and s["screen"] == "launcher"); common.to_launcher gets there from anywhere). Draw only with vk.ui (colours from badge.theme.color; the gfx.SOLANA_* constants no longer exist); no stamps anywhere (vk.ui.stamp does not exist). Upstream's sample apps are deleted: do not launch them or copy from them.
 
 Do not: run arduino-cli or scripts/build.sh, open the serial port, edit any file outside your list (not lib/vk.lua: report what is missing), or run git add/commit.
 
@@ -977,17 +1091,19 @@ Final report: the format in section 3, rule 13.
 ```text
 BRIEF 5C — Pay and Request apps (WP41)
 
-You are one of five coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge whose apps are written in Lua 5.4 (32-bit integers). REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3 and 5, then docs/os/README.md and architecture/overview.md (section 9: the data flow of one payment).
+You are one of eight coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge whose apps are written in Lua 5.4 (32-bit integers). REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3 and 5, then docs/os/README.md and architecture/overview.md (section 9: the data flow of one payment).
 
 Goal: the two apps of the core demo: Pay (list nearby requests, pay one) and Request (ask to be paid, wait, confirm on chain).
 
-Read: docs/os/apps/apps.md (Rules, Pay, Request), platform/lua-api.md (payments, requests, lib/vk.lua, vk.pay), protocol/espnow.md (Sequences, RESULT), ui/ui.md (Screens: Any list, Request), reference/reasons.md, FW/lib/vk.lua, FW/README.md, docs/design/os-mockups/index.html (pay and request screens).
+Read: docs/os/apps/apps.md (Rules, Pay, Request), platform/lua-api.md (payments, requests, lib/vk.lua, vk.pay), protocol/espnow.md (Sequences, RESULT), ui/ui.md (Screens: Any list, Request), reference/reasons.md, FW/lib/vk.lua, docs/os/reference/upstream-readme.md (the copy of upstream's README: the upstream Lua API and the app format; FW/README.md is being rewritten by another agent), docs/design/os-mockups/index.html (pay and request screens).
 
 Files you own (relative to FW; touch nothing else): apps/pay/app.ini, main.lua, config.lua · apps/request/app.ini, main.lua, config.lua · test/device/t_app_pay.py, t_app_request.py, t_pay_2.py.
 
 Implement: Pay (permissions=sign,net,espnow; min_api=2) exactly as apps.md "Pay", steps 1 to 3: list from wallet.requests() sorted by rssi, refreshed every 500 ms, claimed name labelled as a claim; SELECT starts vk.pay.start{request = entry}; state shown in words; on failed with unverified, revoked, mismatch, bad_proof or expired call vk.report. Request (permissions=request,net,espnow; min_api=2) exactly as apps.md "Request", steps 1 to 3: amount stepping in integer minor units from config.step, request_open, waiting screen with seconds left and "badges checking: n", RESULT handling with vk.result_parse and vk.confirm every 2 s for up to 30 s, PAID label only after "confirmed". Both draw only with vk.ui, keep tunables in config.lua, never draw anything resembling the firmware approval, and exit or go back on CANCEL (CANCEL on the waiting screen closes the request).
 
 Device tests to write (you cannot run them): t_app_pay.py (one badge): the list shows "No requests nearby" (log line "PAY list 0"), screenshot saved, no Lua error for 10 s, btn b returns to the launcher. t_app_request.py (one badge; VKTIME first): UP changes the amount (log "REQ amount <text>"), SELECT opens (log "REQ open <req_id>"), the waiting screen is drawn, btn b closes the request (log "REQ closed") and a second btn b exits; with the clock unset the app shows the no_time reason and does not crash. t_pay_2.py with NEEDS = "two-badges": request 10.00 on B, listed on A, paid, both show the result (also needs the network for the chain confirmation: say so in a comment).
+
+Batch 5 rules: there is no launcher app. The launcher is the firmware's own shell: in a test, "returns to the launcher" means VKSTATE app is "" and screen is "launcher" (badge.wait_state(lambda s: s["app"] == "" and s["screen"] == "launcher"); common.to_launcher gets there from anywhere). Draw only with vk.ui (colours from badge.theme.color; the gfx.SOLANA_* constants no longer exist); no stamps anywhere (vk.ui.stamp does not exist). Upstream's sample apps are deleted: do not launch them or copy from them.
 
 Do not: run arduino-cli or scripts/build.sh, open the serial port, edit any file outside your list, or run git add/commit.
 
@@ -997,17 +1113,19 @@ Final report: the format in section 3, rule 13.
 ```text
 BRIEF 5D — Contacts, Game and Evil game apps (WP43, WP44)
 
-You are one of five coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge whose apps are written in Lua 5.4 (32-bit integers). REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3 and 5, then docs/os/README.md and architecture/overview.md.
+You are one of eight coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge whose apps are written in Lua 5.4 (32-bit integers). REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3 and 5, then docs/os/README.md and architecture/overview.md.
 
 Goal: the Contacts app (list and swap), a small arcade game with a shop that takes payments, and the demo variant whose shop lies.
 
-Read: docs/os/apps/apps.md (Rules, Contacts, Game, Evil game), platform/lua-api.md (contacts, payments, lib/vk.lua, vk.pay), protocol/espnow.md (CONTACT_HELLO, CONTACT_CARD), guides/build-flash-provision.md (Installing apps: how evilgame is assembled), FW/lib/vk.lua, FW/README.md, docs/design/os-mockups/index.html (contacts, game screens).
+Read: docs/os/apps/apps.md (Rules, Contacts, Game, Evil game), platform/lua-api.md (contacts, payments, lib/vk.lua, vk.pay), protocol/espnow.md (CONTACT_HELLO, CONTACT_CARD), guides/build-flash-provision.md (Installing apps: how evilgame is assembled), FW/lib/vk.lua, docs/os/reference/upstream-readme.md (the copy of upstream's README: the upstream Lua API and the app format; FW/README.md is being rewritten by another agent), docs/design/os-mockups/index.html (contacts, game screens).
 
 Files you own (relative to FW; touch nothing else): apps/contacts/app.ini, main.lua, config.lua · apps/game/app.ini, main.lua, config.lua · apps/evilgame/app.ini, config.lua · test/device/t_app_contacts.py, t_app_game.py.
 
 Implement: Contacts (permissions=contacts,espnow) exactly as apps.md "Contacts": list with RIGHT to remove after a confirm line; swap mode broadcasting wallet.contact_hello() once a second, answering a HELLO on SELECT with contact_card unicast, accepting a CARD with contact_accept, names labelled "self-named". Game (permissions=sign,net,espnow,storage) exactly as apps.md "Game": the dodge game, high score in badge.storage, shop from config.shop.items buying with vk.pay.start{to = config.shop.recipient, amount = item.price, memo = item.name}, unlock stored on done. All game code must read its behaviour from config.lua, because evilgame is the same main.lua with another config: when config.evil is "amount" the transfer is built for config.evil_amount while the screen shows item.price; when "recipient" the transfer goes to config.evil_recipient while passing the real shop's record (for these two cases the game cannot use vk.pay's defaults: build the transfer with wallet.build_transfer and call wallet.begin_solana itself, sharing one code path with the honest case where practical). evilgame's config.lua repeats game's config and adds evil, evil_amount, evil_recipient. config.shop.recipient is a deployment value: keep a placeholder string and a comment that provisioning replaces it. All screens with vk.ui except the playfield.
 
 Device tests to write (you cannot run them): t_app_contacts.py: empty list shown (log "CON list 0"), SELECT enters swap mode (log "CON swap on"), btn b leaves it, btn b exits. t_app_game.py: title screen drawn, SELECT starts play, the score advances (log "GAME score <n>" once a second), after game over the title returns; entering the shop and buying with no network ends in a visible failure (log "GAME buy failed <reason>") and the app keeps running; btn b exits. The evil-game checks (amount shows 500.00 on the firmware screen; recipient is red) need the registry over a network: describe them in a comment block at the top of t_app_game.py.
+
+Batch 5 rules: there is no launcher app. The launcher is the firmware's own shell: in a test, "returns to the launcher" means VKSTATE app is "" and screen is "launcher" (badge.wait_state(lambda s: s["app"] == "" and s["screen"] == "launcher"); common.to_launcher gets there from anywhere). Draw only with vk.ui (colours from badge.theme.color; the gfx.SOLANA_* constants no longer exist); no stamps anywhere (vk.ui.stamp does not exist). Upstream's sample apps are deleted: do not launch them or copy from them.
 
 Do not: run arduino-cli or scripts/build.sh, open the serial port, edit any file outside your list, or run git add/commit.
 
@@ -1017,17 +1135,19 @@ Final report: the format in section 3, rule 13.
 ```text
 BRIEF 5E — Duel app (WP45)
 
-You are one of five coding agents working at the same time on Badge OS, firmware for an ESP32-S3 badge whose apps are written in Lua 5.4 (32-bit integers). REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3 and 5, then docs/os/README.md and architecture/overview.md.
+You are one of eight coding agents working at the same time on BadgeOS, firmware for an ESP32-S3 badge whose apps are written in Lua 5.4 (32-bit integers). REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3 and 5, then docs/os/README.md and architecture/overview.md.
 
 Goal: a two-badge reaction duel whose stake is settled through the ordinary request-and-pay flow.
 
-Read: docs/os/apps/apps.md (Rules, Duel), platform/lua-api.md (requests, payments, lib/vk.lua: vk.app_frame, vk.app_body, vk.pay, vk.result_parse, vk.confirm), protocol/espnow.md (Type registry: types 64 to 71), FW/lib/vk.lua, FW/README.md.
+Read: docs/os/apps/apps.md (Rules, Duel), platform/lua-api.md (requests, payments, lib/vk.lua: vk.app_frame, vk.app_body, vk.pay, vk.result_parse, vk.confirm), protocol/espnow.md (Type registry: types 64 to 71), FW/lib/vk.lua, docs/os/reference/upstream-readme.md (the copy of upstream's README: the upstream Lua API and the app format; FW/README.md is being rewritten by another agent).
 
 Files you own (relative to FW; touch nothing else): apps/duel/app.ini, main.lua, config.lua · test/device/t_app_duel.py, t_duel_2.py.
 
 Implement: Duel (permissions=sign,request,net,espnow; min_api=2) exactly as apps.md "Duel", steps 1 to 4: INVITE (type 64: stake string, 8-byte game id), ACCEPT (65), GO (66, delay chosen by the inviter), TIME (67), best of config.rounds; the winner calls wallet.request_open{amount = stake}; the loser finds the request whose payee is the winner's key in wallet.requests() and runs vk.pay.start{request = entry}; the winner shows PAID only after vk.confirm, or "unpaid" after config.settle_timeout_s. Stakes, rounds and timeouts in config.lua. Frames built and matched only with vk.app_frame and vk.app_body. Every state has a timeout back to the title screen; CANCEL always leaves.
 
 Device tests to write (you cannot run them): t_app_duel.py (one badge): title drawn, a stake can be chosen (log "DUEL stake <text>"), inviting with nobody around times out back to the title (log "DUEL invite timeout"), btn b exits. t_duel_2.py with NEEDS = "two-badges": invite, accept, play, settle, and "unpaid" when the loser cancels.
+
+Batch 5 rules: there is no launcher app. The launcher is the firmware's own shell: in a test, "returns to the launcher" means VKSTATE app is "" and screen is "launcher" (badge.wait_state(lambda s: s["app"] == "" and s["screen"] == "launcher"); common.to_launcher gets there from anywhere). Draw only with vk.ui (colours from badge.theme.color; the gfx.SOLANA_* constants no longer exist); no stamps anywhere (vk.ui.stamp does not exist). Upstream's sample apps are deleted: do not launch them or copy from them.
 
 Do not: run arduino-cli or scripts/build.sh, open the serial port, edit any file outside your list, or run git add/commit.
 
@@ -1037,19 +1157,31 @@ Final report: the format in section 3, rule 13.
 ```text
 BRIEF I5 — Integrator, Batch 5
 
-You integrate the fifth batch of Badge OS (Receipt launcher, settings, home service, boot screen, and the Lua apps Home, History, Pay, Request, Contacts, Game, Evil game, Duel). REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. PY=$REPO/.venv/bin/python. Port /dev/cu.usbserial-10. Read $REPO/docs/os/roadmap/execution-plan.md sections 1, 5, 6 (follow section 6 step by step), 8 and 9, docs/os/ui/ui.md, apps/apps.md, roadmap/implementation-plan.md (WP37, WP40 to WP45), and open docs/design/os-mockups/index.html. The five implementer reports follow this brief.
+You integrate the fifth batch of BadgeOS (the BadgeOS shell replacing upstream's: launcher, settings list and pages, dialogs, boot screen; the rebrand; and the Lua apps Home, History, Pay, Request, Contacts, Game, Evil game, Duel). REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. PY=$REPO/.venv/bin/python. Port /dev/cu.usbserial-10. Read $REPO/docs/os/roadmap/execution-plan.md sections 1, 5, 6 (follow section 6 step by step), 8 and 9, docs/os/ui/shell.md (all), ui/ui.md, architecture/upstream-hooks.md (Table, Replaced upstream files, Checking the hooks), apps/apps.md, roadmap/implementation-plan.md (WP37, WP40 to WP45), and open docs/design/os-mockups/index.html. The eight implementer reports (5A, 5F, 5G, 5R, 5B, 5C, 5D, 5E) follow this brief.
 
 Batch-specific steps:
-- After flashing, the home service changes what "no app running" looks like: earlier tests that assumed upstream's launcher (t_boot.py's navigation check, t_apr.py's repaint check, common.to_launcher) must now expect app "launcher". Fix the tests, not the firmware, where that is the only difference.
-- Install the apps: scripts/push-apps.sh --port /dev/cu.usbserial-10 dev (allow several minutes). Then VKAUTOSTART home is NOT set during testing (tests expect the launcher after reset).
-- Device tests, in this order: t_boot.py · t_shell.py · t_apr.py · t_app_home.py · t_app_history.py · t_app_pay.py · t_app_request.py · t_app_contacts.py · t_app_game.py · t_app_duel.py · then the regression set t_cfg.py, t_app.py, t_native.py, t_notify.py, t_vk.py, t_sign.py, t_chk.py, t_sto.py.
-- Run t_shell.py and t_apr.py once per theme. Read every PNG in test/device/shots/ and compare with the simulation; fix overlapping or clipped text; list remaining visual differences in the tracking notes for a person to judge.
-- Scripted T-REL1: for each shipped app, launch it, tap b up to five times, and assert the app becomes "launcher"; then launch it again, send VKBTN b hold 1700, and assert the same.
-- Boot screen: it cannot be captured over serial. Verify from the log that every stage line appears and boot still reaches "[os] ready" within 30 s; record "boot screen and LED bar: needs a person (T-LED1)".
+- Collect (section 6 step 1): this batch deletes upstream files on purpose. Expect as deleted: src/ui/shell.cpp, splash_images.h, src/vk/ui/statusbar.h, statusbar.cpp, status_dev.cpp, and the folders apps/dice, gallery, hello, radar, vumeter, whosnear. Check from FW: test ! -e splash_images.h && test ! -e src/ui/shell.cpp, and ls apps shows none of the six upstream samples.
+- Build: three interfaces were written by one agent and used by others before they existed: src/vk/shell/page.h and screens.h (5A; used by 5F, 5G, 5R) and src/vk/ui/repaint.h (5R; used by 5A). Where they disagree, the block in shell.md "page.h" is the contract: fix the file that departs from it (Risk 6). If a settings action is missing, upstream's shell is the reference: git show HEAD:os/src/ui/shell.cpp before your commit (Risk 7). The pre-flash check now has the "Replaced upstream files" part of check 1 and check 7; if one fails, fix the cause, not the check.
+- Flash. No power cycle is needed. The first boot after this flash changes the network names: hostname badgeos, hotspot password badgeos-setup, ESP-NOW magic BDOS. A badge still on older firmware no longer hears this one over ESP-NOW; write that in the tracking notes.
+- The boot line: "[vk] registries:" has no status= any more and has pages=13. Copy it into the tracking notes.
+- Install the apps: scripts/push-apps.sh --port /dev/cu.usbserial-10 dev (allow several minutes). VKAUTOSTART home is NOT set during testing (tests expect the launcher after reset).
+- Upstream samples pushed to this badge by earlier batches are still on its filesystem: send AUTH, then LIST, then DEL for each of hello, dice, gallery, radar, vumeter, whosnear that LIST names.
+- "The launcher" now means the shell's own screen: VKSTATE app is "" and screen is "launcher". There is no launcher app. Where an earlier test still expects upstream's launcher, upstream's status bar or an upstream sample app and 5R did not repair it, fix the test, not the firmware.
+- Device tests, in this order: t_boot.py · t_shell.py · t_pages1.py · t_pages2.py · t_apr.py · t_app_home.py · t_app_history.py · t_app_pay.py · t_app_request.py · t_app_contacts.py · t_app_game.py · t_app_duel.py · then the regression set t_cfg.py, t_clock.py, t_app.py, t_native.py, t_notify.py, t_vk.py, t_sign.py, t_chk.py, t_sto.py.
+- Run t_shell.py, t_pages1.py, t_pages2.py and t_apr.py once per theme: VKSET theme receipt-light, run the four; VKSET theme receipt-dark, run them again; set the theme back. The screenshots land in os/test/device/shots/ as shell_<screen>_<theme>.png: launcher, settings, wifi, bluetooth, espnow, push, store, identity, identity_new, display, leds, info, console, app_error, app_delete, in both themes (30 files). Read every PNG and compare the launcher, the settings list and the boot layout with the simulation; fix overlapping or clipped text; list remaining visual differences in the tracking notes for a person to judge. Never send SELECT on screen identity_new: it destroys the badge's key.
+- Scripted T-REL1: for each shipped app, launch it, tap b up to five times, and assert app "" and screen "launcher"; then launch it again, send VKBTN b hold 1700, and assert the same.
+- No "Solana" check, from FW. Expected output: nothing. A printed line whose only match is in a trailing code comment is recorded in the tracking notes; anything else is fixed in the file that owns it (through hook H23 or the "Replaced upstream files" list if it is an upstream file, updating upstream-hooks.md and UPSTREAM-HOOKS.md in the same change):
+  cd "$FW" && grep -rniE 'solana|skyrizz' os.ino src tools/badge-push.py README.md \
+    | grep -v -e '^src/lua/' -e '^src/vk/features/solana_pay/' -e '^src/vk/wallet/pure/sol' \
+    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|/\*|\*)' \
+    | grep -vE 'SOLANA_OS_(NAME|VERSION|API_VERSION)|solana_pay|begin_solana|"solana"|solana-badge-register:|solana-badge identity self test|Solana OS by spacemandev'
+  The second grep drops the vendored Lua interpreter and the payment code named after the Solana blockchain; the third drops whole-line comments; the fourth drops the names kept on purpose: upstream's macro names, the blockchain identifiers, the store registration text, the identity self-test text, and the README credit line. Also confirm on the badge: PING over serial answers "OK BadgeOS …", and the log banner reads "BadgeOS".
+- Boot screen: it cannot be captured over serial. Verify from the log that no "[boot] splash" line appears, that every stage is reached and boot reaches "[os] ready" within 30 s (it is several seconds shorter than before: the two splashes are gone); record "boot screen and LED bar: needs a person (T-LED1)".
+- Offer and installing screens: they need a broker and DEFAULT_BROKER_URL is empty; record them as deferred (compiled, not seen).
 
-Deferred: every two-badge test (t_pay_2.py, t_duel_2.py, t_con.py, t_req.py), every network path (payment submission, chain confirmation, registry, feed, balance, evil game demo), T-LED1.
-Commit message: "WP37: batch 5, Receipt launcher, settings, home service, boot screen, all apps (WP37 WP40 WP41 WP42 WP43 WP44 WP45)".
-Gate: all host suites pass; every device test above passes; every shipped app returns to the launcher on CANCEL and on a 1.7 s hold.
+Deferred: every two-badge test (t_pay_2.py, t_duel_2.py, t_con.py, t_req.py; the ESP-NOW page's peer list), every network path (payment submission, chain confirmation, registry, feed, balance, evil game demo, Wi-Fi page join and hotspot actions, app-store offer and installing screens), T-LED1 and the boot screen's appearance.
+Commit message: "WP37: batch 5, BadgeOS shell rewrite and rebrand, all apps (WP37 WP40 WP41 WP42 WP43 WP44 WP45)".
+Gate: all host suites pass; every device test above passes; every settings page was reached and screenshotted in both themes; every shipped app returns to the launcher (app "", screen "launcher") on CANCEL and on a 1.7 s hold; the "Solana" check prints nothing; the pre-flash check passes with the new hook list and the replaced-file list.
 
 Final report: the format in section 6, step 11.
 ```
@@ -1059,7 +1191,7 @@ Final report: the format in section 6, step 11.
 ```text
 BRIEF 6A — Bank rail (WP54, optional; dispatched only if Batches 1 to 5 closed with no open failure)
 
-You are a coding agent working on Badge OS, firmware for an ESP32-S3 badge. REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
+You are a coding agent working on BadgeOS, firmware for an ESP32-S3 badge. REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. First read $REPO/docs/os/roadmap/execution-plan.md sections 3, 4 and 5, then docs/os/README.md and architecture/overview.md.
 
 Goal: the optional "bank" signing domain: a text payload authorising a bank payment, decoded and checked by the firmware and shown on the same approval screen. The backend routes it needs do not exist, so it is verified by its host suite and by compiling only.
 
@@ -1080,7 +1212,7 @@ Final report: the format in section 3, rule 13.
 ```text
 BRIEF I6 — Final integrator (WP50, WP51, WP52 single-badge part, WP54 if written)
 
-You close out the Badge OS build on the one badge available. REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. PY=$REPO/.venv/bin/python. Port /dev/cu.usbserial-10. Read $REPO/docs/os/roadmap/execution-plan.md sections 5, 6 (follow section 6 step by step), 8 and 9, docs/os/testing/testing.md (Secure element, Release gate, Measurements), wallet/signing.md (Key), guides/build-flash-provision.md (Pre-flash checks, SE050 fallback), roadmap/implementation-plan.md (WP50 to WP54). Agent 6A's report follows this brief if it ran.
+You close out the BadgeOS build on the one badge available. REPO=/Users/ayush/Downloads/My Projects/Hackathons/MHacks2026 (contains a space: quote it). FW=$REPO/os. PY=$REPO/.venv/bin/python. Port /dev/cu.usbserial-10. Read $REPO/docs/os/roadmap/execution-plan.md sections 5, 6 (follow section 6 step by step), 8 and 9, docs/os/testing/testing.md (Secure element, Release gate, Measurements), wallet/signing.md (Key), guides/build-flash-provision.md (Pre-flash checks, SE050 fallback), roadmap/implementation-plan.md (WP50 to WP54). Agent 6A's report follows this brief if it ran.
 
 Steps, after section 6 steps 1 to 5 on the dev profile:
 1. Full regression: every test/device/t_*.py without NEEDS, t_boot.py first. Record PASS/FAIL per file.
@@ -1102,7 +1234,8 @@ Code for everything below is written and compiled; only verification waits. Each
 
 **Needs a second badge (two USB ports)**
 
-- T-HOOK1: second app receives ESP-NOW after the first exits (`t_hook.py`). Also upstream `whosnear` between two badges.
+- T-HOOK1: second app receives ESP-NOW after the first exits (`t_hook.py`).
+- Settings → ESP-NOW: the peer list with a real peer. Both badges must run BadgeOS: the ESP-NOW magic is `BDOS`, so a badge on upstream firmware or on a build older than Batch 5 is not heard.
 - T-REQ1–4: request listed, presence present, replay stays pending, proof cap (`t_req.py`).
 - T-CHK1: green VERIFIED - PRESENT.
 - T-REQ5: a request raises a notification and the Inbox opens Pay.
@@ -1116,7 +1249,9 @@ Code for everything below is written and compiled; only verification waits. Each
 - U5/U6: SNTP sync (`t_clock_net.py`); `time=sntp` within 10 s.
 - T-APR1 on chain: `signtest` against `/badge/pending`, transaction confirmed (`t_sign_net.py`). This is Gate 1.
 - `vkdev.py provision --env dashboard/.env` (needs `npm run devnet:setup`; `HACK_MINT` is empty today). U9: authority keypair layout.
-- Balance: status item, `wallet.token_account()`, `[bal] fetch` (M5).
+- Balance: launcher BALANCE row, `wallet.token_account()`, `[bal] fetch` (M5).
+- App-store offer and installing screens (`offer`, `installing`): they need a broker, and `DEFAULT_BROKER_URL` is empty. Compiled, not seen.
+- Settings → Wi-Fi by hand: scan, join an open network, start the hotspot, disconnect, forget (the scripted tests leave the network state alone). Settings → App push addresses on a real network; the web page's BadgeOS title and Receipt colours in a browser.
 - `vk.rpc`, `vk.blockhash`, `vk.send_tx`, `vk.confirm`, `vk.record`, `vk.feed`, `vk.report` against real endpoints. `vk.pay` beyond its failure path.
 - Game shop purchase (amber), Evil game "amount" and "recipient" demos, revoked merchant.
 - Backend routes `/registry`, `/feed/*`, `/health` do not exist yet (backend owner).
@@ -1126,7 +1261,8 @@ Code for everything below is written and compiled; only verification waits. Each
 
 **Needs a person**
 
-- T-LED1, T-LED2: LED boot bar and severity colours. Boot screen appearance.
+- T-LED1, T-LED2: LED boot bar and severity colours. Boot screen appearance (it cannot be captured over serial), and that power-on shows no splash.
+- Settings → Identity → New identity, SELECT: it replaces the badge's key and address, so it is never scripted.
 - T-CFG4: `VKINFO` over BLE or HTTP is not recognised.
 - T-APR6: a release build never signs a red approval with real buttons.
 - T-REL1 by hand; legibility at arm's length; visual comparison of screenshots with the simulation.
@@ -1151,6 +1287,8 @@ Code for everything below is written and compiled; only verification waits. Each
 | 3 | **Upload or serial control fails** (U10): auto-reset into the bootloader does not work, or opening the port resets the badge mid-test. | `arduino-cli upload` cannot connect; tests lose state between commands | upload: retry once, then record "needs BOOT1/RST1 by hand" and continue compile-only (section 6 step 4). Port: `vkdev.py` opens with DTR/RTS deasserted and keeps one connection per test run | 1D writes it; every integrator follows step 4 |
 | 4 | **TweetNaCl is slow** (U3, F7): about a second per operation. A full-ctx `begin_solana` runs two verifications inside one Lua callback; presence depends on a signature. | `[vk] verify` > 400 ms in Batch 3; "app exceeded its time budget" in the log | `runtime::extendDeadline(2500)` per verification (already in the bindings); Monocypher backend (`VK_ED25519_BACKEND 1`); presence shown amber | I3 measures and reports `VERIFY_MS`; 4F vendors; I4 switches and re-measures |
 | 5 | **Loop-task stack** (U8): decoding plus verification inside a Lua callback, or TLS plus signing, overflows the 8 KB `loopTask`. | reboot with `Stack canary watchpoint triggered (loopTask)`; M6 under 1 KB | a new hook H22 in `os.ino`: `SET_LOOP_TASK_STACK_SIZE(16 * 1024);  // VK: H22`, added to `upstream-hooks.md`, `UPSTREAM-HOOKS.md` and the expected list | any integrator on first sight; I6 measures M6 |
+| 6 | **Eight agents write the shell against a header that does not exist yet** (`src/vk/shell/page.h`; also `screens.h` and `ui/repaint.h`). | compile errors in `src/vk/shell/pages/`, `devtools.cpp` or `vk.cpp` in the first Batch 5 build | the block in [ui/shell.md](../ui/shell.md) "page.h" is the contract: the integrator fixes whichever file departs from it, pages against 5A's real header where the block is silent | 5A creates the header verbatim; I5 |
+| 7 | **Deleting `src/ui/shell.cpp` loses a behaviour** upstream's shell had. | a settings action, a button or a safety guard (offer entry tick, install escape, brightness floor) is missing on the badge | upstream's file stays the reference: `git show <last commit before Batch 5>:os/src/ui/shell.cpp`; shell.md lists every upstream call per screen, and the missing one is added to the page that owns it | 5A, 5F, 5G read it before it is deleted; I5 compares |
 
 Checked and low: the fonts exist in the installed LovyanGFX (fallback `Font4` / `Font2` stays documented). Image size has about 1.4 MB of headroom (upstream 1.85 MB in a 3,342,336-byte slot); every integrator records it.
 
@@ -1160,4 +1298,5 @@ Checked and low: the fonts exist in the installed LovyanGFX (fallback `Font4` / 
 - /Users/ayush/Downloads/My Projects/Hackathons/MHacks2026/docs/os/architecture/upstream-hooks.md
 - /Users/ayush/Downloads/My Projects/Hackathons/MHacks2026/docs/os/wallet/approval.md
 - /Users/ayush/Downloads/My Projects/Hackathons/MHacks2026/docs/os/testing/testing.md
+- /Users/ayush/Downloads/My Projects/Hackathons/MHacks2026/docs/os/ui/shell.md (Batch 5)
 - /private/tmp/claude-502/-Users-ayush-Downloads-My-Projects-Hackathons-MHacks2026/41bb931f-51cc-40a5-9e9e-f24006cd3c71/scratchpad/upstream/firmware/solana-os/src/lua_sdk/lua_runtime.cpp

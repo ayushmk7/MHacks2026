@@ -1,6 +1,6 @@
 # Apps
 
-Every app Badge OS ships: what it is for, its permissions, its screens and its flow. Lua apps live in `os/apps/<id>/`; native apps in `os/src/native_apps/<id>/`.
+Every app BadgeOS ships: what it is for, its permissions, its screens and its flow. Lua apps live in `os/apps/<id>/`; native apps in `os/src/native_apps/<id>/`.
 
 ## Rules for every Lua app
 
@@ -11,6 +11,8 @@ Every app Badge OS ships: what it is for, its permissions, its screens and its f
 - Amounts are strings. Amount stepping uses the app's own integer count of minor units, formatted with a helper; never a float.
 - An app never draws anything that imitates the firmware approval screen.
 - Apps are independent: deleting one app's folder breaks no other app.
+- Every app draws with `vk.ui` (Lua) or the receipt kit (native), in colours from the active theme. No app hard-codes a colour, draws a stamp, or uses a brand colour of upstream's.
+- The launcher and the settings are not apps: they are the BadgeOS shell ([shell](../ui/shell.md)). An app that exits returns to the shell's launcher. Upstream's sample apps (`hello`, `dice`, `gallery`, `radar`, `vumeter`, `whosnear`) are not shipped.
 
 | App | Id | Kind | Permissions |
 |---|---|---|---|
@@ -26,8 +28,6 @@ Every app Badge OS ships: what it is for, its permissions, its screens and its f
 | Check test | `checktest` | Lua, dev only (test fixture, WP21): loads its case from `case.lua`, pushed with the app by the test | `sign,net,history,storage` |
 | Library test | `vktest` | Lua, dev only (test fixture, WP35) | `sign,net,espnow` |
 | Request test | `reqtest` | Lua, dev only (test fixture, WP23): opens a request and logs RESULT frames | `request,espnow` |
-| Launcher | `launcher` | native | — |
-| Settings | `settings` | native | — |
 | Inbox | `inbox` | native | — |
 | Wallet | `wallet_settings` | native | — |
 | Hello (C++) | `hello_native` | native | — |
@@ -55,7 +55,7 @@ A test fixture. It turns ESP-NOW on, then opens one request per frame from `on_u
 
 ## Home
 
-The landing app (set as upstream's autostart app by provisioning).
+The landing app (set as upstream's autostart app by provisioning, `--autostart home`; without it the badge starts on the shell's launcher).
 
 - Calls `wallet.refresh_balance()` on start and every `balance_poll_s` seconds (the firmware does not poll while an app runs). Shows the badge's display name, short address (first 4 + `..` + last 4), key location, and `wallet.balance()` for the default token; "SETUP NEEDED" when unprovisioned; "clock not set" when `time_ok()` is false.
 - A menu of the other installed apps (`badge.system.apps()` filtered by the list in `config.lua`); SELECT launches with `badge.system.launch(id)`.
@@ -122,23 +122,13 @@ Two badges, one stake.
 
 Limits to state honestly: there is no escrow (the loser can press CANCEL), and reaction times are self-reported (a modified app could lie). Frame types 64–71 are reserved for Duel ([protocol](../protocol/espnow.md#type-registry)).
 
-## Launcher (native)
-
-The MENU screen ([ui](../ui/ui.md#launcher-and-settings)): every installed app except itself in a two-column grid, UP/DOWN move by a row, LEFT/RIGHT by a column, SELECT launches, CANCEL opens `settings`. Below the grid: the balance row (from `vk::wallet::tokenInfoLookup`; `--` when unknown) and the badge's barcode. The home service keeps it in front.
-
-## Settings (native)
-
-A list: **Theme** (value shows the active theme; SELECT cycles through registered themes and writes config key `theme`), **Wallet** (launches `wallet_settings`), **Inbox** (launches `inbox`), **System settings** (`vk::host::showShell()`: upstream's own settings screens). CANCEL returns to the launcher.
-
-Every Lua app draws with `vk.ui` so it carries the Receipt look in both modes; no app hard-codes a colour.
-
 ## Inbox (native)
 
-Lists `vk::host::notify` notes, newest first: title, body, age. SELECT launches the note's `app_id` and removes the note; RIGHT dismisses; CANCEL exits. Empty: "Nothing new".
+Reached from the launcher (its cell shows the waiting count) and from Settings → Inbox ([shell](../ui/shell.md#wallet-and-inbox)). Lists `vk::host::notify` notes, newest first: title, body, age. SELECT launches the note's `app_id` and removes the note; RIGHT dismisses; CANCEL exits. Empty: "Nothing new".
 
 ## Wallet (native)
 
-Read-only pages, LEFT/RIGHT to change page:
+Reached from the launcher and from Settings → Wallet. Read-only pages, LEFT/RIGHT to change page:
 
 1. **Status**: provisioned or not, public key (full, wrapped), key location, clock source, build profile, domain self-check result.
 2. **Tokens**: each token's symbol, mint (short), cap, max, balance.

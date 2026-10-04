@@ -1,6 +1,6 @@
 # Lua API
 
-Everything Badge OS adds to the `badge` table, and the shared Lua library `lib/vk.lua`. Upstream's own modules (`badge.gfx`, `input`, `led`, `system`, `storage`, `battery`, `mic`, `se050`, `wifi`, `http`, `espnow`, `ble`) are documented in upstream's `README.md` and are unchanged, except that some now need a permission ([app host](app-host.md#permissions)).
+Everything BadgeOS adds to the `badge` table, and the shared Lua library `lib/vk.lua`. Upstream's own modules (`badge.gfx`, `input`, `led`, `system`, `storage`, `battery`, `mic`, `se050`, `wifi`, `http`, `espnow`, `ble`) are documented in upstream's `README.md` and are unchanged, except that some now need a permission ([app host](app-host.md#permissions)).
 
 Conventions:
 

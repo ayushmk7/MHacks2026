@@ -1,18 +1,19 @@
-# Badge OS documentation
+# BadgeOS documentation
 
 The complete specification for the badge firmware. **Build the OS from these documents and nothing else.** If something you need is missing or wrong here, fix this folder first, then the code.
 
-## What Badge OS is
+## What BadgeOS is
 
-Solana OS (the upstream firmware for the ESP32-S3 Solana badge: Lua app runtime, launcher, settings, Wi-Fi, ESP-NOW, BLE, app push, app store, device key) plus the layer we add:
+Firmware for the ESP32-S3 badge, built as a fork of Solana OS. From upstream it keeps the Lua app runtime, the hardware layer, Wi-Fi, ESP-NOW, BLE, app push, the app-store client and the device key. The user interface as a whole is BadgeOS's own, in the Receipt design, and nothing a user can see or a network can hear names upstream. What we add:
 
+- a **shell**: boot screen, launcher, settings and dialogs in the Receipt layout ([ui/shell.md](ui/shell.md));
 - a **wallet core**: the only code that can sign with the badge key;
 - an **approval engine**: a firmware screen that apps cannot draw over or skip, on which the user approves each payment;
 - **verification**: the firmware itself checks who is being paid (an issuer-signed registry record), that they asked for exactly this (a signed request), and that they are here now (a presence proof);
 - an **app platform**: Lua apps and native C++ apps, permissions with first-run consent, an ESP-NOW router, notifications;
 - **apps**: Home, Pay, Request, History, Contacts, a game with a shop, a duel with a stake, and system apps.
 
-Credit: built on Solana OS by spacemandev; we added the wallet, identity and app-platform layer.
+Credit: BadgeOS is built on Solana OS by spacemandev; we added the shell, the wallet, identity and app-platform layers. The credit lives in the repository (`os/README.md` carries the same line) and is never shown on the device.
 
 ## The one rule
 
@@ -22,17 +23,18 @@ Credit: built on Solana OS by spacemandev; we added the wallet, identity and app
 
 This is a design requirement, not a hope. It holds because:
 
-- **Every extensible list registers itself.** Signing domains, config keys, Lua functions, permissions, ESP-NOW routes, serial commands, services, LED patterns, status-bar items and native apps are each one macro line in the file of the feature that owns them. There is no central table to edit ([how](architecture/overview.md#6-self-registration)).
+- **Every extensible list registers itself.** Signing domains, config keys, Lua functions, permissions, ESP-NOW routes, serial commands, services, LED patterns, themes, settings pages and native apps are each one macro line in the file of the feature that owns them. There is no central table to edit ([how](architecture/overview.md#6-self-registration)).
 - **Features are folders.** Delete `src/vk/features/<name>/` and the feature is gone, with nothing left behind to clean up.
 - **Trusted mechanisms are generic.** A new thing to sign is a table row and a decoder; a new thing to approve is a filled struct. The signer, the approval engine and the screen are never edited for it.
 - **Nothing about a deployment is in the source.** Keys, tokens, URLs and limits are provisioned settings; a new token is one `VKSET` command.
 - **Apps keep their own knobs in `config.lua`.**
-- **Upstream is touched only by marked one-line hooks**, so upstream updates can still be merged.
+- **Upstream is touched only by marked one-line hooks, or by files listed as replaced** ([upstream-hooks](architecture/upstream-hooks.md#replaced-upstream-files)), so every difference from upstream is written down.
 
 Recipes for every kind of addition and removal: [guides/extending.md](guides/extending.md).
 
 ## Status
 
+- **Design change decided (2026-10-03): the UI is rewritten as the BadgeOS shell, and the product is renamed BadgeOS.** Upstream's launcher, settings screens, offer screens, error screen and splash are replaced by `src/vk/shell/` in the Receipt layout; the earlier plan of a launcher app, a settings app and a home service is cancelled. It lands in Batch 5 (WP37, [execution plan](roadmap/execution-plan.md)). Until then the firmware on the badge still shows upstream's launcher, and the bullets below describe that firmware.
 - **The fork runs on a badge** (WP01 to WP03, 2026-10-03). `os/` is upstream plus every hook (H1 to H17, H19, H20, H21) and the `src/vk/` skeleton. The dev build compiles in place (1,928,819 bytes after Batch 2), flashes, boots to `[os] ready`, logs `[vk] registries: …` and behaves like upstream: the `hello` sample is pushed over serial, runs, exits, and the launcher repaints.
 - **The unattended test loop works.** `scripts/vkdev.py` reads the badge's state, injects button presses, takes screenshots, pushes apps and resets the badge over USB serial. Seven host suites pass (`test/host/run.sh`: `sol`, `record`, `frames`, `checks`, `config`, `domains`, `approval`), and on the badge `t_boot.py`, `t_cfg.py`, `t_apr.py` (in both themes) and `t_clock.py` pass.
 - **The wallet core exists; no payment can be signed yet** (WP10, WP11, WP12, WP20, WP22, 2026-10-03). The config store and provisioning commands, the one signing path with its domain self-check, the approval engine and its Receipt screen in light and dark (a coloured verdict band, no stamp), the LED patterns, the clock and the ESP-NOW router are real. `VKDEMOAPPROVE <green|amber|red>` shows the approval screen; screenshots of every severity, theme and result are in `os/test/device/shots/`. The only signing domain registered is `store-reg`; the `solana` domain, the Lua wallet functions, permissions and notifications come in Batch 3 and 4.
@@ -52,7 +54,7 @@ Recipes for every kind of addition and removal: [guides/extending.md](guides/ext
 |---|---|
 | [architecture/overview.md](architecture/overview.md) | layers, trust, source tree, main loop, registries, features, compile switches. **Read first** |
 | [architecture/upstream-baseline.md](architecture/upstream-baseline.md) | what Solana OS provides and the exact names to call |
-| [architecture/upstream-hooks.md](architecture/upstream-hooks.md) | every edit to an upstream file |
+| [architecture/upstream-hooks.md](architecture/upstream-hooks.md) | every edit to an upstream file: the hooks, the replaced files, the names |
 | [wallet/signing.md](wallet/signing.md) | the key, the single signing path, the domain table, reason codes |
 | [wallet/approval.md](wallet/approval.md) | the approval engine: request struct, state machine, screen |
 | [wallet/solana-payments.md](wallet/solana-payments.md) | which transactions are accepted; decoder, builder, token table |
@@ -63,7 +65,8 @@ Recipes for every kind of addition and removal: [guides/extending.md](guides/ext
 | [platform/lua-api.md](platform/lua-api.md) | every Lua function we add; `lib/vk.lua` |
 | [platform/native-apps.md](platform/native-apps.md) | writing a C++ app |
 | [platform/config.md](platform/config.md) | config keys, provisioning, USB serial commands |
-| [ui/ui.md](ui/ui.md) | LED patterns, boot bar, status bar, balance, the Receipt theme (light and dark), launcher |
+| [ui/ui.md](ui/ui.md) | LED patterns, boot bar, balance, the Receipt theme (light and dark), the receipt kit, the header rule |
+| [ui/shell.md](ui/shell.md) | the BadgeOS shell: boot, launcher, every settings page, dialogs; the settings-page registry |
 | [apps/apps.md](apps/apps.md) | every shipped app |
 | [integration/backend.md](integration/backend.md) | what the badge needs from the laptop |
 | [guides/build-flash-provision.md](guides/build-flash-provision.md) | toolchain, build profiles, flashing, four badges |
@@ -71,6 +74,7 @@ Recipes for every kind of addition and removal: [guides/extending.md](guides/ext
 | [testing/testing.md](testing/testing.md) | host tests, dev hooks, acceptance tests, measurements |
 | [roadmap/implementation-plan.md](roadmap/implementation-plan.md) | the work packages, in order, with gates |
 | [reference/reasons.md](reference/reasons.md) | reason codes, headlines, glossary |
+| [reference/upstream-readme.md](reference/upstream-readme.md) | upstream's README: the upstream Lua API and push protocol |
 | [reference/differences-from-specs.md](reference/differences-from-specs.md) | what changed from `docs/specs/` and what other tracks must do |
 
 ## Reading order
@@ -79,9 +83,9 @@ Recipes for every kind of addition and removal: [guides/extending.md](guides/ext
 
 **Firmware, wallet side:** [upstream-baseline](architecture/upstream-baseline.md) → [upstream-hooks](architecture/upstream-hooks.md) → [signing](wallet/signing.md) → [approval](wallet/approval.md) → [solana-payments](wallet/solana-payments.md) → [checks](wallet/checks.md) → [protocol](protocol/espnow.md) → [testing](testing/testing.md).
 
-**Firmware, platform side:** [app host](platform/app-host.md) → [native apps](platform/native-apps.md) → [config](platform/config.md) → [ui](ui/ui.md) → [stores](wallet/stores.md).
+**Firmware, platform side:** [app host](platform/app-host.md) → [native apps](platform/native-apps.md) → [config](platform/config.md) → [ui](ui/ui.md) → [shell](ui/shell.md) → [stores](wallet/stores.md).
 
-**App author:** [Lua API](platform/lua-api.md) → [apps](apps/apps.md) → [extending](guides/extending.md#add-a-lua-app) → [reasons](reference/reasons.md).
+**App author:** [Lua API](platform/lua-api.md) → [upstream's Lua API](reference/upstream-readme.md) → [apps](apps/apps.md) → [extending](guides/extending.md#add-a-lua-app) → [reasons](reference/reasons.md).
 
 **Operator:** [build, flash, provision](guides/build-flash-provision.md) → [backend](integration/backend.md) → [testing](testing/testing.md#acceptance-tests).
 
@@ -89,7 +93,7 @@ Recipes for every kind of addition and removal: [guides/extending.md](guides/ext
 
 1. Your work package in the [plan](roadmap/implementation-plan.md) names the files you own. Create and edit only those.
 2. Names are contracts. Function names, struct fields, config keys, reason strings, headline strings, frame layouts and Lua names are used exactly as written. If two documents disagree, the document that *owns* the item wins (the table above says which), and you fix the other in the same change.
-3. Never edit an upstream file except through a hook listed in [upstream-hooks.md](architecture/upstream-hooks.md).
+3. Never edit an upstream file except through a hook or a replacement listed in [upstream-hooks.md](architecture/upstream-hooks.md).
 4. Never call `identity::sign` outside `src/vk/wallet/signer.cpp`. Never define a signing domain outside a feature's `domain_*.cpp`.
 5. Never write a deployment value (key, mint, URL, name, limit) as a literal. Add a config key.
 6. Never assume hardware counts (LEDs, screen size); use upstream's constants.

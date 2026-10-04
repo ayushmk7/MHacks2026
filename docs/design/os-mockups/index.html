@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Badge OS: Receipt, light and dark</title>
+<title>BadgeOS: Receipt, light and dark</title>
 <style>
 /* ───────── page chrome (not part of any design) ───────── */
 :root{--pg:#0f1013;--pg2:#17191e;--ln:#2a2d36;--tx:#e9eaee;--mu:#8b90a0}
@@ -91,7 +91,7 @@ section.block p.h{color:var(--mu);margin:0 0 16px}
 </head>
 <body>
 <div class="top">
-  <h1>Badge OS: Receipt</h1>
+  <h1>BadgeOS: Receipt</h1>
   <p>The chosen design, in light and dark mode, running as a live simulation of the 320×240 badge screen. Use the keys below the screen, or your keyboard. Settings → Theme switches mode on the device.</p>
 </div>
 <div class="tabs" id="tabs"></div>
@@ -219,7 +219,7 @@ const THEMES = [];
 
 /* 1 · RECEIPT */
 (() => {
-  const head = () => `<div class="hd"><span>BADGE OS</span><span>${ST.time} · ${ST.bat}</span></div><div class="rule"></div>`;
+  const head = () => `<div class="hd"><span>BADGEOS</span><span>${ST.time} · ${ST.bat}</span></div><div class="rule"></div>`;
   const row = (l, r, sel, cls='') => `<div class="row${sel?' sel':''}"><span>${l}</span><span class="dots"></span><span class="${cls}">${r??''}</span></div>`;
   const foot = (a, b) => `<div class="ft"><span>${a}</span><span>${b||''}</span></div>`;
   const two = (l, r) => `<div class="two"><div class="lc">${l}</div><div class="rc">${r}</div></div>`;
@@ -228,8 +228,8 @@ const THEMES = [];
   const L = {id:'rc', cls:'t-rc', name:'Receipt · Light', tag:'Paper and ink', orient:'l', led:[255,226,170], cols:2,
     about:'Landscape. Every screen is a ticket with a tear-off stub: the amount on the left, the details on the right, split by a dashed perforation. Monospace lines, dotted leaders, a barcode. An approval reads like a bill you are about to sign; the coloured band across the top carries the verdict. Calm, high contrast, readable in daylight.',
     notes:['Two fonts: a monospace and one serif for amounts','No gradients or blending: flat fills and 1-pixel dashed lines. Very cheap to draw'],
-    boot: m => `<div class="hd"><span>BADGE OS</span><span>*** STARTING UP ***</span></div><div class="rule"></div>` + two(
-      `<div class="brand">Badge OS</div><div class="amt" style="font-size:40px;margin-top:14px">${m.pct}%</div>${bar(m.pct/100)}<div class="ctr sm" style="margin-top:8px;letter-spacing:0">${STAGES[m.i][1]}</div>`,
+    boot: m => `<div class="hd"><span>BADGEOS</span><span>*** STARTING UP ***</span></div><div class="rule"></div>` + two(
+      `<div class="brand">BadgeOS</div><div class="amt" style="font-size:40px;margin-top:14px">${m.pct}%</div>${bar(m.pct/100)}<div class="ctr sm" style="margin-top:8px;letter-spacing:0">${STAGES[m.i][1]}</div>`,
       `<div class="ttl">CHECKLIST</div>` + STAGES.map((s,i)=>row(s[0].toUpperCase(), i<m.i||m.pct>=100?'OK':i===m.i?'..':'')).join('')),
     launcher: m => head() + `<div class="ttl">MENU</div><div class="g2">` + APPS.map((a,i)=>row(`${String(i+1).padStart(2,'0')} ${a[1].toUpperCase()}`, i===m.sel?'◂':(a[0]==='inbox'&&ST.notes?ST.notes:''), i===m.sel)).join('')
       + `</div><div class="rule" style="margin-top:6px"></div>` + row('BALANCE', `${ST.bal} ${ST.sym}`) + `<div class="code"></div>` + foot('SELECT open','CANCEL settings'),

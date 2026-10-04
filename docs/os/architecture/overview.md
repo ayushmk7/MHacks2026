@@ -1,20 +1,21 @@
 # Architecture overview
 
-What Badge OS is made of, who trusts whom, where every file lives, and the one mechanism (self-registration) that makes features easy to add and remove.
+What BadgeOS is made of, who trusts whom, where every file lives, and the one mechanism (self-registration) that makes features easy to add and remove.
 
 Read this before any other document. Names defined here (`vk::`, registries, features, hooks, reason codes) are used unchanged everywhere else.
 
 ## 1. What it is
 
-Badge OS is Solana OS (the upstream badge firmware: Lua app runtime, launcher, settings, Wi-Fi, ESP-NOW, BLE, app push, app store, device key) plus a layer we add:
+BadgeOS is a fork of Solana OS. From upstream it keeps the Lua app runtime, the hardware layer, Wi-Fi, ESP-NOW, BLE, app push, the app-store client and the device key. The user interface is BadgeOS's own, and on top come the layers we add:
 
+- a **shell**: the boot screen, the launcher, every settings page and the system dialogs, in the Receipt layout ([../ui/shell.md](../ui/shell.md)); upstream's shell is deleted,
 - a **wallet core** that is the only code able to produce a signature with the badge key,
 - an **approval engine** that owns the screen and buttons while the user decides,
 - an **app host** that adds permissions, native C++ apps, an ESP-NOW router and notifications,
 - **features** built on those (payments, payment requests with presence, contacts, history, balance),
 - **apps** (Lua and native) that use the features.
 
-All of our code is under `os/src/vk/` and a few sibling folders. Upstream files are changed only by single marked hook lines ([upstream-hooks.md](upstream-hooks.md)).
+All of our code is under `os/src/vk/` and a few sibling folders. Upstream files are changed only by marked hook lines, or are listed as replaced ([upstream-hooks.md](upstream-hooks.md)). Nothing a user can see, and no network identifier, names upstream: the credit is in the repository.
 
 ## 2. The rule
 
@@ -30,9 +31,10 @@ Everything in [../wallet/signing.md](../wallet/signing.md) and [../wallet/approv
 | Native apps | `src/native_apps/<id>/`, compiled into the image | **Trusted.** Not sandboxed. Reviewed like firmware. Still sign only through the wallet core |
 | Features | `src/vk/features/<name>/` | Trusted |
 | App host | `src/vk/host/` | Trusted |
+| Shell | `src/vk/shell/` | Trusted. Draws only when no app runs and no approval is open; never signs |
 | Wallet core, approval engine | `src/vk/wallet/`, `src/vk/ui/approval_screen.*` | Trusted; smallest possible |
 | Core services | `src/vk/core/` | Trusted |
-| Solana OS | everything else under `src/`, `os.ino` | Trusted, upstream |
+| Upstream (Solana OS) | everything else under `src/`, `os.ino` | Trusted, upstream |
 
 The security claim ("an app cannot sign, and cannot draw over or skip the approval") is a claim about **Lua apps**. Native apps share one address space with the firmware; rules and pre-flash checks stop mistakes there, not malice. Say so when asked.
 
@@ -41,10 +43,13 @@ The security claim ("an app cannot sign, and cannot draw over or skip the approv
 Paths are relative to `os/`, the folder at the repository root that holds the whole firmware: the fork of upstream's `firmware/solana-os/` with its main file renamed from `solana-os.ino` to `os.ino` (an Arduino sketch's main file must carry its folder's name).
 
 ```
-os.ino                      upstream + hooks
+os.ino                             upstream + hooks
 partitions.csv                     upstream
-UPSTREAM-HOOKS.md                  generated list of every hook line (see upstream-hooks.md)
+README.md                          BadgeOS's short README with the credit line (upstream's is docs/os/reference/upstream-readme.md)
+UPSTREAM-HOOKS.md                  copy of the hook table and the replaced-files table (see upstream-hooks.md)
 src/                               upstream folders: apps/ hal/ identity/ lua/ lua_sdk/ net/ ui/ ...
+src/ui/                            shell.h (upstream, the interface), boot.h (upstream), boot.cpp (rewritten: no splash),
+                                   theme.h (edited: Receipt-light values); upstream's shell.cpp is deleted
 src/vk/
   vk.h  vk.cpp                     vk::begin(), vk::update(), vk::modalActive(), vk::modalUpdate()
   vk_build.h                       compile-time switches
@@ -76,15 +81,24 @@ src/vk/
     native.h native.cpp            native runtime
     router.h router.cpp            ESP-NOW router, VK_ESPNOW_ROUTE
     notify.h notify.cpp            notification inbox
-    home.h home.cpp                home service: keeps the launcher app in front; showShell(), idle()
+    home.h home.cpp                idle(): true when no app is running
     lua_registry.h lua_registry.cpp  VK_LUA_FUNCTION, permission filtering
   ui/
     approval_screen.h approval_screen.cpp
     leds.h leds.cpp                VK_LED_PATTERN, boot fill bar
-    statusbar.h statusbar.cpp      VK_STATUS_ITEM
+    repaint.h repaint.cpp          requestShellRepaint(), consumeShellRepaint()
     theme.h theme.cpp              theme tokens, VK_THEME; receipt-light and receipt-dark
     receipt.h receipt.cpp          the receipt drawing kit every screen uses
-    boot_screen.cpp                Receipt boot screen (hook H15)
+    boot_screen.cpp                Receipt boot screen, called from the rewritten src/ui/boot.cpp
+  shell/                           the BadgeOS shell (ui/shell.md)
+    shell.cpp                      framework and screen stack; shell::begin(), update(), onAppStopped(), showError(), screenName()
+    screens.h                      the framework's interface: Screen, push(), pop(), home(), repaint()
+    page.h page.cpp                VK_SETTINGS_PAGE, VK_SETTINGS_ACTION; list and drawing helpers for pages
+    launcher.cpp                   the MENU screen
+    settings_list.cpp              the Settings list, built from the page registry
+    dialogs.cpp                    delete confirmation, app error, app-store offer, installing
+    pages/page_<id>.cpp            one file per settings page: theme wifi bluetooth espnow push store identity
+                                   display leds wallet inbox info console
   sdk/
     badge_sdk.hpp                  native app SDK, BADGE_APP
   features/
@@ -93,19 +107,20 @@ src/vk/
     store_reg/                     domain "store-reg" (app-store registration)
     contacts/                      domain "contact"; frames; store; Lua
     history/                       signature log store; Lua
-    balance/                       RPC poller; status item; Lua
+    balance/                       RPC poller; Lua (the launcher shows the balance)
     bank/                          domain "bank" (optional, last)
     devtools/                      dev serial commands (dev profile only); see testing.md
 src/native_apps/
-  launcher/  settings/  inbox/  wallet_settings/  hello_native/
-apps/                              Lua apps: upstream samples + signtest home pay request history contacts game evilgame duel
+  inbox/  wallet_settings/  hello_native/
+apps/                              Lua apps: signtest home pay request history contacts game evilgame duel, and the dev test apps
+                                   (upstream's six samples are deleted)
 lib/vk.lua                         shared Lua library (copied into each app when pushed)
 scripts/                           build.sh  preflash-check.sh  push-apps.sh  vkdev.py (serial tool: provision, push, test hooks)
 test/host/                         host tests (run.sh, test_*.c, vectors.*)
 test/device/                       scripted on-device tests driven by vkdev.py
 ```
 
-Rule for every agent: **a file you create goes in the folder of the feature or layer you were assigned.** A change to any upstream file is a hook and follows [upstream-hooks.md](upstream-hooks.md).
+Rule for every agent: **a file you create goes in the folder of the feature or layer you were assigned.** A change to any upstream file is a hook or a listed replacement and follows [upstream-hooks.md](upstream-hooks.md).
 
 ## 5. Main loop
 
@@ -121,7 +136,7 @@ if vk::modalActive():                          hook H4
     vk::modalUpdate()                          approval engine draws and reads buttons; nothing else runs
 else:
     routeButtons()                             upstream: buttons to the running app
-    runtime::update() or shell::update()       upstream: Lua app, native app (hook H8), or launcher
+    runtime::update() or shell::update()       Lua app or native app (hook H8); with no app, the BadgeOS shell (src/vk/shell/)
 runtime::processRequests()                     upstream: launches and stops between frames
 display::flush()                               upstream
 ```
@@ -130,11 +145,13 @@ Consequences that other documents rely on:
 
 - While the approval is up, **no app code runs**: not `on_update`, not `on_draw`, not `on_button`, not `on_espnow`, not `on_ble`, and no app is launched or stopped. Three hooks make this true together: H4 skips the per-frame callbacks and defers launch and stop requests; H19 makes every other Lua callback a no-op; the router does not forward frames. An app cannot draw over the approval (upstream gives Lua `badge.gfx.flush`, which pushes to the panel mid-callback; it cannot be called if the app is not executing).
 - The signature is made in the loop, outside any Lua callback, so upstream's 250 ms callback budget and 12 s extension cap do not apply to it.
+- While the approval is up, **the shell does not run either**: `shell::update()` is not called, so no shell screen reads a button or draws. When the approval closes it calls `vk::ui::requestShellRepaint()` and the shell redraws on its next pass ([shell](../ui/shell.md#approval-notifications-themes)).
+- With no app running, the screen belongs to the shell: launcher, settings and the dialogs upstream's loop asks for (`shell::onAppStopped()`, `shell::showError()`). There is no launcher app and no service that relaunches one.
 - There is one task. Nothing in our code takes a lock, and nothing may block the loop for longer than a signature or one HTTP request. Long work is a state machine advanced by a service.
 
 ## 6. Self-registration
 
-Every extensible list in Badge OS is a **registry**: a linked list that objects add themselves to when the firmware starts. There is no central table to edit. Adding a thing is writing one macro line in the feature's own file; removing a feature is deleting its folder.
+Every extensible list in BadgeOS is a **registry**: a linked list that objects add themselves to when the firmware starts. There is no central table to edit. Adding a thing is writing one macro line in the feature's own file; removing a feature is deleting its folder.
 
 `src/vk/core/registry.h`, complete:
 
@@ -174,7 +191,8 @@ The registries:
 | Lua function | `VK_LUA_FUNCTION(...)` | `host/lua_registry.h` | one function on a `badge.<module>` table | [../platform/lua-api.md](../platform/lua-api.md) |
 | Native app | `BADGE_APP(...)` | `sdk/badge_sdk.hpp` | a compiled-in app in the launcher | [../platform/native-apps.md](../platform/native-apps.md) |
 | LED pattern | `VK_LED_PATTERN(...)` | `ui/leds.h` | a named LED animation | [../ui/ui.md](../ui/ui.md) |
-| Status item | `VK_STATUS_ITEM(...)` | `ui/statusbar.h` | a widget in the status bar | [../ui/ui.md](../ui/ui.md) |
+| Settings page | `VK_SETTINGS_PAGE(...)`, `VK_SETTINGS_ACTION(...)` | `shell/page.h` | a row in Settings and, for a page, its screen | [../ui/shell.md](../ui/shell.md#settings-page-registry) |
+| Theme | `VK_THEME(...)` | `ui/theme.h` | a colour theme the Theme setting cycles through | [../ui/ui.md](../ui/ui.md#theme) |
 
 Step-by-step recipes for each are in [../guides/extending.md](../guides/extending.md).
 
@@ -206,10 +224,10 @@ A feature is a folder under `src/vk/features/`. It registers what it needs and e
 |---|---|---|---|
 | `solana_pay` | domain `solana`; Lua `begin_solana`, `build_transfer`, `check_record`, `wire_tx` | wallet core | no payments |
 | `requests` | domains `pay-req`, `pay-proof`; routes for frame types 1–3; Lua `request_*`, `requests`, `challenge`, `presence`; service | wallet core, router | payments still work but are "record only" (amber): no signed request, no presence |
-| `store_reg` | domain `store-reg` | wallet core | the app-store client cannot register (hook H10 then refuses) |
+| `store_reg` | domain `store-reg` | wallet core | the app-store client cannot register (hook H10 then refuses). The client is off by default anyway: no broker URL is compiled in (hook H23) |
 | `contacts` | domain `contact`; store; Lua `contact_*`, `contacts` (frames 16–17 are exchanged by the Contacts app itself) | wallet core | no contacts |
 | `history` | approval listener; store; Lua `history` | approval engine | nothing is logged |
-| `balance` | service; status item; Lua `balance`, `token_account`, `refresh_balance` | config, upstream HTTP | no balance in the bar; apps must fetch balances themselves |
+| `balance` | service; Lua `balance`, `token_account`, `refresh_balance` | config, upstream HTTP | the launcher's `BALANCE` row shows `--`; apps must fetch balances themselves |
 | `bank` | domain `bank`; Lua `begin_bank` | wallet core, `requests` | no bank rail |
 | `devtools` | the dev serial commands listed in [testing](../testing/testing.md#dev-hooks) | dev profile | no unattended testing |
 
@@ -250,4 +268,5 @@ A judge badge is flashed only with the release profile. `scripts/preflash-check.
 - Public keys are 32 raw bytes in C and in frames, base58 in URLs, JSON and Lua return values, lowercase hex inside the registry record's signed text.
 - Log lines use `badge_log::tagf("vk", ...)` or a feature tag (`"pay"`, `"req"`, `"contact"`).
 - Every refusal has a reason code from [../reference/reasons.md](../reference/reasons.md). No function returns a bare `false` to an app.
+- The product is written **BadgeOS**, one word. On the badge the header reads `BADGEOS`. The prefix `vk` in paths, namespaces and macros, and the Lua table `badge`, are identifiers and are not renamed. "Solana" in an identifier (`solana_pay`, domain `solana`, `begin_solana`, `sol_*.c`) means the blockchain the badge pays on, never the OS ([names that stay](upstream-hooks.md#names-that-stay)).
 - `[UPSTREAM]` marks a fact read from Solana OS at commit `812b8c7`. `[UNVERIFIED]` marks something that must be confirmed on a badge and always comes with a fallback.

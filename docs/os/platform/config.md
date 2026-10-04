@@ -57,7 +57,7 @@ Details of the store, as built (WP10):
 - **Before `begin()`.** Every accessor calls `begin()` itself the first time (it is idempotent), because the boot screen reads the theme before `vk::begin()` runs.
 - **Stored text that no longer validates** (the range of a key changed between firmware versions) is ignored: the accessors return the default, and a required key in that state counts as missing.
 - **Length.** A value longer than 255 characters is refused as invalid, whatever the key's own range.
-- **Empty values** can be stored (a key with a non-empty default, such as `home_app`, can be set to empty). `Preferences::putString` reports 0 bytes for an empty string whether or not it was written, so an empty value is checked by reading it back.
+- **Empty values** can be stored (a key with a non-empty default, such as `pay_app`'s, can be replaced by any allowed value, and a key whose range starts at 0 can be set to empty). `Preferences::putString` reports 0 bytes for an empty string whether or not it was written, so an empty value is checked by reading it back.
 - **The provisioned flag** is the NVS key `_provisioned` (one byte) in `vkconf`. `commit()` returns false with `missing` empty when writing it fails.
 - **`set()` on a provisioned badge, secure key:** `UNAVAILABLE` while `confirmChange` is null, and also when `confirmChange` returns false because another approval is on screen (a change already waiting for its confirmation is kept). Otherwise `PENDING`.
 - **`requestReset()`** uses the same pointer, called as `confirmChange("(reset)", "", "", done)`, so `core/` includes no wallet header. The confirmation is raised whether or not the badge is provisioned.
@@ -96,10 +96,9 @@ Each key is registered by the code that uses it. This table is the complete list
 | `req_gap_ms` | U32 | 200 | | 0–5000 | `requests` | minimum time between proofs |
 | `balance_poll_s` | U32 | 15 | | 0–3600 | `balance` | balance poll period; 0 disables |
 | `pay_app` | STR | `pay` | | 1–24 | `requests` | app opened from a payment-request notification |
-| `theme` | STR | (empty) | | 0–24 | `ui` | active theme: `receipt-light` (also when empty) or `receipt-dark` ([ui](../ui/ui.md#theme)) |
-| `home_app` | STR | `launcher` | | 0–32 | `host` (home service) | app kept in front when nothing else runs; empty leaves upstream's launcher in charge |
+| `theme` | STR | (empty) | | 0–24 | `ui` | active theme: `receipt-light` (also when empty) or `receipt-dark` ([ui](../ui/ui.md#theme)); Settings → Theme writes it |
 
-Secure keys are the ones whose change could turn a blocked payment into an approved one. Wi-Fi credentials are upstream settings, not config keys ([Wi-Fi](#wi-fi)).
+There is no `home_app` key: the launcher is the shell itself, not an app ([shell](../ui/shell.md)). Secure keys are the ones whose change could turn a blocked payment into an approved one. Wi-Fi credentials are upstream settings, not config keys ([Wi-Fi](#wi-fi)).
 
 ### Token table
 
@@ -113,7 +112,7 @@ Text form: entries separated by `,`; each entry is `mint:decimals:symbol:cap:max
 | `cap` | display units (`100.00`); above this SELECT becomes a hold; `0` = no cap |
 | `max` | display units; above this the payment is blocked; `0` = no max |
 
-Example for one token: `9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin:2:HACK:100.00:1000.00`. The first entry is the default token (balance in the status bar, default in apps). The parser does not check for a mint or a symbol listed twice.
+Example for one token: `9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin:2:HACK:100.00:1000.00`. The first entry is the default token (balance on the launcher, default in apps). The parser does not check for a mint or a symbol listed twice.
 
 ## Provisioning
 
@@ -121,7 +120,7 @@ A badge is **unprovisioned** until every required key is set and `VKCOMMIT` succ
 
 | State | Behaviour |
 |---|---|
-| Unprovisioned | boots normally; apps run; `wallet.provisioned()` is false; every `begin` returns `not_provisioned`; `request_open` returns `not_provisioned`; the status bar shows `SETUP`; any key can be set over USB without confirmation |
+| Unprovisioned | boots normally; apps run; `wallet.provisioned()` is false; every `begin` returns `not_provisioned`; `request_open` returns `not_provisioned`; the launcher's balance row reads `SETUP NEEDED`; any key can be set over USB without confirmation |
 | Provisioned | normal operation; non-secure keys can be set over USB; a secure key change needs a hold-SELECT confirmation on the badge's own screen |
 
 Why first provisioning needs no confirmation: it is possible only over the USB cable, on a badge that cannot sign anything yet.

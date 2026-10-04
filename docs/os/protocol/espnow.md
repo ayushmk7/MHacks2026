@@ -6,7 +6,7 @@ All badges and the laptop join one phone hotspot on 2.4 GHz so that every radio 
 
 ## Frame header
 
-Upstream already wraps every ESP-NOW payload as `SBDG` + type byte and delivers type `0x02` ("app") payloads of up to 240 bytes ([baseline](../architecture/upstream-baseline.md#esp-now-framing)). A Badge OS frame is such a payload:
+Upstream already wraps every ESP-NOW payload as a 4-byte magic + type byte (the magic is `BDOS` in BadgeOS, hook H23; upstream's was `SBDG`, so a BadgeOS badge and an upstream badge do not hear each other) and delivers type `0x02` ("app") payloads of up to 240 bytes ([baseline](../architecture/upstream-baseline.md#esp-now-framing)). A BadgeOS frame is such a payload:
 
 | Offset | Size | Field |
 |---|---|---|

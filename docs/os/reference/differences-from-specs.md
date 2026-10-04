@@ -6,7 +6,7 @@ Anything not listed here is unchanged from [`00-Interfaces.md`](../../specs/00-I
 
 ## Lua wallet API (00 §4)
 
-| `00-Interfaces.md` | Badge OS | Why |
+| `00-Interfaces.md` | BadgeOS | Why |
 |---|---|---|
 | `wallet.key_location()` returns `"se050"` or `"nvs"` | `"se050"`, `"software"` or `"none"` | matches upstream's and the dashboard's wording (`keyLocation: "software"`) |
 | `wallet.sign_request(req_frame_bytes)`: Lua builds the frame, firmware signs | `wallet.request_open{amount=, ...}`: the firmware builds, signs, rebroadcasts and remembers the request | Lua cannot pack a u64; the firmware must know the active request to answer presence |
@@ -28,7 +28,7 @@ Frame bytes unchanged. Added: a type registry (1–15 payments, 16–31 contacts
 
 ## Constants (00 §2, §4)
 
-| `00-Interfaces.md` | Badge OS |
+| `00-Interfaces.md` | BadgeOS |
 |---|---|
 | issuer key, mint, decimals and symbol **pinned in firmware** | provisioned config (`issuer_key`, `tokens`); nothing compiled in. Changing them later needs a confirmation on the badge |
 | one payment token | a token table of up to 3, each with a cap and a max |
@@ -38,7 +38,7 @@ Frame bytes unchanged. Added: a type registry (1–15 payments, 16–31 contacts
 
 ## Firmware design (P1-A §4)
 
-| P1-A | Badge OS |
+| P1-A | BadgeOS |
 |---|---|
 | approval runs in a separate C task with a global UI lock | approval runs in the main loop while app code is paused ([overview](../architecture/overview.md#5-main-loop)); no second task |
 | A7: the approval task feeds the task watchdog | not needed: there is no approval task, and the signature is made outside any Lua callback |

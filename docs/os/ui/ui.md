@@ -1,6 +1,8 @@
-# UI: LEDs, status bar, theme
+# UI: LEDs, balance, theme
 
-The parts of the user interface Badge OS owns outside the approval screen (which is specified in [../wallet/approval.md](../wallet/approval.md#screen) and is deliberately not customisable). Files: `src/vk/ui/`.
+The look and the parts shared by every BadgeOS screen: LED patterns, the balance, the Receipt theme, the fonts and the receipt drawing kit. The screens themselves are specified elsewhere: the shell (boot, launcher, settings, dialogs) in [shell.md](shell.md), the approval screen in [../wallet/approval.md](../wallet/approval.md#screen) (deliberately not customisable), each app in [../apps/apps.md](../apps/apps.md). Files: `src/vk/ui/`.
+
+The whole user interface is BadgeOS's own. Upstream's shell, splash and status bar are gone ([what was removed](shell.md#what-was-removed)).
 
 **Status of this document:** final. The look is the Receipt design in light and dark mode ([Theme](#theme)).
 
@@ -21,11 +23,11 @@ struct LedPattern : Registered<LedPattern> {
 void play(const char *name);        // replaces whatever is playing; unknown name: logs and does nothing
 void stop();
 bool playing();
-void bootProgress(uint8_t percent); // hook H15
+void bootProgress(uint8_t percent); // called by vk::ui::bootScreen for every boot stage
 }
 ```
 
-A service calls the current pattern's `frame` and then `::leds::show()`, at most once every 16 ms (as upstream does: `::leds::show()` is a blocking transfer); the first frame of a pattern is drawn at once. Upstream's own `leds::update()` also runs every loop and redraws whenever one of *its* animations is set (the idle breath restarts whenever the launcher comes back), so on **every frame it draws** the service first calls `::leds::stopAnimation()`. When a pattern finishes or is stopped, the LEDs are turned off and, if the badge is idle (`vk::host::idle()`), upstream's idle animation resumes (`::leds::playIdle()`). While an app runs and no pattern is playing, the LEDs belong to the app.
+A service calls the current pattern's `frame` and then `::leds::show()`, at most once every 16 ms (as upstream does: `::leds::show()` is a blocking transfer); the first frame of a pattern is drawn at once. Upstream's own `leds::update()` also runs every loop and redraws whenever one of *its* animations is set (the idle animation restarts whenever the launcher comes back), so on **every frame it draws** the service first calls `::leds::stopAnimation()`. When a pattern finishes or is stopped, the LEDs are turned off and, if the badge is idle (`vk::host::idle()`), upstream's idle animation resumes (`::leds::playIdle()`). While an app runs and no pattern is playing, the LEDs belong to the app.
 
 | Name | When | Look | Ends |
 |---|---|---|---|
@@ -34,9 +36,9 @@ A service calls the current pattern's `frame` and then `::leds::show()`, at most
 | `approve_red` | approval open, red | solid red | when the approval closes |
 | `signed` | approval result: signed or approved | three quick green flashes (100 ms on, 100 ms off) | after 600 ms |
 | `refused` | approval result: cancelled, timeout, blocked, failed | one red blink (on for 250 ms) | after 400 ms |
-| `notify` | a notification is waiting and the badge is idle (`vk::host::idle()`) | dim purple breathe, 3 s period | when the inbox is empty or an app starts |
+| `notify` | a notification is waiting and the badge is idle (`vk::host::idle()`) | dim breathe in the active theme's `LED` colour, 3 s period | when the inbox is empty or an app starts |
 
-Colours are the approval's fixed severity colours ([approval](../wallet/approval.md#screen)) and upstream's brand purple.
+Colours are the approval's fixed severity colours ([approval](../wallet/approval.md#screen)) and the active theme's `LED` token. No pattern uses upstream's brand purple or green.
 
 ### Boot bar
 
@@ -64,7 +66,7 @@ for each LED i:
 ::leds::show()
 ```
 
-Boot stages block, so the bar is drawn only inside `bootProgress()`, once per stage, from `boot::progress` (hook H15): no service runs during `setup()`, and upstream's `tick()` is its own `leds::update()`, which never reaches Badge OS code. A stage therefore holds one flash state until the next stage begins, which is acceptable. The boot bar is not a registered pattern. The upstream splash animation still plays during the two splash screens, before the first stage. The colour is the active theme's accent ([Theme](#theme)).
+Boot stages block, so the bar is drawn only inside `bootProgress()`, once per stage, from `boot::progress` through `vk::ui::bootScreen` ([shell](shell.md#boot)): no service runs during `setup()`, and upstream's `tick()` is its own `leds::update()`, which never reaches BadgeOS code. A stage therefore holds one flash state until the next stage begins, which is acceptable. The boot bar is not a registered pattern. There is no splash and upstream's boot animation (`leds::playBoot()`) is never played: the bar starts with the first boot frame, at 0 %, with every LED off. The colour is the active theme's accent ([Theme](#theme)).
 
 ### Adding a pattern
 
@@ -78,34 +80,21 @@ VK_LED_PATTERN(rainbow, "rainbow", rainbow);
 
 Then `vk::ui::leds::play("rainbow")` from firmware, or name it in an `ApprovalRequest::led`. Add the row to the table above.
 
-## Status bar
+## Status bar (removed)
 
-Upstream draws a 22 px bar on the launcher and settings screens: title on the left, radios and battery on the right. Hook H14 lets Badge OS add items to the left of the radios text.
+BadgeOS has no status bar and no status items. Upstream's 22 px bar belonged to upstream's shell, which is deleted; hook H14 and the `VK_STATUS_ITEM` registry (`src/vk/ui/statusbar.{h,cpp}`) went with it. Every screen has the receipt [header](#header) instead, whose right side is the time and the battery and nothing else. What the four items used to show now lives here:
 
-```cpp
-// src/vk/ui/statusbar.h
-namespace vk::ui::statusbar {
-struct StatusItem : Registered<StatusItem> {
-  const char *name;
-  int order;                           // lower = further right
-  int (*draw)(int rightX, int y);      // draw right-aligned ending at rightX; return the width used, 0 for nothing
-  StatusItem(const char *n, int o, int (*d)(int, int)) : name(n), order(o), draw(d) {}
-};
-#define VK_STATUS_ITEM(ident, name, order, draw_fn) static vk::ui::statusbar::StatusItem vk_status_##ident(name, order, draw_fn)
-void draw(int rightEdgeX);             // hook H14
-}
-```
+| Former item | Now |
+|---|---|
+| `setup` (`SETUP` while unprovisioned) | the launcher's balance row reads `SETUP NEEDED` ([launcher](shell.md#launcher)) |
+| `dev` (`DEV` in the dev profile) | the dev build is marked on the approval screen, where it matters ([approval](../wallet/approval.md#dev-builds)) |
+| `inbox` (`[n]`) | the value of the launcher's `inbox` cell and of the Settings list's Inbox row |
+| `balance` | the launcher's `BALANCE` row |
 
-Items are drawn right to left in `order`, 8 px apart, and drawing stops before x = 110 so the title is never covered.
+The one piece that stays is the repaint request, now in `src/vk/ui/repaint.{h,cpp}`: `vk::ui::requestShellRepaint()` asks the shell to redraw its top screen on its next pass, and the shell calls `vk::ui::consumeShellRepaint()` itself ([framework](shell.md#framework)). Whoever changes something the shell shows calls it: the balance feature on a new balance, the notification inbox on a change, the config store on provisioning or reset, the approval engine when it closes.
 
-| Item | Order | Shows | Registered by |
-|---|---|---|---|
-| `setup` | 10 | `SETUP` in amber while unprovisioned | `core/config` |
-| `dev` | 20 | `DEV` in amber in the dev profile | `ui/status_dev.cpp` |
-| `inbox` | 30 | `[n]` when n notifications are waiting | `host/notify` |
-| `balance` | 40 | `12.50 HACK`, the default token's last known balance | `features/balance` |
+## Balance
 
-### Balance
 
 `src/vk/features/balance/`. A service that, every `balance_poll_s` seconds, **only while the badge is idle (`vk::host::idle()`), no approval is open and the badge is joined to a network** (`wifi_mgr::mode() == wifi_mgr::Mode::Station && wifi_mgr::connected()`; `connected()` alone is also true in hotspot mode), makes one JSON-RPC call to `rpc_url`:
 
@@ -131,20 +120,14 @@ As built, the header also has `Reason fetch(uint32_t timeoutMs)` (what `refresh`
 - The balance and the token account are always known together: a reply must hold both.
 - A stored balance belongs to the mint it was fetched for. If provisioning makes another mint the default token, the balance counts as unknown until the next fetch.
 - A fetch logs `[bal] fetch <ms> ms` (measurement M5), or `[bal] fetch failed after <ms> ms: …`. With Wi-Fi down the poll is skipped silently. `balance_poll_s 0` turns the poll off.
-- The status item is drawn in upstream's `::theme::TEXT`, since the bar is upstream's.
+- The balance is shown on the launcher's `BALANCE` row ([shell](shell.md#launcher)); the feature calls `vk::ui::requestShellRepaint()` when the value changes.
 - Device tests run with Wi-Fi off, so the poll never fires under the test provisioning. On a badge that is joined to a network, the test `rpc_url` (`http://127.0.0.1:8899`) makes every idle poll fail after up to 3 s; add `balance_poll_s 0` to `test_config()` in `test/device/common.py` if that disturbs a run.
 
 The feature publishes these to the rest of the firmware through `vk::wallet::tokenInfoLookup` ([signing](../wallet/signing.md#cross-feature-interfaces)), so `solana_pay` and the Wallet app never include a `balance` header.
 
-Upstream's shell redraws only when its own dirty flag is set (finding F12). When a status item's value changes (a new balance, a notification count, provisioning), its owner calls `vk::ui::requestShellRepaint()`; hook H20 makes the shell redraw on its next pass. The approval engine calls it when it closes.
-
-### Adding a status item
-
-One `VK_STATUS_ITEM` line and a draw function that returns the width it used. Add the row above.
-
 ## Theme
 
-**Decided: the Receipt design, in a light and a dark mode.** Reference: `docs/design/os-mockups/index.html`, a live simulation of every screen (serve the folder with `python3 -m http.server 8765`, open `http://127.0.0.1:8765`; keys 1 and 2 switch mode). When this document and the simulation disagree about a pixel, the simulation wins; when they disagree about behaviour, this document wins.
+**Decided: the Receipt design, in a light and a dark mode, on every screen of the OS.** Reference: `docs/design/os-mockups/index.html`, a live simulation of every screen (serve the folder with `python3 -m http.server 8765`, open `http://127.0.0.1:8765`; keys 1 and 2 switch mode). When this document and the simulation disagree about a pixel, the simulation wins; when they disagree about behaviour, this document wins.
 
 The idea: every screen is a printed ticket. Monospace text, dotted leaders between a label and its value, dashed tear rules, amounts in a bold serif, and a barcode. The verdict is carried by a coloured band alone. Screens that show an amount are split into a left stub (the amount) and a right body (the details) by a dashed vertical perforation. No owner name appears in any header.
 
@@ -177,13 +160,13 @@ size_t count();  const Theme *at(size_t i);
 | `STAMP_OK` | status ink: "signed", "paid" and other good-outcome text in lists | `#17804F` | `#4FD69A` |
 | `STAMP_WARN` | status ink: warning text in lists (cancelled, timed out, unsynced) | `#B56A00` | `#FFC35A` |
 | `STAMP_BAD` | status ink: "blocked" and "failed" text in lists | `#C8321E` | `#FF7B6E` |
-| `LED` | boot bar and idle LED colour | `#FFE2AA` | `#FFC478` |
+| `LED` | boot bar, the `notify` pattern and the shell's LED pulses | `#FFE2AA` | `#FFC478` |
 
 The three `STAMP_*` tokens keep the names of the first design; nothing draws a stamp. They colour text (through `row`'s `valueColor`, for example), never a band.
 
 The config key `theme` holds the active theme's name; empty or an unknown name means `receipt-light`. `color()` works before `vk::begin()` (the config accessors start the store themselves) and re-reads the key every 500 ms, so `VKSET theme receipt-dark` shows on the next frame without a reboot. If `setActive`'s write is refused, the stored name wins again at the next read. A selected row is drawn inverted: `INK` fill, `PAPER` text. The three **severity colours are not tokens**: green `#1FBF75`, amber `#FFB020`, red `#FF4545` in both modes, with black text on them ([approval](../wallet/approval.md#screen)).
 
-Adding a theme is one `VK_THEME(...)` line with eight colours; it then appears in the Theme setting. Removing one is deleting that line.
+Adding a theme is one `VK_THEME(...)` line with eight colours; it then appears in Settings → Theme ([shell](shell.md#theme)), which cycles through the registered themes. Removing one is deleting that line.
 
 ### Fonts
 
@@ -194,13 +177,13 @@ All from the graphics library (LovyanGFX), no font files to ship:
 | body, labels, header, footer | `fonts::Font0` | 6×8 px per character, 53 columns |
 | band headline, section titles (`MENU`, `PAY`) | `fonts::FreeMonoBold9pt7b` | about 11 px per character |
 | amounts | `fonts::FreeSerifBold24pt7b`; `FreeSerifBold18pt7b` when the text is wider than 136 px; then `FreeSerifBold9pt7b`, then `Font0`, so that an amount is never cut and never crosses the perforation | |
-| brand line "Badge OS" on the boot screen | `fonts::FreeSerifBoldItalic12pt7b` | |
+| brand line "BadgeOS" on the boot screen | `fonts::FreeSerifBoldItalic12pt7b` | |
 
 All the names exist in the installed LovyanGFX 1.2.32 (`lgfx_fonts.hpp`), as does `textWidth`. `FreeSerifBold9pt7b` is also used, for wrapped text in the approval's left stub and as the third amount size. If a later library version drops one, fall back to the numbered fonts `Font4` (amounts) and `Font2` (titles).
 
 ### The receipt kit
 
-Every Badge OS screen is drawn with one small set of functions, so that screens stay consistent and a new screen is a few calls. `src/vk/ui/receipt.{h,cpp}`:
+Every BadgeOS screen is drawn with one small set of functions, so that screens stay consistent and a new screen is a few calls. `src/vk/ui/receipt.{h,cpp}`:
 
 ```cpp
 namespace vk::ui::receipt {
@@ -235,7 +218,7 @@ Layout constants (pixels): margins 10; list row pitch 18; subline 13 below its r
 
 ### Header
 
-The right side of every header is `receipt::statusRight`: the time and the battery, and nothing else. No notification count, no setup or dev marker (waiting notifications show on the launcher's Inbox row; an unprovisioned badge says so on the launcher's balance row; the dev build is marked on the approval screen, where it matters).
+The left side of every header is `BADGEOS`. The right side of every header is `receipt::statusRight`: the time and the battery, and nothing else. No notification count, no setup or dev marker (waiting notifications show on the launcher's Inbox row; an unprovisioned badge says so on the launcher's balance row; the dev build is marked on the approval screen, where it matters).
 
 The battery figure is the measured one. The badge has no fuel gauge, so the only real measurement is the cell voltage, which upstream's `power::percent()` maps to a percentage. When the badge is on external power (`power::charging()`, cell line above 4.25 V) the ADC is reading the charger, not the cell, and any percentage would be invented: the header shows `USB` instead.
 
@@ -243,10 +226,11 @@ The battery figure is the measured one. The badge has no fuel gauge, so the only
 
 | Screen | Layout |
 |---|---|
-| Boot | header `BADGE OS` / `*** STARTING UP ***`; left stub: brand line, percent as an amount, a 14-cell block bar, the stage's detail text; body: title `CHECKLIST`, one row per stage with `OK`, `..` or blank. Replaces upstream's progress screen (hook H15 draws it; upstream's two splash images are kept) |
-| Launcher | header; title `MENU`; apps in a 2-column grid of rows `NN NAME`, selected row inverted with `◂` (the `inbox` row shows the number of waiting notifications as its value when there are any); rule; row `BALANCE … 142.50 HACK`, or `SETUP NEEDED` while the badge is unprovisioned; barcode; footer `SELECT open` / `CANCEL settings` |
+| Boot | [shell: Boot](shell.md#boot). Header `BADGEOS` / `*** STARTING UP ***`; left stub: brand line `BadgeOS`, percent as an amount, a 14-cell block bar, the stage's detail text; body: title `CHECKLIST`, one row per stage with `OK`, `..` or blank. No splash images come before it |
+| Launcher | [shell: Launcher](shell.md#launcher). Header; title `MENU`; apps in a 2-column grid of rows `NN NAME`, selected row inverted with `◂` (the `inbox` row shows the number of waiting notifications as its value when there are any); rule; row `BALANCE … 142.50 HACK`, or `SETUP NEEDED` while the badge is unprovisioned; barcode; footer `SELECT open` / `CANCEL settings` |
+| Settings list, every settings page, delete confirmation, app-store offer, installing, app error | [shell](shell.md#settings-list): each is a receipt list or ticket drawn with the kit |
 | Home | left stub: `BALANCE` amount, barcode; body: rows ADDRESS, KEY, CLOCK, INBOX; a rule; `THANK YOU FOR HACKING` |
-| Any list (Pay, History, Contacts, Inbox, Wallet, settings, shop) | header; title; rows with optional sublines (5 rows with sublines or 9 without); footer with the action and `CANCEL back` |
+| Any list (Pay, History, Contacts, Inbox, Wallet, shop) | header; title; rows with optional sublines (5 rows with sublines or 9 without); footer with the action and `CANCEL back` |
 | Approval | [approval](../wallet/approval.md#screen) |
 | Request | left stub: amount with label `PAY ME`, `WAITING` or `RECEIVED`, barcode; body: title `REQUEST`, three rows. When the payment is confirmed the left stub's label reads `PAID`, drawn in the `STAMP_OK` colour |
 
@@ -254,19 +238,13 @@ Lua apps get the same look through `lib/vk.lua`'s `vk.ui` helpers (`vk.ui.header
 
 ### Launcher and settings
 
-Upstream's launcher and settings screens use upstream's compile-time colours. Rather than edit `shell.cpp`, Badge OS ships its own launcher as a native app and keeps upstream's shell as the fallback behind it:
+The launcher, the settings list and every settings page are BadgeOS's own shell, specified in [shell.md](shell.md). There is no launcher app, no settings app and no home service: when no app runs, the shell is on screen, and it starts on the launcher. An app that exits, crashes or is force-quit lands on the launcher (or on the shell's app-error screen, then the launcher).
 
-- Native app `launcher` draws the MENU screen above. It lists every installed app (Lua and native, through `app_store::count()`/`at()`), except itself. SELECT launches. CANCEL opens the native app `settings`.
-- Native app `settings`: rows **Theme** (SELECT cycles through the registered themes), **Wallet** (opens `wallet_settings`), **Inbox**, and **System settings** (leaves to upstream's own settings screens, which keep upstream's look: Wi-Fi, Bluetooth, ESP-NOW, push, app store, identity, display, LEDs).
-- The **home service** (`src/vk/host/home.{h,cpp}`) keeps the launcher in front: when no app is running, no approval is open, upstream has no error to show (`runtime::lastError()` is empty), and the shell was not asked for, it calls `runtime::requestLaunch(<home_app>)`. Config key `home_app` (default `launcher`; empty disables the service and leaves upstream's launcher in charge).
-- `vk::host::showShell()` is how the settings app reaches upstream's screens: it sets "shell asked for" and exits the app. The flag clears the next time any app starts. From upstream's launcher, launching any app or holding CANCEL returns to ours.
-- `vk::host::idle()` is what "the badge is idle" means everywhere in these documents: true when no app is running or the running app is config `home_app`. The launcher is itself a native app that runs at all times (hook H8c makes `runtime::running()` true for it), so "no app is running" would never hold; the balance poll, the `notify` LED pattern and the idle LED animation ask `idle()` instead.
+`vk::host::idle()` is what "the badge is idle" means everywhere in these documents: no app is running (`!runtime::running()`), so the shell is showing. The balance poll, the `notify` LED pattern and the idle LED animation ask it.
 
 ```cpp
 // src/vk/host/home.h
-namespace vk::host { void showShell(); bool idle(); }
+namespace vk::host { bool idle(); }
 ```
 
-So an app that exits, crashes or is force-quit lands on the Receipt launcher, and the upstream screens are reachable only through **System settings**.
-
-When upstream's shell is showing, hook H14 still adds our status items to its bar.
+Upstream's compile-time palette (`src/ui/theme.h`) is set to the Receipt-light values ([replaced upstream files](../architecture/upstream-hooks.md#replaced-upstream-files)) so that anything upstream still draws matches; no BadgeOS screen uses it, and Lua has no `gfx.SOLANA_*` constants: apps take their colours from `badge.theme.color`.

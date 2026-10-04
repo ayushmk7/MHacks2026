@@ -1,8 +1,8 @@
-# Badge OS Implementation Plan
+# BadgeOS Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan work package by work package. Steps use checkbox (`- [ ]`) syntax for tracking. Each work package is a sub-project: before coding, its executor reads the documents listed under **Read**, then writes the tests named under **Tests** first.
 
-**Goal:** Turn Solana OS into Badge OS: a badge that signs payments only through a firmware approval screen, verifies who is being paid, and hosts Lua and native apps on a platform where adding or removing a feature is one file or one folder.
+**Goal:** Turn Solana OS into BadgeOS: a badge that signs payments only through a firmware approval screen, verifies who is being paid, and hosts Lua and native apps on a platform where adding or removing a feature is one file or one folder.
 
 **Architecture:** A fork of Solana OS at `os/`, changed only by marked one-line hooks. All new code is under `src/vk/`: core services, a wallet core with one signing path and a table of signing domains, a generic approval engine that pauses apps while the user decides, an app host (permissions, native apps, ESP-NOW router, notifications), and self-contained feature folders that register themselves at start-up.
 
@@ -13,7 +13,7 @@
 ## Global constraints
 
 - Upstream base: `firmware/solana-os/` of <https://github.com/spacemandev-git/solana-defcon-badge-26> at commit `812b8c7aca5c366d18c0b040fafd2999f7204d84`.
-- Every edit to an upstream file is a hook listed in [upstream-hooks.md](../architecture/upstream-hooks.md), tagged `// VK: H<n>`. All hooks (H1–H17, H19, H20, and the provisional H21) are applied in WP01 (H21 was moved from `os.ino` into three `src/hal/` functions in Batch 2); later work packages do not touch upstream files (exceptions are named in the package).
+- Every edit to an upstream file is a hook listed in [upstream-hooks.md](../architecture/upstream-hooks.md), tagged `// VK: H<n>`. All hooks (H1–H17, H19, H20, and the provisional H21) are applied in WP01 (H21 was moved from `os.ino` into three `src/hal/` functions in Batch 2); later work packages do not touch upstream files (exceptions are named in the package). **WP37 is the exception by design:** it replaces upstream's shell, boot splash and names; from then on an upstream file is untouched, carries tagged hook lines (H14, H15 and H20 are retired, H23 is new), or is listed under [Replaced upstream files](../architecture/upstream-hooks.md#replaced-upstream-files).
 - All new firmware code lives under `src/vk/`, `src/native_apps/`, `apps/`, `lib/`, `scripts/`, `test/`.
 - The only caller of `identity::sign` / `identity::signBase64` is `src/vk/wallet/signer.cpp`.
 - `VK_SIGN_DOMAIN(` appears only in `src/vk/features/*/domain_*.cpp`.
@@ -60,12 +60,12 @@ Conditions the specification implies but that are easy to miss. Each has a test 
 | | **Gate 2: impostor red, replay amber, honest payee green** | | | |
 | 30 | Permissions, consent, API version | 13 | yes | 31–35 |
 | 31 | Native runtime and SDK | 13, 20, 30 | yes | 33–35 |
-| 32 | Notifications, status items, Inbox | 23, 31 | yes | 33, 35 |
+| 32 | Notifications, Inbox (the status items it first shipped are removed by WP37) | 23, 31 | yes | 33, 35 |
 | 33 | Balance | 10 | yes | 30–32, 34, 35 |
 | 34 | Contacts feature | 10, 11, 20, 22, 32 | yes (2) | 33, 35 |
 | 35 | `lib/vk.lua` | 13, 23, 33 | yes | 30–32, 34 |
 | 36 | Wallet settings app | 20, 24, 30, 31, 33 | yes | 4x |
-| 37 | Receipt launcher, settings app, home service, boot screen | 12, 31, 33 | yes | 34–36 |
+| 37 | BadgeOS shell rewrite and rebrand: boot screen, launcher, settings pages, dialogs; upstream's shell, splash, sample apps and names removed | 12, 31, 32, 33, 36 | yes | 40–45 |
 | | **Gate 3: unpermitted app refused; native app runs; request raises a notification** | | | |
 | 40 | Home | 33, 35 | yes | 41–45 |
 | 41 | Pay and Request | 23, 35 | yes (2) | 40, 42–45 |
@@ -90,7 +90,7 @@ Conditions the specification implies but that are easy to miss. Each has a test 
 
 File ownership is disjoint between packages that may run in parallel: each package creates or fills only the files listed under **Files**. Stubs created in WP01 are filled in by the package that owns that file.
 
-If time runs out, cut in this order: WP54, WP45, WP43 + WP34, WP36, WP32 inbox (keep the status item), WP33. Gates 1 and 2 are never cut.
+If time runs out, cut in this order: WP54, WP45, WP43 + WP34, WP36, WP32 inbox (keep the notification count on the launcher), WP33. Inside WP37, cut settings pages before anything else (each is one file; the shell works with any subset), never the launcher, the boot screen or the rebrand. Gates 1 and 2 are never cut.
 
 ---
 
@@ -311,7 +311,9 @@ Stub behaviour (must equal upstream behaviour) is the last column of that table.
 
 ### WP32: Notifications, status items, Inbox
 
-**Read:** [app host](../platform/app-host.md#notifications), [ui](../ui/ui.md#status-bar).
+> Design change (2026-10-03): the status-item registry is removed by WP37. The `inbox` and `dev` items this package creates are deleted there; the waiting count is shown by the launcher's `inbox` cell and the Settings list ([shell](../ui/shell.md#launcher)), and "the bar shows `[1]`" below becomes "the launcher's Inbox cell shows `1`". The `notify` LED pattern uses the theme's `LED` colour, not upstream's purple.
+
+**Read:** [app host](../platform/app-host.md#notifications), [ui](../ui/ui.md#status-bar-removed).
 **Files:** Fill `src/vk/host/notify.{h,cpp}` (with status item `inbox`, LED pattern `notify`); create `src/vk/ui/status_dev.cpp` (status item `dev`), `src/native_apps/inbox/inbox.cpp`. No other package's file is edited: the requests feature already calls `notify::post`.
 
 - [ ] Device: T-REQ5; `VKNOTE` posts; the bar shows `[1]`; Inbox opens the named app.
@@ -346,15 +348,23 @@ Stub behaviour (must equal upstream behaviour) is the last column of that table.
 **Read:** [apps](../apps/apps.md#wallet-native).
 **Files:** Create `src/native_apps/wallet_settings/wallet_settings.cpp`.
 
-### WP37: Receipt launcher, settings app, home service, boot screen
+### WP37: BadgeOS shell rewrite and rebrand
 
-**Read:** [ui](../ui/ui.md#theme) to the end; [apps](../apps/apps.md#launcher-native); the simulation in `docs/design/os-mockups/`.
-**Files:** Create `src/native_apps/launcher/launcher.cpp`, `src/native_apps/settings/settings.cpp`, `src/vk/host/home.{h,cpp}` (config key `home_app`, `showShell()`), `src/vk/ui/boot_screen.cpp` (replaces the WP01 stub of `vk::ui::bootScreen`), `src/vk/ui/lua_theme.cpp` (`badge.theme.*`); restyle `inbox` and `wallet_settings` with the receipt kit if they predate it.
+The OS is named **BadgeOS** and its whole user interface is its own: upstream's shell is rewritten in the Receipt layout, the splash is removed, and nothing a user can see (and no network identifier) says "Solana" or "SKYRIZZ". This replaces the earlier WP37 (a native launcher app, a native settings app and a home service that relaunched the launcher), which is cancelled. Credit to upstream stays in the repository (`os/README.md`), not on the device.
 
-- [ ] Launcher grid, navigation, balance row, barcode. Settings list with the Theme toggle.
-- [ ] Home service with the four conditions; `showShell()`; verify: an app that exits, errors or is force-quit returns to the launcher (after the error screen is dismissed); System settings reaches upstream's screens; launching from upstream's launcher returns to ours afterwards.
-- [ ] Boot screen and LED bar: screenshots at each stage compared with the simulation; T-LED1 by a person.
-- [ ] Screenshots of launcher, settings, approval (three severities), boot in both themes kept in `test/device/shots/`.
+**Read:** [shell](../ui/shell.md) (all); [ui](../ui/ui.md#theme) to the end; [upstream hooks](../architecture/upstream-hooks.md) (Table, Retired hooks, H23, Replaced upstream files); the simulation in `docs/design/os-mockups/`; upstream's `src/ui/shell.cpp` before it is deleted.
+**Files:** Create `src/vk/shell/` (`screens.h`, `shell.cpp`, `page.h`, `page.cpp`, `launcher.cpp`, `settings_list.cpp`, `dialogs.cpp`, `pages/page_<id>.cpp` for the thirteen rows), `src/vk/ui/repaint.{h,cpp}`; fill `src/vk/ui/boot_screen.cpp`; rewrite `src/ui/boot.cpp`, `README.md`; delete `src/ui/shell.cpp`, `splash_images.h`, the six upstream sample apps, `src/vk/ui/statusbar.{h,cpp}`, `src/vk/ui/status_dev.cpp`; edit the files of hook H23 and of the replaced-files table; `src/vk/host/home.{h,cpp}` keeps only `idle()`; `VKSTATE` gains `screen`; `UPSTREAM-HOOKS.md`, `scripts/preflash-check.sh` (check 1 extended, check 7), `test/device/common.py`, `t_shell.py`, `t_pages1.py`, `t_pages2.py`. Agents and exact file lists: [execution plan](execution-plan.md), Batch 5 (5A shell, 5F and 5G pages, 5R rebrand).
+
+- [ ] Shell framework: screen stack, the four `shell::` functions, `shell::screenName()`, repaint on request, the 500 ms header and theme check.
+- [ ] Boot: no splash; the Receipt boot screen from the first frame; LED boot bar. T-LED1 by a person.
+- [ ] Launcher: grid, navigation, hold RIGHT to delete a Lua app, balance row or `SETUP NEEDED`, barcode, the inbox count.
+- [ ] Dialogs: delete confirmation, app error, app-store offer, installing.
+- [ ] Settings list and the thirteen rows: Theme, Wi-Fi, Bluetooth, ESP-NOW, App push, App store, Identity (New identity behind a hold-SELECT confirmation), Display, LEDs, Wallet, Inbox, Device info, Console. Every upstream call of the old screens is kept ([shell](../ui/shell.md#settings-pages)).
+- [ ] Rebrand: hook H23, the replaced files, the status-item registry removed, `DEFAULT_BROKER_URL` empty.
+- [ ] Tests T-SHELL1 to T-SHELL6, T-BRAND1, T-BRAND2 ([testing](../testing/testing.md#acceptance-tests)); screenshots of every shell screen in both themes kept in `test/device/shots/` as `shell_<screen>_<theme>.png`.
+- [ ] The Solana check prints nothing ([upstream hooks](../architecture/upstream-hooks.md#checking-the-hooks)).
+
+**Done when (WP37):** the badge boots to the BadgeOS boot screen and the launcher; every settings page is reached by name and drawn in both themes; every app returns to the launcher (`VKSTATE` app empty, `screen` `launcher`); pre-flash checks 1 and 7 pass.
 
 **Done when (Gate 3):** T-APP1–T-APP7, T-REQ5 pass; the Wallet app shows the provisioned values.
 
@@ -440,7 +450,7 @@ Each app is one folder under `apps/` with `app.ini`, `main.lua`, `config.lua`, w
 | 34 | | | | |
 | 35 | | | | |
 | 36 | | | | |
-| 37 | | | Gate 3 | |
+| 37 | Batch 5: 5A (shell framework, launcher, dialogs, boot), 5F and 5G (settings pages), 5R (rebrand, test tooling); integrator I5 | | Gate 3 | redefined 2026-10-03 as "BadgeOS shell rewrite and rebrand" (specification: `ui/shell.md`); the earlier launcher app, settings app and home service are cancelled; not started |
 | 40 | | | | |
 | 41 | | | | |
 | 42 | | | | |

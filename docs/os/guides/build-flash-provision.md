@@ -27,6 +27,8 @@ Batch 2 (WP10, WP11, WP12, WP20, WP22) was flashed to the same badge on 2026-10-
 - `VKINFO` on the unprovisioned badge: `OK time=none wifi=0 provisioned=0 profile=dev api=2 pubkey=5vpmgLuCfbV7Lp2hTNFz7w75ibhVkc56G1mR6weQedvj key=software selfcheck=1`.
 - The device tests leave the badge provisioned with the test values of [testing](../testing/testing.md) (`rpc_url`, `approval_tmo_s` 10, `hold_ms` 1000). `VKRESET` and a hold on the badge returns it to unprovisioned.
 
+**Design change, 2026-10-03.** The firmware is named BadgeOS and its user interface is its own shell ([shell](../ui/shell.md)); this lands in Batch 5. The log lines quoted above were recorded before it: from Batch 5 on the banner reads `BadgeOS 0.1.0`, the `[vk] registries:` line has `pages=` in place of `status=`, there is no `[boot] splash` line, and boot is about 4 s shorter (the two splash screens took about 2 s each).
+
 ## Toolchain
 
 ```bash
@@ -89,7 +91,7 @@ cp -R /tmp/upstream/firmware/solana-os os
 mv os/solana-os.ino os/os.ino        # an Arduino sketch's main file must be named after its folder
 ```
 
-Then work package WP01 adds `src/vk/` and applies the hooks ([hooks](../architecture/upstream-hooks.md)). The upstream repository has no licence file (finding F9): keep the repository private or ask the author before publishing the fork.
+Then work package WP01 adds `src/vk/` and applies the hooks, and WP37 replaces upstream's shell, boot splash and names ([hooks and replaced files](../architecture/upstream-hooks.md)). Credit stays in the repository: `os/README.md` says "BadgeOS is built on Solana OS by spacemandev." The upstream repository has no licence file (finding F9): keep the repository private or ask the author before publishing the fork.
 
 ## Build profiles
 
@@ -133,16 +135,18 @@ arduino-cli upload  --fqbn "$UPLOAD_FQBN" --build-path "$FW/build/<profile>" -p 
 
 | # | Check | Meaning of a failure |
 |---|---|---|
-| 1 | hook ids found in upstream files equal the table in `UPSTREAM-HOOKS.md` | an untracked edit to an upstream file |
+| 1 | hook ids found in upstream files equal the hook table in `UPSTREAM-HOOKS.md`; every path in its replaced-files table marked `deleted` does not exist, and every path marked `rewritten` or `edited` exists | an untracked edit to an upstream file; a replaced upstream file that came back (a merge from upstream restored `src/ui/shell.cpp`, the splash images or a sample app) |
 | 2 | `identity::sign`, `signBase64`, `se050_apdu::signEd25519`, `ed25519::sign`, `crypto_sign(` appear only in `src/identity/`, `src/hal/se050_apdu.cpp`, `src/vk/wallet/signer.cpp` | something can sign around the wallet core |
 | 3 | `VK_SIGN_DOMAIN(` appears only in `src/vk/features/*/domain_*.cpp` | a signing domain defined outside a feature's domain file |
 | 4 | no file under `src/native_apps/` or `src/vk/features/` includes anything from `src/identity/` (the badge's own key comes from `vk::wallet::publicKey()`) | a feature or native app reaching for the key |
 | 5 | `test/host/run.sh` passes | the pure code changed behaviour |
 | 6 | release only: `vk_profile.h` defines `VK_PROFILE_DEV 0` | a dev build about to go on a judge badge |
+| 7 | the name grep of [upstream-hooks](../architecture/upstream-hooks.md#checking-the-hooks) prints nothing: no line of code or user-visible text in `os.ino`, `src/`, `tools/badge-push.py` or `README.md` says "Solana" or "SKYRIZZ", apart from the blockchain names and upstream identifiers listed under [Names that stay](../architecture/upstream-hooks.md#names-that-stay) | upstream's brand is about to appear on a screen, a web page or the network |
 
 How the script reads the table:
 
-- Check 1 runs the grep in [upstream-hooks](../architecture/upstream-hooks.md#checking-the-hooks). A row that names a range (H8: H8a–H8f) stands for those ids; a row whose purpose starts with `optional:` (H18) may be absent from the source.
+- Check 1 runs the grep in [upstream-hooks](../architecture/upstream-hooks.md#checking-the-hooks). A row that names a range (H8: H8a–H8f) stands for those ids; a row whose purpose starts with `optional:` (H18) may be absent from the source. Its second half reads the replaced-files table of `UPSTREAM-HOOKS.md`: the first cell of a row holds one or more paths in backquotes, the second cell the kind.
+- Check 7 skips `src/lua/`, `src/vk/features/solana_pay/` and `src/vk/wallet/pure/sol*`, and whole-line comments.
 - Checks 2 and 3 scan `os.ino` and `src/` only (not `test/`), and ignore text after `//` on a line, so a comment may name these calls. Check 3 also skips the one line that defines the macro, `#define VK_SIGN_DOMAIN(` in `src/vk/wallet/signer.h`.
 - Check 5 can be skipped with `VK_PREFLASH_SKIP_HOST_TESTS=1` when running the script by hand; `scripts/build.sh` never sets it.
 
@@ -155,9 +159,22 @@ scripts/push-apps.sh --port /dev/cu.usbserial-10 dev        # every app, over US
 scripts/push-apps.sh --host 192.168.4.31 --token 123456 release   # over Wi-Fi, without the dev-only test apps
 ```
 
-For each app folder under `apps/` the script: copies `lib/vk.lua` into a temporary copy of the folder; for `evilgame`, also copies `apps/game/*.lua` except `config.lua`; then pushes it, over serial with `vkdev.py push` (upstream's `AUTH`/`BEGIN`/`DATA`/`END` line protocol) or over Wi-Fi with upstream's `tools/badge-push.py --id <id>` (the tool otherwise takes the id from the folder name, which is a temporary one here). The `release` set leaves out the dev-only test apps `signtest`, `checktest`, `vktest` and `reqtest`; it **includes** `evilgame`, which the demo needs.
+For each app folder under `apps/` the script: copies `lib/vk.lua` into a temporary copy of the folder; for `evilgame`, also copies `apps/game/*.lua` except `config.lua`; then pushes it, over serial with `vkdev.py push` (upstream's `AUTH`/`BEGIN`/`DATA`/`END` line protocol) or over Wi-Fi with `tools/badge-push.py --id <id>` (the tool otherwise takes the id from the folder name, which is a temporary one here). `apps/` holds only BadgeOS's apps: upstream's six samples are deleted. The `release` set leaves out the dev-only test apps `signtest`, `checktest`, `vktest` and `reqtest`; it **includes** `evilgame`, which the demo needs.
 
-The pairing code is on the badge under Settings → Push. In the dev profile `vkdev.py` reads it itself (`VKPAIR`).
+The pairing code is on the badge under Settings → App push. In the dev profile `vkdev.py` reads it itself (`VKPAIR`).
+
+### Names on the network
+
+| What | Value | Where it comes from |
+|---|---|---|
+| default hostname | `badgeos` (so `badge-push.py --host badgeos.local` where upstream's examples say `solana-badge.local`) | `DEFAULT_HOSTNAME`, hook H23 |
+| the badge's own hotspot (Settings → Wi-Fi → Start hotspot), default password | `badgeos-setup` | `DEFAULT_AP_PASSWORD`, hook H23 |
+| device name shown to other badges and over BLE | `badge-XXXX` | upstream's default, unchanged |
+| ESP-NOW magic | `BDOS` | hook H23. Badges running upstream firmware are not heard |
+| web page served on port 80 | titled `BadgeOS`, Receipt colours | `src/net/push_server.cpp`, a replaced file |
+| app-store broker | none: the client is off until an address is set from the web page | `DEFAULT_BROKER_URL` is empty, hook H23 |
+
+A badge that stored its own hostname or hotspot password under upstream firmware keeps the stored value; the table gives the defaults. Settings → App push shows the address to use.
 
 ## Provisioning
 
@@ -169,7 +186,7 @@ python3 os/scripts/vkdev.py --port /dev/cu.usbserial-10 provision \
     --wifi "<hotspot SSID>" "<password>" --cap 100.00 --max 1000.00
 ```
 
-Details and the by-hand commands: [../platform/config.md](../platform/config.md#provisioning). The command ends by printing the badge's public key and key location.
+Details and the by-hand commands: [../platform/config.md](../platform/config.md#provisioning). The command ends by printing the badge's public key and key location. `--autostart home` (upstream's autostart setting, `VKAUTOSTART`) still works: the Home app then starts at boot, and CANCEL in it returns to the launcher. Without it the badge boots to the launcher.
 
 ## Four badges
 

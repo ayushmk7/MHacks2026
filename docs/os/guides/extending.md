@@ -1,6 +1,6 @@
-# Extending Badge OS
+# Extending BadgeOS
 
-Badge OS is built so that adding a thing is **one new file or one new line in the feature that owns it**, and removing a thing is **deleting that file or folder**. There is no central table to edit, no switch statement to extend, no list to keep in sync. This guide is the recipe for each kind of addition and removal.
+BadgeOS is built so that adding a thing is **one new file or one new line in the feature that owns it**, and removing a thing is **deleting that file or folder**. There is no central table to edit, no switch statement to extend, no list to keep in sync. This guide is the recipe for each kind of addition and removal.
 
 It works because every extensible list is a self-registering registry ([overview](../architecture/overview.md#6-self-registration)), every trusted mechanism (signing, the approval, permissions, routing) is generic and driven by data, and every deployment value is provisioned config rather than code.
 
@@ -21,7 +21,7 @@ It works because every extensible list is a self-registering registry ([overview
 | a background job | one `VK_SERVICE(...)` line | the feature's file | yes |
 | a USB serial command | one `VK_SERIAL_COMMAND(...)` line | the feature's file | yes |
 | an LED animation | one `VK_LED_PATTERN(...)` line | any file | yes |
-| a status-bar widget | one `VK_STATUS_ITEM(...)` line | the feature's file | yes |
+| a settings page | one `pages/page_<id>.cpp` with `VK_SETTINGS_PAGE(...)` | only the new file | yes |
 | a reaction to every approval | one `VK_ON_APPROVAL(...)` line | the feature's file | yes |
 | a reaction to an app stopping, or to a wallet reset | one `VK_ON_APP_STOP(...)` or `VK_ON_RESET(...)` line | the feature's file | yes |
 | a field in `VKINFO` | one `VK_INFO_FIELD(...)` line | the feature's file | yes |
@@ -32,7 +32,8 @@ It works because every extensible list is a self-registering registry ([overview
 | a Lua app | delete `apps/<id>/`; `DEL <id>` on badges that have it |
 | a native app | delete `src/native_apps/<id>/` |
 | a feature | delete `src/vk/features/<name>/` and the apps that need it ([dependency table](../architecture/overview.md#8-features-and-what-they-need)) |
-| a signing domain, route, command, pattern, status item, setting | delete its one line or file |
+| a signing domain, route, command, pattern, setting | delete its one line or file |
+| a settings page | delete `src/vk/shell/pages/page_<id>.cpp` |
 | a token | remove its entry from `tokens` (confirmed on the badge) |
 
 After any addition or removal: `scripts/build.sh dev` runs the pre-flash checks and the host tests; if they pass, nothing else needs to change.
@@ -50,7 +51,7 @@ After any addition or removal: `scripts/build.sh dev` runs the pre-flash checks 
 3. `apps/<id>/main.lua`: define the callbacks you need (`on_start`, `on_update`, `on_draw`, `on_button`, `on_espnow`, `on_stop`). `local vk = require("vk")` for JSON, RPC, payments.
 4. `scripts/push-apps.sh --port <port> dev` (or `vkdev.py push apps/<id>`).
 
-It appears in the launcher. If it requests `sign` or `request`, the user is asked once on first launch. Reference: [Lua API](../platform/lua-api.md), [app rules](../apps/apps.md#rules-for-every-lua-app). To take a payment, copy the [smallest paying app](../platform/lua-api.md#the-smallest-paying-app).
+It appears in the launcher's grid. If it requests `sign` or `request`, the user is asked once on first launch. Reference: [Lua API](../platform/lua-api.md), [app rules](../apps/apps.md#rules-for-every-lua-app). To take a payment, copy the [smallest paying app](../platform/lua-api.md#the-smallest-paying-app).
 
 ## Add a native app
 
@@ -181,9 +182,20 @@ VK_SERIAL_COMMAND(uptime, "VKUPTIME", cmdUptime, "seconds since boot");
 
 Names start with `VK`. Commands exist on USB only. A command that should exist only in dev builds goes in `features/devtools/`.
 
-## Add an LED pattern or a status item
+## Add an LED pattern
 
-See [ui](../ui/ui.md#adding-a-pattern) and [ui](../ui/ui.md#adding-a-status-item). One line each.
+See [ui](../ui/ui.md#adding-a-pattern). One line. (There are no status items: the header shows the time and the battery only.)
+
+## Add a settings page
+
+One file, `src/vk/shell/pages/page_<id>.cpp`, that includes `../page.h`, draws with the receipt kit and the page helpers, and ends in one registration line:
+
+```cpp
+VK_SETTINGS_PAGE(mypage, "mypage", 95, "My page", value, enter, update, draw, 0);   // a row that opens a screen
+VK_SETTINGS_ACTION(mytoggle, "mytoggle", 96, "My toggle", value, action);          // a row that acts in place
+```
+
+The arguments, the helper functions, the layout constants and a complete example are in [shell](../ui/shell.md#add-a-settings-page). The `order` decides where the row sits in the Settings list; the id is the screen name device tests see in `VKSTATE.screen`. Add the row to the [page table](../ui/shell.md#settings-page-registry). Removing a page is deleting its file. The launcher, the dialogs and the boot screen are not registries: they are the shell's own files.
 
 ## React to every approval
 
@@ -213,11 +225,12 @@ VK_ON_APPROVAL(my_listener, onApproval);
 |---|---|
 | the approval screen's layout and severity colours | a customisable approval could be made to lie |
 | the single signing path in `signer.cpp` | one place to review |
-| the rule that a hook is one marked line in an upstream file | keeps the fork mergeable |
+| the rule that an upstream file is untouched, hooked by marked lines, or listed as replaced | keeps the fork mergeable and the difference from upstream countable |
+| the header's right side (time and battery only) and the names on screen | one look, one name: BadgeOS |
 | the decoder's strictness | the badge signs only what it can show |
 
 Changing any of these is a design change: update the owning document first, then the code and its tests.
 
 ## Needing an upstream change
 
-If none of the registries can do what you need and an upstream file must change, add a hook: give it the next id in [upstream-hooks.md](../architecture/upstream-hooks.md), keep it to a marked line that calls into `src/vk/`, and update the expected list in the pre-flash check.
+If none of the registries can do what you need and an upstream file must change, add a hook: give it the next id in [upstream-hooks.md](../architecture/upstream-hooks.md) (retired ids H14, H15, H20 are never reused; H22 is reserved), keep it to a marked line that calls into `src/vk/`, and update the expected list in the pre-flash check. If a whole upstream file must go or be rewritten, add it to [Replaced upstream files](../architecture/upstream-hooks.md#replaced-upstream-files) first.

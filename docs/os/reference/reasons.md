@@ -2,7 +2,7 @@
 
 ## Reason codes
 
-One list for every refusal in Badge OS. In C it is `vk_reason_t` (`src/vk/wallet/pure/vk_reason.h`); in Lua it is the lower-case string returned as the second value of `nil, reason`; in the history store it is the numeric value. The order is fixed: new codes are added at the end.
+One list for every refusal in BadgeOS. In C it is `vk_reason_t` (`src/vk/wallet/pure/vk_reason.h`); in Lua it is the lower-case string returned as the second value of `nil, reason`; in the history store it is the numeric value. The order is fixed: new codes are added at the end.
 
 | # | C | Lua string | Meaning | Where it appears |
 |---|---|---|---|---|
@@ -62,14 +62,19 @@ Decoder errors (`sol_tx_err_t`, [solana-payments](../wallet/solana-payments.md#d
 | Consent | the user's one-time approval of an app's sensitive permissions |
 | Dev profile | the build with test hooks and the hold-to-sign override; never flashed on a judge badge |
 | Feature | a self-contained folder under `src/vk/features/` |
-| Hook | a single marked line in an upstream file that calls into `src/vk/` |
+| BadgeOS | this firmware: a fork of Solana OS with its own shell, wallet core and app platform. One word; `BADGEOS` in a screen header |
+| Hook | a single marked line in an upstream file that calls into `src/vk/` or changes one upstream value |
 | Issuer | the key that signs registry records; the backend's registry authority |
 | Listener | the backend's badge-facing HTTP port on the hotspot |
 | Presence | proof, by a fresh signed answer within a deadline, that the payee's key holder is in range now |
 | Provisioned | all required config keys are set and committed |
 | Record | the issuer-signed statement of who a device key belongs to and which token account is theirs |
-| Registry (code) | a self-registering list of rows of one kind (domains, routes, services, ...) |
+| Registry (code) | a self-registering list of rows of one kind (domains, routes, services, settings pages, ...) |
+| Replaced file | an upstream file the fork deletes, rewrites or edits as a whole; listed in [upstream-hooks](../architecture/upstream-hooks.md#replaced-upstream-files) |
 | Request (REQ) | a payee's signed "pay me" frame |
+| Screen name | the shell's current screen as `VKSTATE.screen` reports it (`launcher`, `settings`, `wifi`, ...); empty while an app runs |
+| Settings page | one row of the Settings list and, usually, the screen it opens; one file under `src/vk/shell/pages/`, registered with `VK_SETTINGS_PAGE` or `VK_SETTINGS_ACTION` |
 | Severity | green, amber or red |
-| Upstream | Solana OS at commit `812b8c7` |
+| Shell | BadgeOS's own user interface outside apps and the approval: boot screen, launcher, settings, dialogs (`src/vk/shell/`, [shell](../ui/shell.md)). It replaces upstream's shell |
+| Upstream | Solana OS at commit `812b8c7`, by spacemandev: the firmware BadgeOS is forked from |
 | Verdict | the output of the check chain: severity, select rule, headline, reason |

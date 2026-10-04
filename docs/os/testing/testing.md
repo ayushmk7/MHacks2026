@@ -59,15 +59,16 @@ Dev profile only (`VK_TEST_HOOKS`), in `src/vk/features/devtools/`. They let a s
 {"app":"pay","native":false,"modal":true,"phase":"ARMED","severity":"amber","select":"hold",
  "title":"Pay","headline":"VERIFIED - NOT PRESENT","big":"10.00 HACK","sub":"to MHacks Merch",
  "lines":[["Account","2awX..6wrr"],["Kind","merchant"]],"red_reason":"ok","dev_override":false,
- "provisioned":true,"time":"sntp","notes":0,"poll":"pending","heap":182344}
+ "provisioned":true,"time":"sntp","notes":0,"poll":"pending","heap":182344,"screen":""}
 ```
 
 Details the table leaves open, fixed in WP03:
 
 - **Replies.** A dev command with bad arguments answers `ERR usage`. `VKSHOT` with no framebuffer answers `ERR no_canvas`.
-- **`VKSHOT`** is the one command with two `OK` lines (`OK shot …` and `OK end …`); the tool treats it as a special case and retries up to three times on a CRC or decode failure. The CRC is the zlib CRC-32 of the decoded framebuffer (153,600 bytes), as 8 lower-case hex digits. Pixels are read with `canvas.readPixel()`, so they are true RGB565 whatever the sprite's byte order. Measured on the badge at 115200 baud: 1.0 s for the launcher, 0.6 s for the `hello` app's screen; the main loop is blocked for that long. Its reply lines go through upstream's log, so one `VKSHOT` overwrites the 64-line log ring that Settings → Console and `/api/logs` show.
+- **`VKSHOT`** is the one command with two `OK` lines (`OK shot …` and `OK end …`); the tool treats it as a special case and retries up to three times on a CRC or decode failure. The CRC is the zlib CRC-32 of the decoded framebuffer (153,600 bytes), as 8 lower-case hex digits. Pixels are read with `canvas.readPixel()`, so they are true RGB565 whatever the sprite's byte order. Measured on the badge at 115200 baud, before the shell rewrite: 1.0 s for upstream's launcher, 0.6 s for upstream's `hello` sample; the main loop is blocked for that long. Its reply lines go through upstream's log, so one `VKSHOT` overwrites the 64-line log ring that Settings → Console and `/api/logs` show.
 - **`VKSTATE` with no approval open:** `modal` false, `phase` `IDLE`, empty strings for `severity`, `select`, `title`, `headline`, `big` and `sub`, `lines` `[]`, `red_reason` `ok`.
 - **`VKSTATE.select`** is the rule in force, not the request's raw field: a red request shows `disabled`, or `hold` when the dev override applies.
+- **`VKSTATE.screen`** is the shell's current screen, from `::shell::screenName()` ([shell](../ui/shell.md#framework)). It is empty while an app runs (`app` is then not empty). The names: `launcher`, `app_delete`, `settings`, `wifi`, `bluetooth`, `espnow`, `push`, `store`, `identity`, `identity_new`, `display`, `leds`, `info`, `console`, `app_error`, `offer`, `installing`. An approval open over the shell leaves `screen` as it was and sets `modal`. The Settings rows Theme, Wallet and Inbox act in place or launch an app, so they never appear as a screen name. **Tests use `screen` to know where they are**, never a screenshot comparison: `app == "" and screen == "launcher"` is what "the badge is on the launcher" means in every test.
 - **Stubs.** `VKTIME` and `VKNOTE` call `vk::clock::devSet` and `vk::host::notify::post`; `time` and `notes` become real when WP20 and WP32 land.
 
 `poll` comes from `approval::peekResult()`, so reading the state never consumes a result. Tests assert on `VKSTATE` (exact strings) and use `VKSHOT` only to check that something is visibly drawn or to keep a picture for a person to look at.
@@ -98,7 +99,7 @@ How the tool holds the port, confirmed on the badge in WP01: it opens the port w
 
 Serial push rules, from upstream's protocol: every command is answered by exactly one `OK` or `ERR` line, mixed in with `[tag]` log lines, so wait for it before sending the next; send at most 180 raw bytes per `DATA` line; `AUTH` again before each file and after any `RUN` (upstream drops the session whenever an app stops or a launch fails); a file is limited to 96 KB.
 
-A scripted device test is a Python file with `def run(badge):` that uses `badge.cmd()`, `badge.state()`, `badge.btn()`, `badge.shot()`, `badge.wait_state(predicate, timeout)` and plain `assert`. Tests live in `os/test/device/`, one file per group below. The full `badge` API and the helpers in `test/device/common.py` are listed in the [execution plan](../roadmap/execution-plan.md#52-device-test-api-owner-1d). A launcher with no installed app has one row, so `t_boot.py` falls back to CANCEL (which opens Settings) when DOWN changes nothing on the screen.
+A scripted device test is a Python file with `def run(badge):` that uses `badge.cmd()`, `badge.state()`, `badge.btn()`, `badge.shot()`, `badge.wait_state(predicate, timeout)` and plain `assert`. Tests live in `os/test/device/`, one file per group below. The full `badge` API and the helpers in `test/device/common.py` are listed in the [execution plan](../roadmap/execution-plan.md#52-device-test-api-owner-1d). Helpers that changed with the BadgeOS shell: `common.to_launcher(badge)` closes an open approval, stops a running app, and then taps CANCEL until `screen == "launcher"` (at most six taps; CANCEL leaves `app_error`, `app_delete`, every settings page and Settings itself, and it declines an offer); `common.launch(badge, id)` is unchanged. Upstream's sample apps are deleted, so a test that needs "any app" uses `hello_native` or pushes a fixture from `fixtures.py`. `t_boot.py` checks navigation by state: DOWN on the launcher keeps `screen == "launcher"`, CANCEL gives `settings`, CANCEL again gives `launcher`.
 
 The unattended loop for an agent: edit → `scripts/build.sh dev --upload <port>` → `vkdev.py wait-ready` → `vkdev.py test ...` → read the result and the log → repeat.
 
@@ -112,9 +113,26 @@ The unattended loop for an agent: edit → `scripts/build.sh dev --upload <port>
 |---|---|---|---|
 | T-BOOT1 | flash, `wait-ready`, `PING` | `[os] ready` within 30 s; `OK pong`; the log has the `[vk] registries:` line with a non-zero count for every registry the build contains | auto |
 | T-BOOT3 | `VKINFO` | answers; `selfcheck=1`; `key` is `se050` or `software` | auto |
-| T-BOOT2 | unprovisioned badge: `VKSTATE` in the launcher | status item `SETUP` present (`shot` shows it); `provisioned` false | auto |
-| T-LED1 | watch the LEDs during boot | LEDs fill in order as stages complete; all lit at "Ready" | hands |
+| T-BOOT2 | unprovisioned badge: `VKSTATE` on the launcher | `screen` is `launcher`; `provisioned` false; the launcher's balance row reads `SETUP NEEDED` (kept as a screenshot for a person: `shot`) | auto |
+| T-LED1 | watch the LEDs and the screen during boot | no splash image; the Receipt boot screen from the first frame; LEDs fill in order as stages complete; all lit at "Ready" | hands |
 | T-HOOK1 | launch an app, exit, launch a second ESP-NOW app, send it a frame from another badge | the second app receives it (upstream finding F1 fixed) | 2 |
+
+### Shell and names
+
+Files `t_shell.py` (launcher, dialogs), `t_pages1.py` and `t_pages2.py` (settings pages). Each runs once per theme (`VKSET theme receipt-light`, then `receipt-dark`). The screens are specified in [shell](../ui/shell.md#tests).
+
+| Id | Procedure | Pass | How |
+|---|---|---|---|
+| T-SHELL1 | `reset`, `wait-ready`, `VKSTATE` (no autostart app set) | `app` empty, `native` false, `screen` is `launcher`; the boot log has every stage and no `splash` line | auto |
+| T-SHELL2 | from the launcher: CANCEL, then for each Settings row DOWN to it and SELECT; CANCEL back | `screen` is `settings`, then the page's name for every page (`wifi`, `bluetooth`, `espnow`, `push`, `store`, `identity` and from it `identity_new`, `display`, `leds`, `info`, `console`); Theme changes `VKGET theme` and stays on `settings`; Wallet and Inbox give `app` `wallet_settings` and `inbox`; one screenshot per screen and theme saved as `os/test/device/shots/shell_<screen>_<theme>.png`, none uniform | auto |
+| T-SHELL3 | launch `hello_native` and tap CANCEL; push a fixture whose `main.lua` calls `error()` and run it; launch an app and hold CANCEL 1.7 s | `launcher`; `app_error` (then CANCEL gives `launcher`, and SELECT relaunches the fixture); `launcher` | auto |
+| T-SHELL4 | push a fixture app, select it on the launcher, hold RIGHT 900 ms; CANCEL; hold RIGHT again and SELECT. Then hold RIGHT on a native app's row | `app_delete`; CANCEL keeps the app (`LIST` still has it); SELECT removes it and returns to `launcher`; on a native app the screen stays `launcher` | auto |
+| T-SHELL5 | a short RIGHT tap, LEFT tap, DOWN and UP on the launcher | the selection moves by column and by row (screenshots differ) and `screen` stays `launcher` | auto |
+| T-SHELL6 | `VKDEMOAPPROVE green` while a settings page is showing; CANCEL | `modal` true with `screen` unchanged; after it closes the page is drawn again (screenshot equals the one taken before) | auto |
+| T-BRAND1 | the name grep of [upstream-hooks](../architecture/upstream-hooks.md#checking-the-hooks) (pre-flash check 7); the serial banner after a reset; `AUTH` then `INFO` | the grep prints nothing; the banner line reads `#  BadgeOS <version>`; `INFO` answers `OK BadgeOS …` | auto |
+| T-BRAND2 | browse to the badge's web page; scan for its hotspot; read a second badge's radar | the page is titled BadgeOS in Receipt colours; nothing visible says Solana | hands |
+
+The app-store offer and installing screens need a broker, which no deployment has: they are checked by reading the code against [shell](../ui/shell.md#app-store-offer) and stay untested on a badge.
 
 ### Config
 
@@ -164,7 +182,7 @@ T-CHK2 to T-CHK9 run offline on one badge (`t_chk.py`): `checktest` passes a pre
 | T-REQ2 | A: `challenge`; poll `presence` | `present` within `presence_ms` | 2 |
 | T-REQ3 | a third badge (or A itself) replays B's REQ bytes; A challenges the replayer's MAC | `presence` stays `pending` then the approval is amber | 2 |
 | T-REQ4 | send B nine CHALs for one request | at most `req_max_proofs` PROOFs come back | 2 |
-| T-REQ5 | request seen while the launcher is showing | notification appears (`notes` ≥ 1, status bar shows `[1]`); the Inbox entry names the app in `pay_app` | 2 |
+| T-REQ5 | request seen while the launcher is showing | notification appears (`notes` ≥ 1, the launcher's `inbox` row shows `1` as its value); the Inbox entry names the app in `pay_app` | 2 |
 | T-REQ6 | during an approval on badge A, a BLE central sends a line to an app that called `badge.ble.listen()`, and `RUN other` is sent over serial | the app's `on_ble` does not run and `other` starts only after the approval closes | auto |
 
 ### Apps and permissions
@@ -174,7 +192,7 @@ T-CHK2 to T-CHK9 run offline on one badge (`t_chk.py`): `checktest` passes a pre
 | T-APP1 | Lua app with no `sign` permission calls `wallet.begin_solana` | Lua error `permission 'sign' not granted` | auto |
 | T-APP2 | app with `permissions=sign`, first launch | consent confirmation; hold approves and the app starts; second launch has no prompt | auto |
 | T-APP3 | change that app's permissions line, push, launch | consent asked again | auto |
-| T-APP4 | app with `min_api=99` | refused with `needs a newer Badge OS` | auto |
+| T-APP4 | app with `min_api=99` | refused with `needs a newer BadgeOS`; `screen` is `app_error` | auto |
 | T-APP5 | launch `hello_native`, CANCEL, launch again | draws, exits, fresh state | auto |
 | T-APP6 | native app without `sign` calls `vk::wallet::begin` | `denied` | auto |
 | T-APP7 | app with `permissions=` empty uses `badge.http.get` | Lua error naming `net` | auto |
@@ -200,7 +218,7 @@ T-CHK2 to T-CHK9 run offline on one badge (`t_chk.py`): `checktest` passes a pre
 
 | Id | Procedure | Pass | How |
 |---|---|---|---|
-| T-REL1 | every screen of every shipped app: press CANCEL repeatedly | always returns to the launcher; hold CANCEL 1.5 s force-quits | hands |
+| T-REL1 | every screen of every shipped app and every shell screen: press CANCEL repeatedly | always returns to the launcher (`app` empty, `screen` `launcher`); hold CANCEL 1.5 s force-quits an app | hands (scripted in Batch 5 with `VKSTATE`) |
 | T-REL2 | release build: send each dev command | none is recognised | auto (`ERR` or silence) |
 | T-REL3 | the demo script end to end on the four labelled badges (release app set, which includes `evilgame`) | honest payment green and confirmed; impostor caught; evil game exposed; revoked merchant red | hands |
 
