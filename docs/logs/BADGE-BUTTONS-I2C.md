@@ -102,7 +102,7 @@ Each of these was checked with a code audit (four parallel audits) or an experim
 
 ## Firmware changes made (hardening)
 
-All in `temp_firmware/solana-os-settings-only/src/hal/badge_i2c.cpp`. Untracked (not committed), built and flashed on badge `5mG1mVHD`. They do **not** fix the stuck state, which looks like hardware; they make the firmware behave better on wedged-bus cases it *can* fix and keep retrying instead of giving up. Full detail: [2026-10-03-session-changes.md](2026-10-03-session-changes.md).
+All in `temp_firmware/solana-os-settings-only/src/hal/badge_i2c.cpp`. Untracked (not committed), built and flashed on badge `5mG1mVHD`. They do **not** fix the stuck state, which looks like hardware; they make the firmware behave better on wedged-bus cases it *can* fix and keep retrying instead of giving up. Full detail: [raiana-p1-test-harness-changes.md](raiana-p1-test-harness-changes.md).
 
 1. **Bring-up order matches the test kit** (`begin()`, lines 120-153): GT911 held in reset, Wire up, lines checked and `recover()` if not idle, GT911 booted on the live bus and addressed once (product ID read, 0x814E cleared), GT911 put back in reset if the bus is held afterwards. Recovery paths call `startWire()` (lines 48-51) only.
 2. **`recover()` tries the SE050 enable when SCL is held** (lines 191-246, SE050 branch 231-241): pulses GPIO8 low for 20 ms and logs `SCL held low - SE050 reset freed it / freed it, but it came back / did not free it`. In the stuck state it logs **did not free it**, consistent with the rail hypothesis.
