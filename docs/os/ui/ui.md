@@ -187,7 +187,7 @@ All from the graphics library (LovyanGFX), no font files to ship:
 | brand line "Badge OS" on the boot screen | `fonts::FreeSerifBoldItalic12pt7b` | |
 | stamp | `fonts::FreeSerifBold9pt7b` | |
 
-[UNVERIFIED] that these names exist in the installed LovyanGFX. Fallback: the numbered fonts `Font4` (amounts, 26 px) and `Font2` (titles), still monospace `Font0` for body.
+All five names exist in the installed LovyanGFX 1.2.32 (`lgfx_fonts.hpp`), as do `LGFX_Sprite::pushRotateZoom` and `textWidth`. If a later library version drops one, fall back to the numbered fonts `Font4` (amounts) and `Font2` (titles).
 
 ### The receipt kit
 
