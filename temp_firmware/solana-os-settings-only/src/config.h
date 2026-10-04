@@ -161,6 +161,21 @@ constexpr uint32_t SE050_IDENTITY_KEY_ID = 0xF0000001;
 #define IDENTITY_NVS_NAMESPACE "badgeid"
 
 // ============================================================================
+// Wallet dev stand-in (src/lua_sdk/lib_wallet.cpp) - replaced by A's wallet
+// ============================================================================
+// The pinned payment mint (00 §2). Default is the R6 fuzz set's TEST mint
+// (32 x 0x22), so `npm run r6 -- --mint 3JF3sEqM796hk5WFqA6EtmEwJQ9quALszsfJyvXNQKy3`
+// runs with no devnet. Set it to .env HACK_MINT before flashing for an R3 run.
+#define VK_HACK_MINT "3JF3sEqM796hk5WFqA6EtmEwJQ9quALszsfJyvXNQKy3"
+constexpr uint8_t  VK_HACK_DECIMALS = 2;
+// The stand-in checks no registry record, REQ or presence, so every approval is
+// "unverified". 1 = dev build: SELECT still signs, under a DEV BUILD banner.
+// 0 = begin_* refuse with "unverified". Never flash judge badges with 1.
+#define VK_DEV_ALLOW_UNVERIFIED 1
+// 00 §4: below the ~60-90 s blockhash lifetime.
+constexpr uint32_t VK_APPROVAL_TIMEOUT_MS = 45000;
+
+// ============================================================================
 // App-store broker - see broker/PROTOCOL.md
 // ============================================================================
 // Defaults to the official Solana DEF CON broker. Its Let's Encrypt trust

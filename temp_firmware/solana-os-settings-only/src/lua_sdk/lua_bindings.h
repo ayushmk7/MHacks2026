@@ -34,6 +34,8 @@ void openSensors(lua_State *L);
 void openNet(lua_State *L);
 void openEspnow(lua_State *L);
 void openBle(lua_State *L);
+void openWallet(lua_State *L);  // dev stand-in for A's wallet, see lib_wallet.cpp
+void openCodec(lua_State *L);   // BadgeOS-compatible badge.codec, see lib_codec.cpp
 
 // -- Shared helpers ----------------------------------------------------------
 // An integer constant exposed on a module table. Terminate arrays with {nullptr, 0}.

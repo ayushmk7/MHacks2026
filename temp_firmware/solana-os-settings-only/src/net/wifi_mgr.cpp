@@ -2,6 +2,7 @@
 
 #include <WiFi.h>
 #include <esp_eap_client.h>
+#include <esp_sntp.h>
 #include <time.h>
 
 #include "../badge_log.h"
@@ -19,6 +20,14 @@ bool sScanning = false;
 int sScanResults = 0;
 uint32_t sConnectStartedAt = 0;
 uint32_t sLastChannel = 0;
+
+// Why the last join attempt failed, from the driver's STA_DISCONNECTED event
+// (0 = no failure since the last connect). Without it every failure - wrong
+// password, network out of range, RADIUS rejecting the login - showed up as the
+// same endless "connecting". Written on the Wi-Fi event task, read and logged
+// from update() on the main loop.
+volatile uint8_t sLastReason = 0;
+uint8_t sLoggedReason = 0;
 
 // The EAP CA certificate PEM, kept alive for the whole lifetime of the
 // association. esp_eap_client_set_ca_cert() (reached via WiFi.begin's
@@ -72,6 +81,25 @@ void seedClockFromBuild() {
   badge_log::tagf("wifi", "clock seeded from build date (%s)", __DATE__);
 }
 
+// SNTP. The build-date seed above is only good enough for TLS; anything that
+// compares against real time (payment expiry, the R2 probe's clock row) needs
+// the network clock. Started on the first successful join and left running:
+// lwIP keeps polling across reconnects. sTimeSynced is set from the lwIP task
+// by the sync callback and only ever goes false -> true.
+volatile bool sTimeSynced = false;
+volatile bool sTimeSyncLogged = false;
+
+void onTimeSync(struct timeval *) { sTimeSynced = true; }
+
+void startSntp() {
+  static bool started = false;
+  if (started) return;
+  started = true;
+  sntp_set_time_sync_notification_cb(onTimeSync);
+  configTime(0, 0, "pool.ntp.org", "time.google.com", "time.cloudflare.com");
+  badge_log::tagf("wifi", "SNTP started");
+}
+
 // Clears any EAP state left over from a previous association. Without this a
 // PSK network attempted after an enterprise one still carries the old EAP
 // config and fails to associate for no visible reason.
@@ -84,10 +112,30 @@ void clearEnterpriseState() {
   esp_eap_client_set_ca_cert(nullptr, 0);
   sCaCertPem = "";
 
-  if (!sEnterpriseActive) return;
+  // Unconditional: the driver can still have enterprise mode on when our flag
+  // says otherwise, and a PSK join on top of it fails with no useful reason.
   esp_wifi_sta_enterprise_disable();
   esp_eap_client_set_domain_name(nullptr);
   sEnterpriseActive = false;
+}
+
+// Short enough for the Settings row. Codes from esp_wifi_types_generic.h.
+const char *reasonText(uint8_t reason) {
+  switch (reason) {
+    case WIFI_REASON_AUTH_EXPIRE:
+    case WIFI_REASON_AUTH_FAIL: return "auth failed";
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_HANDSHAKE_TIMEOUT: return "wrong password?";
+    case WIFI_REASON_802_1X_AUTH_FAILED: return "login rejected (802.1X)";
+    case WIFI_REASON_NO_AP_FOUND: return "network not found";
+    case WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY: return "security unsupported";
+    case WIFI_REASON_NO_AP_FOUND_IN_AUTHMODE_THRESHOLD: return "security too weak";
+    case WIFI_REASON_NO_AP_FOUND_IN_RSSI_THRESHOLD: return "signal too weak";
+    case WIFI_REASON_ASSOC_FAIL: return "association failed";
+    case WIFI_REASON_BEACON_TIMEOUT: return "lost the network";
+    case WIFI_REASON_CONNECTION_FAIL: return "connection failed";
+    default: return "join failed";
+  }
 }
 
 }  // namespace
@@ -124,6 +172,9 @@ esp_eap_ttls_phase2_types ttlsPhase2FromString(const String &text) {
 
 void begin() {
   WiFi.persistent(false);  // we keep credentials in our own NVS namespace
+  WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) {
+    sLastReason = info.wifi_sta_disconnected.reason;
+  }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
   WiFi.setHostname(settings::deviceName().c_str());
   WiFi.mode(WIFI_OFF);
   sMode = Mode::Off;
@@ -152,6 +203,7 @@ bool connect(const String &ssid, const String &password, bool save) {
   WiFi.mode(WIFI_STA);
   WiFi.setHostname(settings::deviceName().c_str());
   clearEnterpriseState();
+  sLastReason = sLoggedReason = 0;
   WiFi.begin(ssid.c_str(), password.length() ? password.c_str() : nullptr);
 
   sMode = Mode::Station;
@@ -225,11 +277,19 @@ bool connectEnterprise(const String &ssid, const Enterprise &config, bool save) 
 
   // The const char* overload, so an unset CA can be passed as nullptr - the
   // String overload would hand the driver a zero-length certificate instead.
-  const bool started = WiFi.begin(ssid.c_str(), (wpa2_auth_method_t)config.method,
-                                  identity.c_str(), config.username.c_str(),
-                                  config.password.c_str(),
-                                  sCaCertPem.length() ? sCaCertPem.c_str() : nullptr,
-                                  nullptr, nullptr, ttlsPhase2) != WL_CONNECT_FAILED;
+  //
+  // STA.connect() rather than WiFi.begin(): begin() returns STA.status(), and
+  // after a failed login that is still the previous attempt's WL_CONNECT_FAILED
+  // even when this attempt started fine. Reading that as "could not be started"
+  // wiped the CA mid-handshake and never saved the profile, so one bad attempt
+  // broke every retry until reboot.
+  sLastReason = sLoggedReason = 0;
+  const bool started =
+      WiFi.STA.begin() &&
+      WiFi.STA.connect(ssid.c_str(), (wpa2_auth_method_t)config.method, identity.c_str(),
+                       config.username.c_str(), config.password.c_str(),
+                       sCaCertPem.length() ? sCaCertPem.c_str() : nullptr, nullptr, nullptr,
+                       ttlsPhase2);
   if (!started) {
     badge_log::tagf("wifi", "enterprise association could not be started");
     clearEnterpriseState();  // drop the CA we just staged
@@ -300,18 +360,35 @@ void update() {
     }
   }
 
+  if (sTimeSynced && !sTimeSyncLogged) {
+    sTimeSyncLogged = true;
+    char text[24];
+    const time_t now = time(nullptr);
+    strftime(text, sizeof(text), "%Y-%m-%d %H:%M:%S", gmtime(&now));
+    badge_log::tagf("wifi", "clock set by SNTP: %s UTC", text);
+  }
+
   if (sMode == Mode::Station) {
     static bool wasConnected = false;
     const bool now = WiFi.status() == WL_CONNECTED;
     if (now && !wasConnected) {
+      sLastReason = sLoggedReason = 0;
       noteChannelChange();
       badge_log::tagf("wifi", "connected, ip %s rssi %d channel %u",
                       WiFi.localIP().toString().c_str(), WiFi.RSSI(),
                       (unsigned)WiFi.channel());
+      startSntp();
     } else if (!now && wasConnected) {
       badge_log::tagf("wifi", "link lost");
     }
     wasConnected = now;
+
+    const uint8_t reason = sLastReason;
+    if (!now && reason && reason != sLoggedReason) {
+      sLoggedReason = reason;
+      badge_log::tagf("wifi", "join failed: %s (reason %u)", reasonText(reason),
+                      (unsigned)reason);
+    }
 
     if (!now && sConnectStartedAt && (millis() - sConnectStartedAt) > CONNECT_TIMEOUT_MS) {
       sConnectStartedAt = 0;
@@ -321,6 +398,9 @@ void update() {
 }
 
 Mode mode() { return sMode; }
+uint8_t lastReason() { return sLastReason; }
+bool timeSynced() { return sTimeSynced; }
+
 bool connected() {
   if (sMode == Mode::AccessPoint) return true;
   return sMode == Mode::Station && WiFi.status() == WL_CONNECTED;
@@ -331,8 +411,11 @@ const char *statusText() {
     case Mode::Off: return "off";
     case Mode::AccessPoint: return "hotspot";
     case Mode::Station:
+      if (WiFi.status() == WL_CONNECTED) return "connected";
+      // The driver keeps retrying and reports "disconnected" throughout, so the
+      // last failure reason is the only thing that says what is going wrong.
+      if (sLastReason) return reasonText(sLastReason);
       switch (WiFi.status()) {
-        case WL_CONNECTED: return "connected";
         case WL_NO_SSID_AVAIL: return "no such network";
         case WL_CONNECT_FAILED: return "auth failed";
         case WL_IDLE_STATUS: return "idle";

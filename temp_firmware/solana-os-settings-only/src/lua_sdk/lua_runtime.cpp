@@ -13,6 +13,7 @@
 #include "../net/ble_mgr.h"
 #include "../net/espnow_mgr.h"
 #include "lua_bindings.h"
+#include "wallet_approval.h"
 
 extern "C" {
 #include "../lua/lauxlib.h"
@@ -298,6 +299,9 @@ void stop() {
   // blocked inside a binding.
   ble_bridge::reset();
 
+  // An approval left open would keep the next app's screen and buttons.
+  wallet_approval::reset();
+
   // Peripherals an app may have claimed. This belongs here rather than in the
   // main loop's app-exited branch, because an app that hands over with
   // system.launch() never passes through that branch - and leaving the I2S DMA
@@ -368,6 +372,13 @@ bool update() {
     return false;
   }
 
+  // The wallet's approval screen owns the display while it is up; the app keeps
+  // its on_update so it can poll() for the result.
+  if (wallet_approval::active()) {
+    wallet_approval::draw();
+    return true;
+  }
+
   if (!callGlobal("on_draw", 0, LUA_CALLBACK_BUDGET_MS)) {
     failApp();
     return false;
@@ -378,6 +389,10 @@ bool update() {
 
 void dispatchButton(uint8_t key, bool pressed) {
   if (sState == nullptr) return;
+  if (wallet_approval::active()) {
+    wallet_approval::button(key, pressed);
+    return;
+  }
   lua_pushstring(sState, buttons::shortName(key));
   lua_pushboolean(sState, pressed);
   if (!callGlobal("on_button", 2, LUA_CALLBACK_BUDGET_MS)) failApp();

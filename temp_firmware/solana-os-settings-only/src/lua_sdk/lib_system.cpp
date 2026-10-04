@@ -15,6 +15,7 @@
 
 #include "../apps/app_store.h"
 #include "../hal/display.h"
+#include "../net/wifi_mgr.h"
 #include "../settings.h"
 #include "lua_bindings.h"
 #include "lua_runtime.h"
@@ -192,6 +193,12 @@ int l_random_bytes(lua_State *L) {
   return 1;
 }
 
+// True once SNTP has set the clock; os.time() is only real time after that.
+int l_time_ok(lua_State *L) {
+  lua_pushboolean(L, wifi_mgr::timeSynced());
+  return 1;
+}
+
 const luaL_Reg FUNCTIONS[] = {
     {"millis", l_millis},   {"uptime", l_uptime},   {"sleep", l_sleep},
     {"heap", l_heap},       {"psram", l_psram},     {"lua_memory", l_lua_memory},
@@ -199,14 +206,15 @@ const luaL_Reg FUNCTIONS[] = {
     {"exit", l_exit},       {"launch", l_launch},   {"apps", l_apps},
     {"current_app", l_current_app},
     {"random_bytes", l_random_bytes},
+    {"time_ok", l_time_ok},
     {nullptr, nullptr},
 };
 
 // -- The curated `os` -------------------------------------------------------
 
 int os_time(lua_State *L) {
-  // No RTC and usually no NTP, so this is seconds since boot unless something
-  // has set the system clock. Documented as such.
+  // No RTC: seconds since boot, the build date once Wi-Fi joins, and real time
+  // only once SNTP has synced (badge.system.time_ok()). Documented as such.
   lua_pushinteger(L, (lua_Integer)time(nullptr));
   return 1;
 }

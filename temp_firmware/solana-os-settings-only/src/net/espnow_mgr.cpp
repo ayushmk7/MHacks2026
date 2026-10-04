@@ -1,4 +1,5 @@
 #include "espnow_mgr.h"
+#include "wifi_mgr.h"
 
 #include <WiFi.h>
 #include <esp_now.h>
@@ -165,9 +166,11 @@ bool begin(uint8_t channel) {
   // even when the badge is not joined to anything.
   if (WiFi.getMode() == WIFI_OFF) WiFi.mode(WIFI_STA);
 
-  // Only force the channel when we are not associated - an associated station
-  // cannot leave its AP's channel, and trying produces a confusing failure.
-  if (WiFi.status() != WL_CONNECTED) {
+  // Only force the channel when the station is idle - an associated station
+  // cannot leave its AP's channel, and one that is still joining (boot runs this
+  // straight after wifi_mgr's auto-connect) would be yanked off the channel it is
+  // scanning or handshaking on.
+  if (WiFi.status() != WL_CONNECTED && wifi_mgr::mode() != wifi_mgr::Mode::Station) {
     esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
   }
   sChannel = WiFi.channel() ? WiFi.channel() : channel;

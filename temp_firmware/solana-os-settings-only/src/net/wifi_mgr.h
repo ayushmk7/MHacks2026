@@ -77,7 +77,12 @@ void stop();
 
 Mode mode();
 bool connected();
+// True once SNTP has set the system clock since boot. Before that, time() is
+// seconds since boot or the build date (see seedClockFromBuild).
+bool timeSynced();
 const char *statusText();
+// Driver reason code for the last failed join (0 = none since the last attempt).
+uint8_t lastReason();
 
 String ssid();
 IPAddress ip();

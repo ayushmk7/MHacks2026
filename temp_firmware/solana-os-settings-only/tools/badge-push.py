@@ -212,7 +212,12 @@ class BleBadge:
         return self.loop.run_until_complete(self._exchange(line, expect_multi))
 
     def status(self):
-        return {"raw": self.command("INFO")}
+        out = {"raw": self.command("INFO")}
+        try:
+            out["wifi"] = self.command("WIFI")
+        except BadgeError:
+            pass
+        return out
 
     def apps(self):
         rows, _ = self.command("LIST", expect_multi=True)
@@ -242,7 +247,8 @@ class BleBadge:
         return self.command(f"DEL {app_id}")
 
     def logs(self):
-        raise BadgeError("logs are only available over HTTP")
+        rows, _ = self.command("LOGS", expect_multi=True)
+        return rows
 
     def certs(self):
         rows, _ = self.command("CERTS", expect_multi=True)
@@ -485,7 +491,7 @@ def main() -> int:
 
     sub.add_parser("list", help="list installed apps").set_defaults(handler=command_list)
     sub.add_parser("stop", help="return to the launcher").set_defaults(handler=command_stop)
-    sub.add_parser("logs", help="recent log lines (HTTP only)").set_defaults(handler=command_logs)
+    sub.add_parser("logs", help="recent log lines").set_defaults(handler=command_logs)
     sub.add_parser("status", help="device status").set_defaults(handler=command_status)
 
     run = sub.add_parser("run", help="launch an installed app")

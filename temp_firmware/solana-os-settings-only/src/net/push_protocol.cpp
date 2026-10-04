@@ -293,10 +293,23 @@ void handleLine(const String &line, const Reply &reply) {
 
   if (command == "WIFI") {
     char text[160];
-    snprintf(text, sizeof(text), "OK %s ssid=%s ip=%s rssi=%d%s", wifi_mgr::statusText(),
-             wifi_mgr::ssid().c_str(), wifi_mgr::ip().toString().c_str(), wifi_mgr::rssi(),
-             wifi_mgr::usingEnterprise() ? " enterprise" : "");
+    snprintf(text, sizeof(text), "OK %s ssid=%s ip=%s rssi=%d reason=%u%s",
+             wifi_mgr::statusText(), wifi_mgr::ssid().c_str(),
+             wifi_mgr::ip().toString().c_str(), wifi_mgr::rssi(),
+             (unsigned)wifi_mgr::lastReason(), wifi_mgr::usingEnterprise() ? " enterprise" : "");
     reply(String(text));
+    return;
+  }
+
+  // LOGS [n]: the last n ring-buffer lines (all of them by default), one '+' row
+  // each. The same log GET /api/logs serves, for when Wi-Fi is the thing that
+  // is broken and the serial port would reset the badge.
+  if (command == "LOGS") {
+    const size_t total = badge_log::lineCount();
+    const long wanted = nextToken(rest).toInt();
+    const size_t count = wanted > 0 && (size_t)wanted < total ? (size_t)wanted : total;
+    for (size_t i = total - count; i < total; ++i) reply("+ " + String(badge_log::line(i)));
+    reply("OK " + String((unsigned)count));
     return;
   }
 

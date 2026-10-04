@@ -71,6 +71,8 @@ void openBadge(lua_State *L) {
   openNet(L);
   openEspnow(L);
   openBle(L);
+  openWallet(L);
+  openCodec(L);
 
   // A copy at the top level as well, so `badge.millis()` and `badge.gfx` sit
   // side by side - the shortcuts people reach for constantly should not need a
