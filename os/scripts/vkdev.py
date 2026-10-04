@@ -427,6 +427,25 @@ class Badge:
             self._push_file(app_id, relative, data)
         return list(files)
 
+    def tidy(self):
+        """Deletes every installed app that is not a folder of os/apps/, so every badge lists the
+        same apps (test fixtures and hand-pushed apps are removed). Returns the ids deleted."""
+        shipped = {name for name in os.listdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "apps"))
+                   if os.path.isfile(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "apps", name, "app.ini"))}
+        self.stop()
+        self._auth()
+        listed = [line[2:].split()[0] for line in self.cmd("LIST", timeout=10) if line.startswith("+ ")]
+        extra = []
+        for app_id in listed:
+            if app_id in shipped:
+                continue
+            self._auth()
+            final = self.cmd("DEL %s" % app_id, timeout=10)[-1]
+            if final.startswith("OK"):
+                extra.append(app_id)
+            # anything else is a native app (compiled in, not a file): it is part of the firmware
+        return extra
+
     def _push_file(self, app_id, relative, data):
         self._auth()
         self.ok("BEGIN %s %s" % (app_id, relative), timeout=10)
@@ -611,6 +630,14 @@ def run_tests(files, open_badge, port2, include_deferred):
                     for line in tail:
                         print(line, file=sys.stderr)
         sys.stdout.flush()
+    # Fixtures the tests pushed are removed, so the launcher is the same on every badge afterwards.
+    for which, badge in sorted(badges.items()):
+        try:
+            removed = badge.tidy()
+            if removed:
+                print("tidy badge %d: removed %s" % (which, " ".join(removed)))
+        except Exception as exc:
+            print("tidy badge %d failed: %s" % (which, exc), file=sys.stderr)
     return failures
 
 
@@ -1510,6 +1537,8 @@ def build_parser():
     p = sub.add_parser("run", help="RUN <id>")
     p.add_argument("id")
     sub.add_parser("stop", help="STOP the running app")
+    sub.add_parser("tidy", help="delete every installed app that is not in os/apps/")
+    sub.add_parser("menu", help="print the launcher's top level (VKSTATE menu)")
     p = sub.add_parser("monitor", help="print the badge's log until interrupted")
     p.add_argument("--seconds", type=float, help="stop after this long")
     p = sub.add_parser("test", help="run scripted device tests")
@@ -1610,6 +1639,10 @@ def main(argv=None):
             badge.run(args.id)
         elif args.command == "stop":
             badge.stop()
+        elif args.command == "tidy":
+            print("removed: %s" % (" ".join(badge.tidy()) or "nothing"))
+        elif args.command == "menu":
+            print(" ".join(badge.state().get("menu", [])))
         elif args.command == "monitor":
             end = None if args.seconds is None else time.monotonic() + args.seconds
             while end is None or time.monotonic() < end:

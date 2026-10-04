@@ -138,7 +138,16 @@ From the laptop (any profile):
 
 ## Several badges
 
-Each badge needs steps 2 to 6 with its own port, its own `--badge-id` and label, and its own power cycle:
+**Rule: every badge shows the same launcher.** All badges get the same profile, the same firmware and exactly the apps of `os/apps/`, flashed together with `scripts/fleet.sh`. Never push an extra app by hand to a demo badge; a test run removes the fixtures it pushed (`vkdev.py test` ends with `tidy`), and `vkdev.py --port <p> tidy` removes anything else that is not in `os/apps/`. `vkdev.py --port <p> menu` prints a badge's launcher.
+
+```bash
+cd os
+scripts/fleet.sh release /dev/cu.usbserial-10 /dev/cu.usbserial-210 /dev/cu.usbserial-310 /dev/cu.usbserial-410
+```
+
+It builds once, flashes firmware and apps to every port in parallel, and (in the dev profile) fails if any two launchers differ. Then power-cycle every badge and provision each one (step 5).
+
+Without `fleet.sh`, each badge needs steps 2 to 6 with its own port, its own `--badge-id` and label, and its own power cycle:
 
 ```bash
 cd os
