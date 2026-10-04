@@ -1,0 +1,279 @@
+# App host
+
+What BadgeOS adds around apps: the manifest keys, permissions and first-run consent, the API version, the native runtime, notifications, and how Lua functions are registered. Files: `src/vk/host/`.
+
+Upstream already provides the Lua runtime, the sandbox (1 MB heap, 250 ms per callback), app push and the app-store client ([baseline](../architecture/upstream-baseline.md)). None of that is rewritten. The launcher and settings are BadgeOS's own shell ([shell](../ui/shell.md)).
+
+## Two kinds of app
+
+| | Lua app | Native app |
+|---|---|---|
+| Lives in | `/apps/<id>/` on the badge's filesystem (source in `os/apps/<id>/`) | `src/native_apps/<id>/`, compiled into the firmware |
+| Installed by | push over Wi-Fi, USB or BLE; the app store | reflashing |
+| Sandbox | memory cap, time budget, permissions | none; trusted code |
+| API | `badge.*` tables ([Lua API](lua-api.md)) | upstream C++ headers + `vk::` API through `badge_sdk.hpp` ([native apps](native-apps.md)) |
+| Manifest | `app.ini` | the `BADGE_APP(...)` line |
+| Consent prompt | yes, for sensitive permissions | no |
+
+Both appear in the same launcher grid, in the folder their manifest names (hook H11 puts the native apps in `app_store::count()`/`at()`; the launcher lists `vk::host::catalog`, [below](#launcher-and-install-keys)), are launched and stopped the same way, receive the same callbacks, and are paused the same way by the approval.
+
+| Callback | Lua global | Native `badge::App` method |
+|---|---|---|
+| once after load | `on_start()` | `on_start()` |
+| every frame | `on_update(dt)` then `on_draw()` | `on_update(float dt)` then `on_draw()` |
+| button edge | `on_button(key, pressed)` | `on_button(uint8_t key, bool pressed)` |
+| ESP-NOW frame | `on_espnow(mac, data, rssi)` | `on_espnow(const uint8_t mac[6], const uint8_t *data, size_t len, int8_t rssi)` |
+| BLE line | `on_ble(line)` | not available (a native app that needs BLE uses upstream's `ble_mgr` directly and clears its handler in `on_stop`) |
+| before stop | `on_stop()` | `on_stop()` |
+
+Holding CANCEL for 1.5 s force-quits any app (upstream `APP_ESCAPE_HOLD_MS`).
+
+## Manifest
+
+`app.ini`, `key=value` per line. Upstream keys: `name`, `version`, `author`, `description`, `entry`. BadgeOS adds two that the launch checks, read by our own parser (upstream's `Info` struct is not changed), and the launcher and install keys [below](#launcher-and-install-keys):
+
+| Key | Form | Default | Meaning |
+|---|---|---|---|
+| `permissions` | comma-separated permission names | (empty) | what the app may use |
+| `min_api` | integer | 1 | lowest `badge.api_version` the app works with |
+
+```ini
+name=Pay
+version=1.0.0
+author=team
+description=Pay a nearby badge
+permissions=sign,net,espnow
+min_api=2
+```
+
+```cpp
+// src/vk/host/manifest.h
+namespace vk::host::manifest {
+struct Extra { String permissions; uint32_t min_api = 1; };
+bool load(const String &appId, Extra &out);     // reads /apps/<id>/app.ini via app_store::readFile
+bool parse(const String &iniText, Extra &out);  // the pure parser behind load(); what the host suite tests
+}
+```
+
+How the two keys are read:
+
+- A missing `app.ini` is not an error: the app gets the defaults (no permissions, `min_api` 1) and `load()` returns true.
+- Comment lines, unknown keys and spaces around keys and values are ignored. Spaces around a permission name and empty items in the list (`sign,,net`) are dropped; a name listed twice counts once.
+- A `min_api` that is not decimal digits makes `load()` return false, and the launch is refused with `bad min_api in app.ini`.
+
+### Launcher and install keys
+
+Optional keys that say where an app is listed and how it is installed. Nothing about them is in C++ or in a script: a folder on the launcher exists because an app names it.
+
+| Key | Form | Default | Read by | Meaning |
+|---|---|---|---|---|
+| `category` | `[a-z0-9_-]`, 1 to 16 characters (any case; stored lower case) | none | firmware | the launcher folder the app is listed in; the folder's label is the name in capitals. Any other value counts as none |
+| `hidden` | `1` or `true` | `0` | firmware | not listed on the launcher, nor by `badge.system.launcher_apps()` (Home's menu); it still starts over serial (`RUN`), from Settings and with `badge.system.launch()`. Test fixtures, and apps reached from Settings |
+| `count` | `notes` | none | firmware | the launcher shows the number of waiting notifications on the app's cell (the Inbox) |
+| `profile` | `dev` | (both) | `scripts/push-apps.sh` | `release` does not install the app |
+| `include` | an app id | none | `scripts/push-apps.sh` | that app's files are pushed with this one, except its `config.lua` and `app.ini` and any file this app has itself ([installing](../guides/build-flash-provision.md#installing-apps)) |
+
+A native app has no `app.ini`: the same keys are the optional last argument of its `BADGE_APP` line, separated by `;` ([native apps](native-apps.md#the-sdk-header)):
+
+```cpp
+BADGE_APP(SelfTest, "selftest", "Self test", "1.0.0", "", "category=tests");
+BADGE_APP(Inbox, "inbox", "Inbox", "1.0.0", "", "count=notes");
+```
+
+A native app compiled only in the dev profile wraps its file in `#if VK_PROFILE_DEV` (`src/vk/vk_build.h`); `profile` and `include` mean nothing for it.
+
+`src/vk/host/manifest.h` declares the parser, `struct Launcher { String category; bool hidden; bool countNotes; }` with `parseLauncher(text, out)` (pure, host-tested) and `loadLauncher(id, out)`. `src/vk/host/catalog.{h,cpp}` builds from them the list the launcher shows: every app of `app_store` (Lua apps in upstream's order, then the native ones by id), hidden ones left out, each with its category. It reads every `app.ini` once and again only after `app_store::refresh()` has rescanned `/apps` (hook [H25](../architecture/upstream-hooks.md#h25--launcher-catalogue-after-a-rescan)), so moving an app to another folder needs only a new `app.ini`. The same list is `badge.system.launcher_apps()` for Lua ([Lua API](lua-api.md#badgesystemlauncher_apps)).
+
+## Permissions
+
+A permission is a registered name. Everything an app can do beyond drawing, input, LEDs and reading the badge's public identity is behind one.
+
+```cpp
+// src/vk/host/permissions.h
+namespace vk::host {
+struct Permission : Registered<Permission> {
+  const char *name;             // as written in app.ini
+  const char *label;            // shown to the user: "request payments"
+  bool consent;                 // true: the user must approve on first launch
+  const char *upstream_tables;  // comma-separated upstream badge.<table> names this gates, or nullptr
+  Permission(const char *n, const char *l, bool c, const char *t) : name(n), label(l), consent(c), upstream_tables(t) {}
+};
+#define VK_PERMISSION(ident, name, label, consent, upstream_tables) \
+  static vk::host::Permission vk_permission_##ident(name, label, consent, upstream_tables)
+
+bool granted(const char *permission);                  // for the active app; true when no app is active (firmware callers)
+bool preLaunch(const String &appId, String &error);    // hook H8a
+void promotePending();                                 // pending grant slot -> active; called by vk::lua::open and native::start
+}
+```
+
+| Permission | Label | Consent | Gates | Registered in |
+|---|---|---|---|---|
+| `sign` | request payments | **yes** | `wallet.begin*`, `poll`, `check_record`, `build_transfer`, `wire_tx`, `requests`, `challenge`, `presence` | `host/permissions.cpp` |
+| `request` | ask others to pay this badge | **yes** | `wallet.request_*` | `features/requests` |
+| `contacts` | read and add contacts | no | `wallet.contact_*`, `wallet.contacts` | `features/contacts` |
+| `history` | read payment history | no | `wallet.history` | `features/history` |
+| `net` | use the network | no | upstream `badge.wifi`, `badge.http` | `host/permissions.cpp` |
+| `espnow` | talk to nearby badges | no | upstream `badge.espnow`; delivery of `on_espnow` | `host/permissions.cpp` |
+| `ble` | use Bluetooth | no | upstream `badge.ble` | `host/permissions.cpp` |
+| `mic` | use the microphone | no | upstream `badge.mic` | `host/permissions.cpp` |
+| `storage` | store files | no | upstream `badge.storage` | `host/permissions.cpp` |
+
+Always available without a permission: `badge.gfx`, `badge.input`, `badge.led`, `badge.system`, `badge.battery`, `badge.se050`, `badge.codec`, `badge.theme`, and the identity functions of `badge.wallet` (`pubkey`, `address`, `key_location`, `time_ok`, `time`, `provisioned`, `tokens`, `config`, `balance`, `token_account`).
+
+How it is enforced:
+
+1. `preLaunch(appId)` reads the manifest: `app.ini` for a Lua app, the `BADGE_APP` line for a native app. An unknown permission name refuses the launch with `unknown permission: <name>` (a typo must not silently grant nothing), in a `BADGE_APP` list too. It also refuses an id longer than 32 characters. The granted set goes into a **pending** slot. Upstream's `launch()` then stops the old app (which clears the **active** slot), and only then builds the new Lua state: `vk::lua::open` (or `native::start`) promotes pending to active. `granted()` reads the active slot and never asks upstream which app is current (upstream sets that after the bindings are opened). A `preLaunch` that is not followed by a launch just leaves a pending slot that the next `preLaunch` overwrites.
+   - **A built-in app always wins.** If a pushed folder `/apps/<id>` has the id of a native app, the native app is launched and the folder is ignored: `preLaunch` logs `[vk] ignoring pushed app '<id>': the id belongs to a built-in app`. A pushed folder can therefore never replace or block `inbox`, `wallet_settings` or any other built-in app. The folder still shows as a second entry in the app list until it is deleted (`DEL <id>` removes the folder and leaves the native app).
+   - **While a native app object exists** (`native::active()`: from before its `on_start` until after its destructor), `granted()` answers from that app's `BADGE_APP` permissions, plus `espnow`, which native apps always have, whatever the slot holds. Hook H8b calls the stop listeners, which clear the active slot, before the app's `on_stop` and destructor run; without this rule those two would count as "no app" and be granted everything.
+   - The refusals, in the order they are checked: `app id is longer than 32 characters`; `bad min_api in app.ini`; `needs a newer BadgeOS (API <n>)`; `unknown permission: <name>`; `this app needs approval, and the approval screen is busy` (the consent confirmation could not be opened). `min_api` is checked before the permission names, so an app written for a newer OS gets the "newer" message and not a complaint about a permission this build does not know.
+   - Every refusal is logged as `[vk] launch of '<id>' refused: <error>`. Hook H8a shows the error on the error screen only when no app is running, and logs it only when one is, so without this line a test could not read it.
+2. `vk::lua::open(L)` (hook H7) builds the `badge` table for that app: a registered Lua function is installed only if its permission is granted; otherwise a stub is installed that raises `permission '<name>' not granted (add it to permissions= in app.ini)`. An upstream module table that is not granted is replaced by a table whose every access raises the same message.
+3. The router delivers `on_espnow` only with `espnow` ([protocol](../protocol/espnow.md#router)).
+4. The wallet core checks `granted(domain->permission)` again inside `begin()`; that check also covers native apps.
+
+An app with no `permissions=` line gets none. Upstream's sample apps are not shipped. Apps installed from upstream's app store arrive with an `app.ini` the firmware generates (name, version, author, description, entry only), so **a store app has no permissions**: it can draw, read buttons and drive the LEDs, and nothing else. That is the intended default for code from strangers.
+
+`vk::lua::open` also removes the Lua globals `loadfile` and `dofile`: upstream leaves them in, and they can open any path on the filesystem as a Lua chunk, which leaks whether a file exists (finding F13).
+
+### Consent
+
+A permission marked "consent" needs the user's approval the first time an app that requests it is launched, and again whenever the app's permission list changes.
+
+- Store: `/vk/consent.bin`, up to 32 entries of `app_id[33]` + `hash u32` (FNV-1a of the sorted permission list); format in [stores](../wallet/stores.md#consent). The oldest entry is replaced when full. It registers a `VK_ON_RESET` listener that erases it.
+- The hash is taken over the granted set (every registered name the app lists, each once, sorted, comma-joined), not only over the consent permissions: adding `net` to an app that already had `sign` asks again.
+- `preLaunch` finds no matching entry → raises a confirmation ([approval](../wallet/approval.md)): title `Allow app`, headline `NEW PERMISSIONS`, big = the app's name, one line per consent permission (`May` / the label) in `app.ini` order, at most four, amber, hold. It returns false with an empty error, so no error screen is shown. Upstream's main loop still runs its "app stopped" branch for a failed launch: the shell returns to the launcher (its cursor stays where it was) and any open push session is reset.
+- Approved → the entry is saved and the app is launched with `runtime::requestLaunch`. Rejected → nothing happens.
+- Approved but the file could not be written → that one launch is still allowed (the approval is kept in RAM for it), `[vk] consent for '<id>' could not be stored; allowed for this launch only` is logged, and the next launch asks again.
+- When a consent prompt is raised while another app is running, H8a logs an empty `[lua] ` line (the error is empty by design). Harmless.
+
+This covers every install path (push, serial, BLE, store) with no change to any of them. Native apps skip consent: they were reviewed and compiled in.
+
+```cpp
+// src/vk/host/consent.h
+namespace vk::host::consent {
+uint32_t hashPermissions(const String &permissions);   // FNV-1a of the sorted, comma-joined list: order in app.ini does not matter
+bool has(const String &appId, uint32_t hash);
+bool save(const String &appId, uint32_t hash);
+void eraseAll();                                       // the VK_ON_RESET listener
+size_t count();
+bool at(size_t index, String &appIdOut, uint32_t &hashOut);   // count() and at() let the Wallet app list stored consent
+}
+```
+
+The file is read once and kept in RAM (the Wallet app calls `count()` and `at()` on every repaint). Under `VK_HOST_TEST` the header also declares `hostReboot()`, which drops that copy so a suite can read the file again.
+
+## Lifecycle events
+
+```cpp
+// src/vk/host/lifecycle.h
+namespace vk::host {
+struct AppStopListener : Registered<AppStopListener> {
+  void (*fn)(const char *appId);                 // appId may be "" (upstream calls stop() with no app running)
+  explicit AppStopListener(void (*f)(const char *)) : fn(f) {}
+};
+#define VK_ON_APP_STOP(ident, fn) static vk::host::AppStopListener vk_on_app_stop_##ident(fn)
+
+void onAppStopping(const String &appId);         // hook H8b: calls every listener
+bool luaPaused();                                // hook H19: true while the approval is active
+}
+```
+
+Listeners: the approval engine (drops an approval or result owned by that app), the permissions module (clears the active grant slot), the requests feature (closes that app's open requests). A feature that holds anything on behalf of an app registers one.
+
+The listeners run **before** the app's own `on_stop` (hook H8b calls `onAppStopping` first), so whatever a listener releases is already gone while `on_stop` runs. Permissions are the one thing that must outlive it for a native app: see "How it is enforced", step 1.
+
+## API version
+
+`badge.api_version` is 2 (hook H16). `preLaunch` refuses an app whose `min_api` is higher with `needs a newer BadgeOS (API <n>)`. Bump `VK_API_VERSION` and H16 together when a Lua function is added; never change the meaning of an existing function.
+
+## Lua function registry
+
+```cpp
+// src/vk/host/lua_registry.h
+namespace vk::lua {
+struct LuaFunction : Registered<LuaFunction> {
+  const char *module;        // "wallet" -> badge.wallet
+  const char *name;          // "begin_solana"
+  const char *permission;    // nullptr = always available
+  lua_CFunction fn;
+  LuaFunction(const char *m, const char *n, const char *p, lua_CFunction f) : module(m), name(n), permission(p), fn(f) {}
+};
+#define VK_LUA_FUNCTION(ident, module, name, permission, fn) \
+  static vk::lua::LuaFunction vk_lua_##ident(module, name, permission, fn)
+
+void open(lua_State *L);       // hook H7; `badge` is on top of the stack and stays there
+}
+```
+
+A feature adds a Lua function with one line next to its implementation; the module table is created on first use. Conventions for every binding: validate argument types with `luaL_check*`; return `nil, "<reason>"` for refusals ([reasons](../reference/reasons.md)); call `runtime::extendDeadline(ms)` before anything that can take longer than a few milliseconds.
+
+## Native runtime
+
+```cpp
+// src/vk/host/native.h
+namespace vk::host::native {
+size_t count();
+bool infoAt(size_t index, app_store::Info &out);       // for hook H11
+bool infoById(const String &id, app_store::Info &out);
+bool exists(const String &id);
+bool start(const String &id);     // constructs the app object and calls on_start()
+void stop();                      // on_stop(), then destroys the object
+bool active();
+void update(float dt);            // on_update(dt), on_draw()
+void button(uint8_t key, bool pressed);
+void espnow(const uint8_t *mac, const uint8_t *data, size_t length, int8_t rssi);
+const char *permissions();        // of the active app; "" when none
+}
+```
+
+- Native apps are listed sorted by id (the registry's own order is link order, which is not defined).
+- `start()` logs `[vk] native app '<id>' started` before `on_start()`; `stop()` logs `[vk] native app '<id>' stopped` after the destructor. `active()` and `permissions()` stay valid until then.
+- If the create function returns null, `start()` calls `onAppStopping(id)` before it returns false: H8a does not call `stop()` on that path, and the grant slot just promoted would otherwise stay held for an app that never ran.
+
+Details, the SDK and the rules for native code: [native-apps.md](native-apps.md).
+
+## Notifications
+
+A small inbox for things that happen while the relevant app is not open.
+
+```cpp
+// src/vk/host/notify.h
+namespace vk::host::notify {
+struct Note { char title[24]; char body[40]; char app_id[33]; uint32_t at_ms; };
+void post(const char *title, const char *body, const char *app_id);   // identical title+body within 10 s is ignored
+size_t count();
+const Note *at(size_t index);     // newest first
+void remove(size_t index);
+void clear();
+}
+```
+
+- Eight notes, in RAM, oldest dropped. Nothing is persisted.
+- The 10 s rule compares a post with every stored note and with the last accepted post, so dismissing a note does not let the same text straight back in; an ignored post does not restart the 10 s. A post with an empty title and an empty body is dropped. Title and body are cut to the field sizes.
+- Shown by: the launcher's cell of the app whose manifest says `count=notes` (the Inbox) and the Settings list's Inbox row, whose value is the waiting count ([shell](../ui/shell.md#launcher)); the `notify` LED pattern while a note is waiting and the badge is idle (`vk::host::idle()`, [ui](../ui/ui.md#launcher-and-settings)), and the **Inbox** native app, which lists the notes; SELECT launches `app_id`, RIGHT dismisses.
+- Posted by firmware features only (a payment request seen, a contact saved). Apps cannot post.
+
+## System apps
+
+The launcher and the settings are the shell, not apps ([shell](../ui/shell.md)). The screens below are native apps, each removable by deleting its folder. `inbox` and `wallet_settings` are opened by the Settings rows Inbox and Wallet; `inbox` is also on the launcher's top level, `wallet_settings` only in Settings (`hidden=1`):
+
+| App id | Launcher | What it shows |
+|---|---|---|
+| `inbox` | Inbox, top level, with the waiting count (`count=notes`) | notifications |
+| `wallet_settings` | hidden; Settings → Wallet | provisioning state, key location, public key, token table with caps, clock source, every config key (read-only), "Reset wallet config" (→ `config::requestReset()`), build profile |
+| `selftest` | Self test, folder TESTS (`category=tests`) | the hardware checklist ([apps](../apps/apps.md#self-test)) |
+| `nativetest` | hidden; dev profile only | a test fixture: the native app the device tests launch and stop |
+
+## Adding and removing
+
+| To | Do |
+|---|---|
+| add an app | `scripts/new-app.sh <id> "<Name>" [--native] [--category <name>]`, then push (Lua) or reflash (native) ([extending](../guides/extending.md#add-an-app)) |
+| add a permission | one `VK_PERMISSION(...)` line; name it in the `VK_LUA_FUNCTION` lines it gates |
+| add a Lua function | one `VK_LUA_FUNCTION(...)` line |
+| remove an app | delete its folder (and `DEL <id>` on badges that have it) |
+
+## Tests
+
+Host: `test_manifest` (both parsers: the launch keys and the launcher keys), `test_consent` (hash, store round trip with an in-memory file). Device: T-APP1 to T-APP7 in [../testing/testing.md](../testing/testing.md#acceptance-tests) (`t_app.py`, `t_native.py`), plus `t_notify.py` (notes and the Inbox), `t_wallet_app.py` and `t_folders.py` (the launcher keys and the folders). `t_native.py` also pushes a folder named `nativetest` and checks that the native app still starts, and checks that `begin` from a native app's `on_stop` is refused like `begin` from its `on_start`.

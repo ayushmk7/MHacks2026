@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BadgeOS: Receipt, light and dark</title>
+<style>
+/* ───────── page chrome (not part of any design) ───────── */
+:root{--pg:#0f1013;--pg2:#17191e;--ln:#2a2d36;--tx:#e9eaee;--mu:#8b90a0}
+*{box-sizing:border-box}
+body{margin:0;background:var(--pg);color:var(--tx);font:14px/1.5 -apple-system,"Helvetica Neue",Arial,sans-serif}
+.top{padding:22px 28px 0}
+.top h1{margin:0;font-size:20px;letter-spacing:-.01em}
+.top p{margin:4px 0 0;color:var(--mu);max-width:900px}
+.tabs{display:flex;gap:8px;padding:16px 28px;position:sticky;top:0;background:var(--pg);z-index:5;border-bottom:1px solid var(--ln);flex-wrap:wrap}
+.tabs button{background:var(--pg2);color:var(--tx);border:1px solid var(--ln);border-radius:10px;padding:8px 14px;text-align:left;cursor:pointer;font:inherit;min-width:150px}
+.tabs button b{display:block;font-size:14px}
+.tabs button span{color:var(--mu);font-size:12px}
+.tabs button.on{border-color:#fff;background:#23262e}
+.live{display:flex;gap:32px;padding:26px 28px;align-items:flex-start;flex-wrap:wrap}
+.side{flex:1;min-width:300px;max-width:520px}
+.side h2{margin:0 0 2px;font-size:22px}
+.side .tag{color:var(--mu);margin-bottom:12px}
+.side h3{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--mu);margin:18px 0 6px}
+.side ul{margin:0;padding-left:18px}
+.side li{margin:2px 0}
+.side kbd{background:#262932;border:1px solid var(--ln);border-radius:5px;padding:1px 6px;font:12px ui-monospace,Menlo,monospace}
+.ctl{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.ctl button,.ctl select{background:var(--pg2);color:var(--tx);border:1px solid var(--ln);border-radius:8px;padding:6px 10px;font:inherit;cursor:pointer}
+section.block{padding:8px 28px 30px;border-top:1px solid var(--ln)}
+section.block h2{font-size:16px;margin:20px 0 4px}
+section.block p.h{color:var(--mu);margin:0 0 16px}
+.grid{display:flex;flex-wrap:wrap;gap:18px}
+.shot{font-size:12px;color:var(--mu)}
+.shot .fit{border-radius:4px;box-shadow:0 0 0 1px var(--ln);margin-bottom:5px}
+.cmp{display:flex;gap:14px;align-items:flex-end;margin-bottom:18px;flex-wrap:wrap}
+.cmp .nm{width:120px;font-weight:600;color:var(--tx);align-self:center}
+
+/* device */
+.device{background:linear-gradient(#22252c,#191b20);border-radius:28px;padding:16px 22px 18px;display:inline-flex;flex-direction:column;align-items:center;gap:12px;box-shadow:0 20px 50px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.07)}
+.leds{display:flex;gap:26px}
+.leds i{width:15px;height:15px;border-radius:50%;background:#2a2c33;display:block;transition:none}
+.glass{background:#000;padding:8px;border-radius:8px}
+.fit{width:calc(var(--w)*var(--s)*1px);height:calc(var(--h)*var(--s)*1px);overflow:hidden;position:relative;background:#000}
+.fit>.scr{transform:scale(var(--s));transform-origin:0 0}
+.keys{display:flex;gap:46px;align-items:center}
+.dpad{display:grid;grid-template-columns:repeat(3,34px);grid-template-rows:repeat(3,34px);gap:2px}
+.keys button{background:#31343d;color:#c9ccd6;border:0;border-radius:8px;cursor:pointer;font:11px -apple-system,Arial;user-select:none}
+.keys button:active,.keys button.dn{background:#565b69}
+.dpad .u{grid-area:1/2}.dpad .l{grid-area:2/1}.dpad .r{grid-area:2/3}.dpad .d{grid-area:3/2}
+.ab{display:flex;gap:10px}
+.ab button{width:74px;height:44px;border-radius:22px;font-weight:600;letter-spacing:.04em}
+.cap{font-size:11px;color:var(--mu)}
+
+/* ───────── shared screen base ───────── */
+.scr{position:relative;overflow:hidden;width:320px;height:240px}
+.scr.p{width:240px;height:320px}
+.scr *{box-sizing:border-box}
+.scr .toast{position:absolute;left:50%;transform:translateX(-50%);bottom:26px;padding:4px 10px;font-size:10px;white-space:nowrap;z-index:9}
+@keyframes blink{50%{opacity:0}}
+@keyframes ripple{from{transform:translate(-50%,-50%) scale(.5);opacity:.9}to{transform:translate(-50%,-50%) scale(1.5);opacity:0}}
+
+/* ═════════ 1 · RECEIPT (landscape) ═════════ */
+.t-rc{--pa:#f3efe4;--ik:#1b1a17;--fa:#8a8474;--su:#6d6759;--sg:#17804f;--sa:#b56a00;--sr:#c8321e;--bl:multiply;background:var(--pa);color:var(--ik);font:11px/1.3 "Courier New",ui-monospace,Menlo,monospace}
+.t-rc .hd{display:flex;justify-content:space-between;padding:7px 10px 4px;font-size:9px;letter-spacing:.06em}
+.t-rc .rule{border-top:1px dashed var(--ik);margin:3px 10px}
+.t-rc .brand{font:italic 700 20px Georgia,"Times New Roman",serif;text-align:center;margin:12px 0 0}
+.t-rc .two{display:flex;height:150px;margin-top:2px}
+.t-rc .lc{width:146px;border-right:1px dashed var(--ik)}
+.t-rc .rc{flex:1;padding-top:2px}
+.t-rc .g2{display:grid;grid-template-columns:1fr 1fr}
+.t-rc .hold{position:absolute;left:0;right:0;bottom:26px;text-align:center;font-size:10px;letter-spacing:-1px}
+.t-rc .ctr{text-align:center}.t-rc .sm{font-size:9px;letter-spacing:.1em}
+.t-rc .ttl{text-align:center;font-weight:700;letter-spacing:.22em;margin:6px 0 3px}
+.t-rc .row{display:flex;padding:2px 10px;gap:5px;align-items:baseline}
+.t-rc .row .dots{flex:1;border-bottom:1px dotted var(--fa);transform:translateY(-3px)}
+.t-rc .row.sel{background:var(--ik);color:var(--pa)}.t-rc .row.sel .dots{border-color:var(--pa)}
+.t-rc .sub{padding:0 10px 3px 22px;font-size:9px;color:var(--su)}
+.t-rc .sub.sel{background:var(--ik);color:var(--pa)}
+.t-rc .amt{font:700 44px/1 Georgia,serif;text-align:center;letter-spacing:-.02em}
+.t-rc .lab{text-align:center;font-size:9px;letter-spacing:.2em;margin-top:8px}
+.t-rc .ft{position:absolute;left:0;right:0;bottom:0;padding:5px 10px 7px;font-size:9px;border-top:1px dashed var(--ik);display:flex;justify-content:space-between;background:var(--pa)}
+.t-rc .code{height:22px;margin:8px 60px 0;background:repeating-linear-gradient(90deg,var(--ik) 0 2px,transparent 2px 3px,var(--ik) 3px 4px,transparent 4px 7px,var(--ik) 7px 10px,transparent 10px 12px)}
+.t-rc .band{margin:2px 0 4px;padding:6px 6px;text-align:center;font-weight:700;letter-spacing:.06em;color:#111;font-size:12px}
+.t-rc .bar{letter-spacing:-1px;text-align:center;font-size:12px;margin-top:8px}
+.t-rc .toast{background:var(--ik);color:var(--pa)}
+.t-rc .ok{color:var(--sg)}.t-rc .bad{color:var(--sr)}.t-rc .mut{color:var(--fa)}
+
+.t-rc.dk{--pa:#15140f;--ik:#ece6d6;--fa:#7d7868;--su:#a39c8a;--sg:#4fd69a;--sa:#ffc35a;--sr:#ff7b6e;--bl:screen}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>BadgeOS: Receipt</h1>
+  <p>The chosen design, in light and dark mode, running as a live simulation of the 320×240 badge screen. Use the keys below the screen, or your keyboard. Settings → Theme switches mode on the device.</p>
+</div>
+<div class="tabs" id="tabs"></div>
+
+<div class="live">
+  <div>
+    <div class="device">
+      <div class="leds"><i id="led0"></i><i id="led1"></i></div>
+      <div class="glass"><div class="fit" id="fit"><div class="scr" id="scr"></div></div></div>
+      <div class="keys">
+        <div class="dpad">
+          <button class="u" data-k="up">▲</button><button class="l" data-k="left">◀</button>
+          <button class="r" data-k="right">▶</button><button class="d" data-k="down">▼</button>
+        </div>
+        <div class="ab"><button data-k="b">CANCEL</button><button data-k="a">SELECT</button></div>
+      </div>
+      <div class="cap">2 LEDs · 6 buttons · screen shown at 2×. Button layout is illustrative.</div>
+    </div>
+  </div>
+  <div class="side">
+    <h2 id="tname"></h2><div class="tag" id="ttag"></div>
+    <div id="tabout"></div>
+    <h3>What it takes on the badge</h3><ul id="tnotes"></ul>
+    <h3>Controls</h3>
+    <div><kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd> move · <kbd>Enter</kbd> SELECT · <kbd>Esc</kbd> or <kbd>Backspace</kbd> CANCEL · <kbd>1</kbd> light · <kbd>2</kbd> dark</div>
+    <div class="ctl">
+      <button id="reboot">Replay boot</button>
+      <select id="jump"></select>
+    </div>
+    <h3>Try this</h3>
+    <ul>
+      <li><b>Pay</b> → first request: green, one press signs.</li>
+      <li><b>Pay</b> → second request (an impostor using the merchant's name): red, cannot be signed.</li>
+      <li><b>Game</b> → Buy shield: amber, <i>hold</i> SELECT.</li>
+      <li><b>Game</b> → Buy sword: the game says 5.00, the firmware screen shows the real 500.00.</li>
+      <li><b>Request</b> → pick an amount, SELECT, wait for PAID.</li>
+      <li>Watch the two LEDs during boot and on each approval.</li>
+    </ul>
+  </div>
+</div>
+
+<section class="block">
+  <h2>Every screen in this mode</h2>
+  <p class="h">Static renders of the selected mode at 1×, the badge's real pixel count.</p>
+  <div class="grid" id="gallery"></div>
+</section>
+<section class="block">
+  <h2>Light and dark, side by side</h2>
+  <p class="h">Boot, launcher, home, a verified approval, a blocked approval.</p>
+  <div id="compare"></div>
+</section>
+
+<script>
+/* ───────── data shared by every design ───────── */
+const SEV = {green:'#1fbf75', amber:'#ffb020', red:'#ff4545'};
+const GLY = {green:'✓', amber:'!', red:'✕'};
+const ST = {time:'14:32', bat:'USB', notes:2, bal:'142.50', sym:'HACK', name:'Judge A', addr:'4vJD..BW97', key:'secure element', clock:'synced'};
+const APPS = [['home','Home'],['pay','Pay'],['request','Request'],['contacts','Contacts'],['history','History'],['game','Game'],['duel','Duel'],['inbox','Inbox'],['wallet','Wallet'],['settings','Settings']];
+const STAGES = [['Storage','mounting filesystem',20],['Peripherals','buttons, battery, se050',45],['Identity','ed25519 keypair',55],['Runtime','starting Lua',65],['Wallet','config, keys, stores',75],['Radios','wi-fi, esp-now, ble',85],['Ready','all systems go',100]];
+const ICON = {
+  home:'<path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
+  pay:'<path d="M7 17L17 7M9 7h8v8"/>',
+  request:'<path d="M17 7L7 17M15 17H7V9"/>',
+  contacts:'<circle cx="9" cy="9" r="3.5"/><path d="M2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.900 1.900 6.500 5.500"/><circle cx="17.500" cy="8" r="2.500"/>',
+  history:'<circle cx="12" cy="12" r="8.500"/><path d="M12 7v5l3.500 2"/>',
+  game:'<path d="M12 3l8 17-8-4-8 4z"/>',
+  duel:'<path d="M5 5l14 14M19 5L5 19M5 9V5h4M19 9V5h-4"/>',
+  inbox:'<rect x="3" y="5.500" width="18" height="13" rx="2"/><path d="M3.500 7l8.500 6.500L20.500 7"/>',
+  wallet:'<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M16 14.500h2"/>',
+  settings:'<path d="M4 7h8M20 7h-2M4 12h1M13 12h7M4 17h10M20 17h0"/><circle cx="15" cy="7" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="17" cy="17" r="2"/>'
+};
+const ico = (id, sz=24, sw=2) => `<svg viewBox="0 0 24 24" width="${sz}" height="${sz}" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${ICON[id]}</svg>`;
+const AP = {
+  green:{title:'Pay', sev:'green', headline:'VERIFIED - PRESENT', big:'10.00', sub:'MHacks Merch', lines:[['Account','2awX..6wrr'],['Kind','merchant']], app:'pay', select:'press'},
+  replay:{title:'Pay', sev:'amber', headline:'VERIFIED - NOT PRESENT', big:'2.50', sub:'Judge B', lines:[['Account','9kPe..x2Fa'],['Kind','person']], app:'pay', select:'hold'},
+  amber:{title:'Pay', sev:'amber', headline:'VERIFIED - NOT PRESENT', big:'5.00', sub:'MHacks Merch', lines:[['Account','2awX..6wrr'],['Kind','merchant'],['Memo','shield']], app:'game', select:'hold'},
+  evil:{title:'Pay', sev:'amber', headline:'VERIFIED - NOT PRESENT', big:'500.00', sub:'MHacks Merch', lines:[['Limit','over 100.00'],['Account','2awX..6wrr'],['Memo','sword']], app:'game', select:'hold'},
+  red:{title:'Pay', sev:'red', headline:'UNVERIFIED RECIPIENT', big:'10.00', sub:'unverified recipient', lines:[['Account','DhEb..W511']], app:'pay', select:'disabled'}
+};
+function listModel(id, sel=0){
+  const L = {
+    pay:{title:'Pay', hint:'SELECT pay', rows:[
+      {l:'MHacks Merch', sub:'Gn2G..Ecxq · name is a claim', r:'10.00', ap:'green'},
+      {l:'MHacks Merch', sub:'DhEb..W511 · name is a claim', r:'10.00', ap:'red'},
+      {l:'Judge B', sub:'FdBS..17XD · name is a claim', r:'2.50', ap:'replay'}]},
+    contacts:{title:'Contacts', hint:'SELECT open', rows:[
+      {l:'Swap contacts', sub:'find a badge nearby', r:'›', toast:'Looking for badges…'},
+      {l:'Judge B', sub:'FdBS..17XD · self-named', r:'Oct 3'},
+      {l:'Maya', sub:'7Hq2..k9Lm · self-named', r:'Oct 3'},
+      {l:'Ravi', sub:'B81c..Qe4T · self-named', r:'Oct 2'}]},
+    history:{title:'History', hint:'SELECT details', rows:[
+      {l:'MHacks Merch', sub:'14:20 · pay · signed', r:'10.00', tone:'ok'},
+      {l:'MHacks Merch', sub:'14:11 · game · blocked', r:'500.00', tone:'bad'},
+      {l:'Judge B', sub:'13:52 · duel · signed', r:'5.00', tone:'ok'},
+      {l:'Unverified', sub:'13:40 · pay · blocked', r:'10.00', tone:'bad'},
+      {l:'MHacks Merch', sub:'13:02 · game · cancelled', r:'5.00', tone:'mut'}]},
+    inbox:{title:'Inbox', hint:'SELECT open', rows:[
+      {l:'Payment request', sub:'MHacks Merch asks 10.00 HACK', r:'now', go:'pay'},
+      {l:'Contact saved', sub:'Judge B', r:'2m', go:'contacts'}]},
+    wallet:{title:'Wallet', hint:'read only', rows:[
+      {l:'Status', r:'provisioned'},{l:'Key', r:'secure element'},{l:'Address', r:'4vJD..BW97'},
+      {l:'Clock', r:'synced'},{l:'HACK cap', r:'100.00'},{l:'HACK max', r:'1000.00'},{l:'Build', r:'release'}]},
+    settings:{title:'Settings', hint:'SELECT open', rows:[
+      {l:'Wi-Fi', r:'hotspot'},{l:'Bluetooth', r:'off'},{l:'ESP-NOW', r:'ch 6'},{l:'App push', r:'paired'},
+      {l:'Theme', r:T&&T.cls.includes('dk')?'dark':'light', theme:1},{l:'App store', r:'off'},{l:'Identity', r:'4vJD'},{l:'Display', r:'75%'},{l:'LEDs', r:'30%'}]},
+    game:{title:'Dodge', hint:'SELECT choose', rows:[
+      {l:'Play', sub:'best 48 s', r:'›', toast:'Game runs here'},
+      {l:'Buy shield', sub:'shop · MHacks Merch', r:'5.00', ap:'amber'},
+      {l:'Buy sword', sub:'this game lies: real price 500', r:'5.00', ap:'evil'}]},
+    duel:{title:'Duel', hint:'SELECT invite', rows:[
+      {l:'Stake 1.00', sub:'reaction duel · best of 3', r:'›', toast:'Waiting for an opponent…'},
+      {l:'Stake 5.00', sub:'reaction duel · best of 3', r:'›', toast:'Waiting for an opponent…'},
+      {l:'Stake 10.00', sub:'reaction duel · best of 3', r:'›', toast:'Waiting for an opponent…'}]}
+  }[id];
+  return {...L, id, sel: Math.min(sel, L.rows.length - 1)};
+}
+const win = (len, sel, n) => Math.max(0, Math.min(sel - Math.floor(n / 2), len - n));
+const apFoot = m => m.phase==='result' ? m.result : m.phase==='signing' ? 'Signing…'
+  : m.select==='press' ? ['SELECT approve','CANCEL reject'] : m.select==='hold' ? ['Hold SELECT','CANCEL reject'] : ['Blocked','CANCEL close'];
+const footL = f => Array.isArray(f) ? f[0] : f, footR = f => Array.isArray(f) ? f[1] : '';
+const fmt = c => (c/100).toFixed(2);
+
+/* ───────── the five designs ───────── */
+const THEMES = [];
+
+/* 1 · RECEIPT */
+(() => {
+  const head = () => `<div class="hd"><span>BADGEOS</span><span>${ST.time} · ${ST.bat}</span></div><div class="rule"></div>`;
+  const row = (l, r, sel, cls='') => `<div class="row${sel?' sel':''}"><span>${l}</span><span class="dots"></span><span class="${cls}">${r??''}</span></div>`;
+  const foot = (a, b) => `<div class="ft"><span>${a}</span><span>${b||''}</span></div>`;
+  const two = (l, r) => `<div class="two"><div class="lc">${l}</div><div class="rc">${r}</div></div>`;
+  const bar = p => `<div class="bar">${'█'.repeat(Math.round(p*14))}${'░'.repeat(14-Math.round(p*14))}</div>`;
+  const amt = (v, lab) => `<div class="lab">${lab}</div><div class="amt" style="font-size:${v.length>5?32:40}px">${v}</div><div class="ctr sm" style="margin-top:2px">${ST.sym}</div>`;
+  const L = {id:'rc', cls:'t-rc', name:'Receipt · Light', tag:'Paper and ink', orient:'l', led:[255,226,170], cols:2,
+    about:'Landscape. Every screen is a ticket with a tear-off stub: the amount on the left, the details on the right, split by a dashed perforation. Monospace lines, dotted leaders, a barcode. An approval reads like a bill you are about to sign; the coloured band across the top carries the verdict. Calm, high contrast, readable in daylight.',
+    notes:['Two fonts: a monospace and one serif for amounts','No gradients or blending: flat fills and 1-pixel dashed lines. Very cheap to draw'],
+    boot: m => `<div class="hd"><span>BADGEOS</span><span>*** STARTING UP ***</span></div><div class="rule"></div>` + two(
+      `<div class="brand">BadgeOS</div><div class="amt" style="font-size:40px;margin-top:14px">${m.pct}%</div>${bar(m.pct/100)}<div class="ctr sm" style="margin-top:8px;letter-spacing:0">${STAGES[m.i][1]}</div>`,
+      `<div class="ttl">CHECKLIST</div>` + STAGES.map((s,i)=>row(s[0].toUpperCase(), i<m.i||m.pct>=100?'OK':i===m.i?'..':'')).join('')),
+    launcher: m => head() + `<div class="ttl">MENU</div><div class="g2">` + APPS.map((a,i)=>row(`${String(i+1).padStart(2,'0')} ${a[1].toUpperCase()}`, i===m.sel?'◂':(a[0]==='inbox'&&ST.notes?ST.notes:''), i===m.sel)).join('')
+      + `</div><div class="rule" style="margin-top:6px"></div>` + row('BALANCE', `${ST.bal} ${ST.sym}`) + `<div class="code"></div>` + foot('SELECT open','CANCEL settings'),
+    home: m => head() + two(amt(ST.bal,'BALANCE') + `<div class="code" style="margin:12px 16px 0"></div>`,
+      row('ADDRESS',ST.addr) + row('KEY','secure chip') + row('CLOCK',ST.clock) + row('INBOX',ST.notes+' new') + `<div class="rule" style="margin-top:8px"></div><div class="ctr sm" style="margin-top:8px">THANK YOU FOR HACKING</div>`) + foot('','CANCEL back'),
+    list: m => { const n=m.rows[0].sub?5:9, s=win(m.rows.length,m.sel,n);
+      return head() + `<div class="ttl">${m.title.toUpperCase()}</div>` + m.rows.slice(s,s+n).map((r,i)=>row(r.l.toUpperCase(), r.r, s+i===m.sel, r.tone||'') + (r.sub?`<div class="sub${s+i===m.sel?' sel':''}">${r.sub}</div>`:'')).join('') + foot(m.hint,'CANCEL back'); },
+    approval: m => { const f=apFoot(m), c=SEV[m.sev];
+      return `<div class="hd"><span>${m.title.toUpperCase()} · asked by ${m.app}</span><span>KEY SE</span></div>
+      <div class="band" style="background:${c}">${m.phase==='result'?m.result:m.headline}</div>`
+      + two(amt(m.big,'AMOUNT') + `<div class="ctr" style="font-weight:700;margin-top:10px;font-size:${m.sub.length>14?8:10}px">TO ${m.sub.toUpperCase()}</div>`,
+        m.lines.map(l=>row(l[0].toUpperCase(),l[1])).join('') + `<div class="rule" style="margin-top:5px"></div>`)
+      + (m.phase==='holding'?`<div class="hold">${'█'.repeat(Math.round(m.prog*30))}${'░'.repeat(30-Math.round(m.prog*30))}</div>`:'') + foot(footL(f),footR(f)); },
+    request: m => head() + two(amt(fmt(m.cents), m.mode==='pick'?'PAY ME':m.mode==='wait'?'WAITING':'RECEIVED') + `<div class="code" style="margin:12px 16px 0"></div>`,
+      `<div class="ttl">REQUEST</div>` + (m.mode==='pick' ? row('UP / DOWN','0.50')+row('LEFT / RIGHT','5.00')+row('SELECT','open') : m.mode==='wait' ? row('EXPIRES IN',m.secs+' s')+row('CHECKING',m.proofs+' badge')+row('STATUS','on air') : row('FROM','Judge B')+row('CONFIRMED','on chain')+row('REF','5tGh..p2Qx')))
+      + foot(m.mode==='pick'?'SELECT open':'', 'CANCEL back')
+  };
+  THEMES.push(L, {...L, cls:'t-rc dk', name:'Receipt · Dark', tag:'The same ticket on night paper', led:[255,196,120],
+    about:'The dark mode of the same design: warm black paper, cream ink, the same layout pixel for pixel. Chosen in Settings → Theme; the approval verdict colours are identical in both modes.'});
+})();
+
+
+/* ───────── simulator ───────── */
+let T = THEMES[0], S;
+const scr = document.getElementById('scr'), fit = document.getElementById('fit');
+const now = () => performance.now();
+function reset(screen='boot'){ S = {screen, sel:{launcher:0}, bootT:now(), modal:null, req:{mode:'pick',cents:1000,t0:0}, toast:null}; }
+function bootModel(pct){ let i = STAGES.findIndex(s => s[2] > pct); if (i < 0) i = STAGES.length - 1; return {pct, i}; }
+function bootNow(){ const k = Math.floor((now() - S.bootT) / 850); const pct = k <= 0 ? 0 : STAGES[Math.min(k, STAGES.length) - 1][2]; return bootModel(pct); }
+function reqModel(){ const r = S.req, e = (now() - r.t0) / 1000; return {mode:r.mode, cents:r.cents, secs:Math.max(0, 60 - Math.floor(e)), proofs: e > 1.2 ? 1 : 0}; }
+function toast(t){ S.toast = {t, until: now() + 1700}; }
+
+function screenHTML(){
+  let h;
+  if (S.modal) h = T.approval(S.modal);
+  else if (S.screen === 'boot') h = T.boot(bootNow());
+  else if (S.screen === 'launcher') h = T.launcher({sel: S.sel.launcher});
+  else if (S.screen === 'home') h = T.home({});
+  else if (S.screen === 'request') h = T.request(reqModel());
+  else h = T.list(listModel(S.screen, S.sel[S.screen] || 0));
+  if (S.toast) h += `<div class="toast">${S.toast.t}</div>`;
+  return h;
+}
+function openModal(k){ S.modal = {...AP[k], phase:'armed', prog:0, t:0}; }
+function closeModal(ok){ const m = S.modal; S.modal = null; toast(ok ? `Paid ${m.big} ${ST.sym}` : m.sev === 'red' ? 'Blocked: nothing was signed' : 'Cancelled'); }
+
+function key(k, down){
+  const m = S.modal;
+  if (m){
+    if (m.phase !== 'armed' && m.phase !== 'holding') return;
+    if (k === 'b' && down){ m.phase = 'result'; m.result = m.sev === 'red' ? 'BLOCKED' : 'CANCELLED'; m.ok = false; m.t = now(); }
+    if (k === 'a'){
+      if (down && m.select === 'press'){ m.phase = 'signing'; m.t = now(); }
+      else if (down && m.select === 'hold'){ m.phase = 'holding'; m.t = now(); }
+      else if (!down && m.phase === 'holding'){ m.phase = 'armed'; m.prog = 0; }
+    }
+    return;
+  }
+  if (!down) return;
+  const sc = S.screen;
+  if (sc === 'boot'){ S.screen = 'launcher'; return; }
+  if (sc === 'launcher'){
+    const n = APPS.length, c = T.cols; let i = S.sel.launcher;
+    if (c === 1){ if (k==='up'||k==='left') i--; if (k==='down'||k==='right') i++; }
+    else { if (k==='left') i--; if (k==='right') i++; if (k==='up') i-=c; if (k==='down') i+=c; }
+    S.sel.launcher = Math.max(0, Math.min(n-1, i));
+    if (k === 'a'){ const id = APPS[S.sel.launcher][0]; S.screen = id; if (id==='request') S.req = {mode:'pick',cents:1000,t0:0}; }
+    if (k === 'b') S.screen = 'settings';
+    return;
+  }
+  if (k === 'b'){ if (sc === 'request' && S.req.mode !== 'pick') S.req.mode = 'pick'; else S.screen = 'launcher'; return; }
+  if (sc === 'home') return;
+  if (sc === 'request'){
+    const r = S.req; if (r.mode !== 'pick') return;
+    if (k==='up') r.cents += 50; if (k==='down') r.cents = Math.max(50, r.cents-50);
+    if (k==='right') r.cents += 500; if (k==='left') r.cents = Math.max(50, r.cents-500);
+    if (k==='a'){ r.mode = 'wait'; r.t0 = now(); }
+    return;
+  }
+  const L = listModel(sc, S.sel[sc] || 0); let i = L.sel;
+  if (k==='up'||k==='left') i--; if (k==='down'||k==='right') i++;
+  S.sel[sc] = Math.max(0, Math.min(L.rows.length-1, i));
+  if (k === 'a'){ const r = L.rows[L.sel]; if (r.ap) openModal(r.ap); else if (r.go) S.screen = r.go; else if (r.theme) setTheme(1 - THEMES.indexOf(T)); else if (r.toast) toast(r.toast); }
+}
+
+/* LEDs: [r,g,b] and brightness 0..1 for each of the two LEDs */
+function ledState(t){
+  const off = [[0,0,0],0], sq = hz => Math.floor(t/1000*hz*2)%2 === 0, pulse = s => .25 + .75*(.5 + .5*Math.sin(t/1000*2*Math.PI/s));
+  const hex = c => [parseInt(c.slice(1,3),16),parseInt(c.slice(3,5),16),parseInt(c.slice(5,7),16)];
+  const m = S.modal;
+  if (m){
+    const c = hex(SEV[m.sev]);
+    if (m.phase === 'result'){ const e = now()-m.t; if (m.ok){ const on = Math.floor(e/110)%2===0 && e<660; return [[hex(SEV.green),on?1:0],[hex(SEV.green),on?1:0]]; } const on = e<400; return [[hex(SEV.red),on?1:0],[hex(SEV.red),on?1:0]]; }
+    const b = m.sev==='red' ? 1 : pulse(m.sev==='amber'?1:1.5); return [[c,b],[c,b]];
+  }
+  if (S.screen === 'boot'){
+    /* the boot bar rule: each LED owns an equal share. Below its share: off. Inside it: flashing. Past it: solid. */
+    const p = bootNow().pct, n = 2, share = 100/n, f = sq(3) ? 1 : 0;
+    return [0,1].map(i => p >= 100 || p >= (i+1)*share ? [T.led,1] : p >= i*share ? [T.led,f] : off);
+  }
+  if (S.screen === 'request' && S.req.mode === 'wait'){ const a = sq(2); return [[T.led,a?1:.1],[T.led,a?.1:1]]; }
+  if (S.screen === 'request' && S.req.mode === 'paid') return [[hex(SEV.green),1],[hex(SEV.green),1]];
+  const b = (ST.notes && S.screen==='launcher' ? .5 : .18) * pulse(3); return [[T.led,b],[T.led,b]];
+}
+function paintLeds(){
+  ledState(now()).forEach(([c,b],i) => { const el = document.getElementById('led'+i);
+    el.style.background = b>0 ? `rgba(${c[0]},${c[1]},${c[2]},${.25+.75*b})` : '#2a2c33';
+    el.style.boxShadow = b>0 ? `0 0 ${6+16*b}px ${2+5*b}px rgba(${c[0]},${c[1]},${c[2]},${.55*b})` : 'none'; });
+}
+let last = '';
+function frame(){
+  const t = now(), m = S.modal;
+  if (S.screen === 'boot' && !m && t - S.bootT > 850*STAGES.length + 1300) S.screen = 'launcher';
+  if (m){
+    if (m.phase === 'holding'){ m.prog = (t-m.t)/1500; if (m.prog >= 1){ m.phase='signing'; m.t=t; } }
+    else if (m.phase === 'signing' && t-m.t > 700){ m.phase='result'; m.result='SIGNED'; m.ok=true; m.t=t; }
+    else if (m.phase === 'result' && t-m.t > 1100) closeModal(m.ok);
+  }
+  if (S.screen === 'request' && S.req.mode === 'wait' && t - S.req.t0 > 3800){ S.req.mode = 'paid'; }
+  if (S.toast && t > S.toast.until) S.toast = null;
+  const h = screenHTML(); if (h !== last){ scr.innerHTML = h; last = h; }
+  paintLeds(); requestAnimationFrame(frame);
+}
+
+/* ───────── page wiring ───────── */
+const dims = t => t.orient === 'p' ? [240,320] : [320,240];
+function shotHTML(t, html, scale, label){ const [w,h] = dims(t);
+  return `<div class="shot"><div class="fit" style="--w:${w};--h:${h};--s:${scale}"><div class="scr ${t.cls}">${html}</div></div>${label||''}</div>`; }
+const am = (k, o={}) => ({...AP[k], phase:'armed', prog:0, ...o});
+const SHOTS = [
+  ['Boot, 45%', t => t.boot(bootModel(45))], ['Boot, ready', t => t.boot(bootModel(100))],
+  ['Launcher', t => t.launcher({sel:1})], ['Home', t => t.home({})],
+  ['Pay: requests nearby', t => t.list(listModel('pay',0))],
+  ['Approval: verified, one press', t => t.approval(am('green'))],
+  ['Approval: not present, holding', t => t.approval(am('amber',{phase:'holding',prog:.6}))],
+  ['Approval: the evil game (real amount)', t => t.approval(am('evil'))],
+  ['Approval: blocked', t => t.approval(am('red'))],
+  ['Result: signed', t => t.approval(am('green',{phase:'result',result:'SIGNED'}))],
+  ['Request: choose amount', t => t.request({mode:'pick',cents:1000,secs:60,proofs:0})],
+  ['Request: waiting', t => t.request({mode:'wait',cents:1000,secs:52,proofs:1})],
+  ['Request: paid', t => t.request({mode:'paid',cents:1000,secs:0,proofs:1})],
+  ['History', t => t.list(listModel('history',1))], ['Contacts', t => t.list(listModel('contacts',1))],
+  ['Inbox', t => t.list(listModel('inbox',0))], ['Game shop', t => t.list(listModel('game',1))],
+  ['Wallet', t => t.list(listModel('wallet',1))], ['Settings', t => t.list(listModel('settings',0))]
+];
+function setTheme(i){
+  T = THEMES[i]; const [w,h] = dims(T);
+  fit.style.cssText = `--w:${w};--h:${h};--s:2`; scr.className = `scr ${T.cls}`; last = '';
+  document.querySelectorAll('#tabs button').forEach((b,j) => b.classList.toggle('on', j===i));
+  document.getElementById('tname').textContent = `${i+1}. ${T.name}`;
+  document.getElementById('ttag').textContent = `${T.tag} · ${T.orient==='p'?'portrait 240×320':'landscape 320×240'}`;
+  document.getElementById('tabout').textContent = T.about;
+  document.getElementById('tnotes').innerHTML = T.notes.map(n => `<li>${n}</li>`).join('');
+  document.getElementById('gallery').innerHTML = SHOTS.map(([l,f]) => shotHTML(T, f(T), 1, l)).join('');
+  history.replaceState(null, '', `#t=${i+1}`);
+}
+document.getElementById('tabs').innerHTML = THEMES.map((t,i) => `<button data-i="${i}"><b>${i+1}. ${t.name}</b><span>${t.tag}</span></button>`).join('');
+document.getElementById('tabs').onclick = e => { const b = e.target.closest('button'); if (b) setTheme(+b.dataset.i); };
+document.getElementById('compare').innerHTML = THEMES.map(t => `<div class="cmp"><div class="nm">${t.name}</div>` +
+  [t.boot(bootModel(45)), t.launcher({sel:1}), t.home({}), t.approval(am('green')), t.approval(am('red'))].map(h => shotHTML(t, h, .75)).join('') + `</div>`).join('');
+const JUMPS = [['boot','Boot'],['launcher','Launcher'],['home','Home'],['pay','Pay'],['ap:green','Approval: verified'],['ap:amber','Approval: not present'],['ap:evil','Approval: evil game'],['ap:red','Approval: blocked'],['request','Request'],['history','History'],['contacts','Contacts'],['inbox','Inbox'],['game','Game shop'],['duel','Duel'],['wallet','Wallet'],['settings','Settings']];
+const jump = document.getElementById('jump');
+jump.innerHTML = `<option value="">Jump to a screen…</option>` + JUMPS.map(j => `<option value="${j[0]}">${j[1]}</option>`).join('');
+function goTo(v){ if (!v) return; S.modal = null; if (v === 'boot') reset(); else if (v.startsWith('ap:')){ S.screen = v==='ap:green'||v==='ap:red' ? 'pay' : 'game'; openModal(v.slice(3)); } else { S.screen = v; if (v==='request') S.req = {mode:'pick',cents:1000,t0:0}; } }
+jump.onchange = () => { goTo(jump.value); jump.value = ''; jump.blur(); };
+document.getElementById('reboot').onclick = e => { reset(); e.target.blur(); };
+const KEYMAP = {ArrowUp:'up', ArrowDown:'down', ArrowLeft:'left', ArrowRight:'right', Enter:'a', Escape:'b', Backspace:'b'};
+addEventListener('keydown', e => { if (e.key === '1' || e.key === '2'){ setTheme(+e.key - 1); return; } const k = KEYMAP[e.key]; if (!k) return; e.preventDefault(); if (!e.repeat) key(k, true); });
+addEventListener('keyup', e => { const k = KEYMAP[e.key]; if (k) key(k, false); });
+document.querySelectorAll('.keys button').forEach(b => {
+  b.onpointerdown = e => { e.preventDefault(); b.classList.add('dn'); key(b.dataset.k, true); };
+  b.onpointerup = b.onpointerleave = () => { if (b.classList.contains('dn')){ b.classList.remove('dn'); key(b.dataset.k, false); } };
+});
+const q = new URLSearchParams(location.hash.slice(1));
+reset(q.get('s') ? 'launcher' : 'boot');
+setTheme(Math.max(0, Math.min(1, (+q.get('t') || 1) - 1)));
+if (q.get('s')) goTo(q.get('s'));
+/* header battery: the real level of the device showing this page, when the browser exposes it; USB when charging */
+if (navigator.getBattery) navigator.getBattery().then(b => { const u = () => { ST.bat = b.charging ? 'USB' : Math.round(b.level*100) + '%'; last = ''; setTheme(THEMES.indexOf(T)); };
+  u(); b.onlevelchange = u; b.onchargingchange = u; }).catch(() => {});
+const tick = () => { const d = new Date(); ST.time = String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0'); };
+tick(); setInterval(tick, 15000);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

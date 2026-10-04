@@ -1,164 +1,288 @@
 # Architecture overview
 
-The layers of the badge firmware, which of them may touch the signing key, and the design decisions everything else in these documents follows from.
+What BadgeOS is made of, who trusts whom, where every file lives, and the one mechanism (self-registration) that makes features easy to add and remove.
 
-- Audience: firmware engineers.
-- Status: design, not yet built on hardware.
-- Base: Solana OS, directory `firmware/solana-os/` at commit `812b8c7` of the [upstream repository](https://github.com/spacemandev-git/solana-defcon-badge-26/tree/812b8c7aca5c366d18c0b040fafd2999f7204d84/firmware/solana-os). Paths in this document are relative to that directory in our fork.
+Read this before any other document. Names defined here (`vk::`, registries, features, hooks, reason codes) are used unchanged everywhere else.
 
-Tags used on every claim:
+## 1. What it is
 
-- **[UPSTREAM]** exists in Solana OS at commit `812b8c7`; the path is given.
-- **[OURS]** our design decision; the reason is given. "host-tested" next to it means the reference C code in [`../reference/code/`](../reference/code/) passed its tests on a development computer.
-- **[UNVERIFIED]** must be measured or confirmed on a badge; a fallback is given.
+BadgeOS is a fork of Solana OS. From upstream it keeps the Lua app runtime, the hardware layer, Wi-Fi, ESP-NOW, BLE, app push, the app-store client and the device key. The user interface is BadgeOS's own, and on top come the layers we add:
 
-Nothing in this design has run on a badge yet. Terms such as ATA, PDA, SAS, hint and TCB are defined in the [glossary](../reference/glossary.md).
+- a **shell**: the boot screen, the launcher, every settings page and the system dialogs, in the Receipt layout ([../ui/shell.md](../ui/shell.md)); upstream's shell is deleted,
+- a **wallet core** that is the only code able to produce a signature with the badge key,
+- an **approval engine** that owns the screen and buttons while the user decides,
+- an **app host** that adds permissions, native C++ apps, an ESP-NOW router and notifications,
+- **features** built on those (payments, payment requests with presence, contacts, history, balance),
+- **apps** (Lua and native) that use the features.
 
-## Layers
+All of our code is under `os/src/vk/` and a few sibling folders. Upstream files are changed only by marked hook lines, or are listed as replaced ([upstream-hooks.md](upstream-hooks.md)). Nothing a user can see, and no network identifier, names upstream: the credit is in the repository.
 
-The firmware is Solana OS with two additions: a **wallet core** below the app runtimes, and a **badge API** through which both Lua apps and compiled-in C++ apps reach it.
+## 2. The rule
+
+> An app can ask for a signature. Only the wallet core can produce one. Every signature belongs to one row of the signing-domain table. A row marked "button" signs only after the user presses SELECT on the wallet core's own screen, while the app that asked is not running.
+
+Everything in [../wallet/signing.md](../wallet/signing.md) and [../wallet/approval.md](../wallet/approval.md) exists to make that sentence true.
+
+## 3. Layers and trust
+
+| Layer | What is in it | Trust |
+|---|---|---|
+| Lua apps | `apps/<id>/` pushed at run time or installed from the store | **Untrusted.** Sandboxed by upstream (memory cap, time budget) and by us (permissions) |
+| Native apps | `src/native_apps/<id>/`, compiled into the image | **Trusted.** Not sandboxed. Reviewed like firmware. Still sign only through the wallet core |
+| Features | `src/vk/features/<name>/` | Trusted |
+| App host | `src/vk/host/` | Trusted |
+| Shell | `src/vk/shell/` | Trusted. Draws only when no app runs and no approval is open; never signs |
+| Wallet core, approval engine | `src/vk/wallet/`, `src/vk/ui/approval_screen.*` | Trusted; smallest possible |
+| Core services | `src/vk/core/` | Trusted |
+| Upstream (Solana OS) | everything else under `src/`, `os.ino` | Trusted, upstream |
+
+The security claim ("an app cannot sign, and cannot draw over or skip the approval") is a claim about **Lua apps**. Native apps share one address space with the firmware; rules and pre-flash checks stop mistakes there, not malice. Say so when asked.
+
+## 4. Source tree
+
+Paths are relative to `os/`, the folder at the repository root that holds the whole firmware: the fork of upstream's `firmware/solana-os/` with its main file renamed from `solana-os.ino` to `os.ino` (an Arduino sketch's main file must carry its folder's name).
 
 ```
-+----------------------------------------------------------------------------------+
-| APPS                                                                             |
-|  Lua apps  /apps/<id>/main.lua            C++ apps  src/native_apps/<id>/*.cpp   |
-|  (untrusted, sandboxed)                   (trusted, compiled in)                 |
-+-------------------------+----------------------------+---------------------------+
-| Lua runtime [UPSTREAM]  | Native runtime [OURS]      |   Shell [UPSTREAM]        |
-| lua_sdk/lua_runtime     | app_host/native_runtime    |   ui/shell (+ Wallet rows)|
-+-------------------------+----------------------------+---------------------------+
-| BADGE API (one contract)  Lua bindings lua_sdk/lib_*.cpp  |  C ABI app_host/badge_api.h
-+----------------------------------------------------------------------------------+
-| WALLET CORE [OURS]  src/wallet/                                                  |
-|  wallet (gate, policy)  wallet_ui (modal screens)  sol_* (decode, PDA, base58)   |
-|  pay_proto + pay_session (REQ/CHAL/PROOF)  attest (SAS)  rpc  audit  history     |
-+----------------------------------------------------------------------------------+
-| OS SERVICES [UPSTREAM]  identity  settings  app_store  net_route  wifi_mgr       |
-|  espnow_mgr  ble_mgr  push_server  cert_store  badge_log                         |
-+----------------------------------------------------------------------------------+
-| HAL [UPSTREAM]  display  buttons  leds  power  mic  badge_i2c  se050_t1/apdu     |
-+----------------------------------------------------------------------------------+
-| ESP32-S3-WROOM-1-N16R8 · ILI9341 320x240 · TCA9534 buttons · 2x WS2812B · SE050C2|
-+----------------------------------------------------------------------------------+
+os.ino                             upstream + hooks
+partitions.csv                     upstream
+README.md                          BadgeOS's short README with the credit line (upstream's is docs/os/reference/upstream-readme.md)
+UPSTREAM-HOOKS.md                  copy of the hook table and the replaced-files table (see upstream-hooks.md)
+src/                               upstream folders: apps/ hal/ identity/ lua/ lua_sdk/ net/ ui/ ...
+src/ui/                            shell.h (upstream, the interface), boot.h (upstream), boot.cpp (rewritten: no splash),
+                                   theme.h (edited: Receipt-light values); upstream's shell.cpp is deleted
+src/vk/
+  vk.h  vk.cpp                     vk::begin(), vk::update(), vk::modalActive(), vk::modalUpdate()
+  vk_build.h                       compile-time switches
+  vk_profile.h                     generated by scripts/build.sh (dev or release); gitignored
+  core/
+    registry.h                     the self-registration primitive (section 6)
+    service.h                      VK_SERVICE
+    config.h  config.cpp           NVS config store, VK_CONFIG_KEY
+    clock.h   clock.cpp            SNTP, time source, clock floor
+    serial.h  serial.cpp           USB serial commands: VK_SERIAL_COMMAND, VK_INFO_FIELD, VKHELP, VKINFO (config commands are in config.cpp)
+    fileio.h  fileio.cpp           the one file layer every store uses (stores.md); replaced by an in-memory one in host tests
+    wifi_net.h wifi_net.cpp        vk::wifi: saved Wi-Fi networks (NVS `vkwifi`), the join state machine, auto-join (ui/shell.md, Wi-Fi); host-tested
+  wallet/
+    pure/                          C99, no Arduino, host-tested
+      sol.h sol_b58.c sol_sha256.c sol_tx.c
+      vk_reason.h vk_reason.c      reason codes
+      vk_record.h vk_record.c      registry record parser
+      vk_frames.h vk_frames.c      ESP-NOW frame codec
+      vk_checks.h vk_checks.c      the check chain (pure function)
+    reason.h                       C++ alias of pure/vk_reason.h
+    crypto.h  crypto.cpp           Ed25519 verify backend
+    signer.h  signer.cpp           domain table, the only caller of identity::sign
+    approval.h approval.cpp        approval engine (state machine)
+    lua_wallet.h lua_wallet.cpp    badge.wallet core functions, badge.codec; luaBegin(), the ctx parsing shared by every wallet.begin* binding
+  host/
+    manifest.h manifest.cpp        app.ini keys we add
+    lifecycle.h lifecycle.cpp      VK_ON_APP_STOP, onAppStopping(), luaPaused()
+    permissions.h permissions.cpp  VK_PERMISSION, grants, pre-launch check
+    consent.h consent.cpp          first-run consent store
+    native.h native.cpp            native runtime
+    router.h router.cpp            ESP-NOW router, VK_ESPNOW_ROUTE
+    notify.h notify.cpp            notification inbox
+    home.h home.cpp                idle(): true when no app is running
+    lua_registry.h lua_registry.cpp  VK_LUA_FUNCTION, permission filtering
+  ui/
+    approval_screen.h approval_screen.cpp
+    leds.h leds.cpp                VK_LED_PATTERN, boot fill bar
+    repaint.h repaint.cpp          requestShellRepaint(), consumeShellRepaint()
+    theme.h theme.cpp              theme tokens, VK_THEME; receipt-light and receipt-dark
+    receipt.h receipt.cpp          the receipt drawing kit every screen uses (with the QR code)
+    keyboard.h keyboard.cpp        the on-screen keyboard: one text-entry screen for pages and native apps (ui/text-entry.md)
+    keyboard_core.h keyboard_core.c  its layout, cursor and text: pure C99, host-tested
+    lua_theme.cpp lua_receipt.cpp  badge.theme and badge.receipt: the theme and the kit for Lua apps
+    screen_power.h screen_power.cpp  service: backlight dim and sleep, the wake key (hook H25), keep-awake
+    lua_screen.cpp                 badge.screen.keep_awake
+    battery.h battery.cpp          service: low-battery levels, the one-time warning
+    power_core.h power_core.c      the pure logic of both (host-tested)
+    boot_screen.cpp                Receipt boot screen, called from the rewritten src/ui/boot.cpp
+  shell/                           the BadgeOS shell (ui/shell.md)
+    shell.cpp                      framework and screen stack; shell::begin(), update(), onAppStopped(), showError(), screenName()
+    screens.h                      the framework's interface: Screen, push(), pop(), home(), repaint()
+    page.h page.cpp                VK_SETTINGS_PAGE, VK_SETTINGS_ACTION; list and drawing helpers for pages
+    launcher.cpp                   the MENU screen
+    settings_list.cpp              the Settings list, built from the page registry
+    dialogs.cpp                    delete confirmation, app error, app-store offer, installing
+    pages/page_<id>.cpp            one file per settings page: theme wifi bluetooth espnow push store identity
+                                   display leds wallet inbox info console about
+  sdk/
+    badge_sdk.hpp                  native app SDK, BADGE_APP
+  features/
+    solana_pay/                    domain "solana": decode, checks glue, build_transfer
+    requests/                      domains "pay-req", "pay-proof"; payee requests; presence; request cache
+    store_reg/                     domain "store-reg" (app-store registration)
+    contacts/                      domain "contact"; frames; store; Lua
+    history/                       signature log store; Lua
+    balance/                       RPC poller; Lua (the launcher shows the balance)
+    bank/                          domain "bank" (optional, last)
+    devtools/                      dev serial commands (dev profile only); see testing.md
+src/native_apps/
+  inbox/  wallet_settings/  selftest/  nativetest/ (dev only)   one file each, self-registering (BADGE_APP)
+apps/                              Lua apps, one folder each; app.ini says where the launcher lists the app
+                                   (category, hidden) and how push-apps.sh installs it (profile, include).
+                                   No script or C++ file names an app. (upstream's six samples are deleted)
+templates/                         lua_app/ and native_app/: what scripts/new-app.sh copies for a new app
+lib/vk.lua                         shared Lua library (copied into each app when pushed)
+scripts/                           build.sh  preflash-check.sh  push-apps.sh  push_serial.py  new-app.sh
+                                   vkdev.py (serial tool: provision, push, test hooks)
+test/host/                         host tests (run.sh, test_*.c, vectors.*)
+test/device/                       scripted on-device tests driven by vkdev.py
 ```
 
-| Layer | What it does | Where it is documented |
-|---|---|---|
-| Apps | Home, Pay, Request, History, Checkout and the Tip Jar example. Lua apps are pushed to the badge at run time; C++ apps are compiled into the image. | [App platform overview](../app-platform/overview.md) |
-| Runtimes and shell | The Lua VM and its sandbox [UPSTREAM `src/lua_sdk/lua_runtime.cpp`]; a native runtime with the same lifecycle [OURS]; the launcher and Settings screens [UPSTREAM `src/ui/shell.cpp`], which gain a Wallet screen [OURS]. | [Upstream baseline](upstream-baseline.md), [Runtime and boot](runtime-and-boot.md) |
-| Badge API | One set of function names in three spellings: `badge.x.y` (Lua), `badge_x_y` (C), `badge::x::y` (C++). Our additions are implemented once and bound twice. [OURS] | [API reference](../app-platform/api-reference.md) |
-| Wallet core | Decodes a transaction, applies policy, draws the approval screen, and is the only code that can ask the key holder for a signature. Also the payment-protocol codec and sessions, the attestation check, the RPC client, the audit log and the history store. [OURS] | [Wallet C API](../wallet-core/api.md), [Signing gate](../wallet-core/signing-gate.md) |
-| OS services | Identity (the keypair), settings, the app catalogue, HTTP routing, Wi-Fi, ESP-NOW, BLE, the push server, CA certificates, logging. [UPSTREAM `src/identity/`, `src/net/`, `src/apps/`] | [Upstream baseline](upstream-baseline.md) |
-| HAL and board | Display, buttons, LEDs, battery, microphones, I²C, and the SE050 secure element transport. [UPSTREAM `src/hal/`] | [Upstream baseline](upstream-baseline.md) |
+Rule for every agent: **a file you create goes in the folder of the feature or layer you were assigned.** A change to any upstream file is a hook or a listed replacement and follows [upstream-hooks.md](upstream-hooks.md).
 
-## Trust zones
+## 5. Main loop
 
-| Zone | Contents | May touch the key? |
-|---|---|---|
-| **Key holder** | `identity.cpp` (software seed in RAM/NVS) and the SE050 | yes |
-| **Signing gate** | `wallet/wallet.cpp`, `wallet/wallet_ui.cpp`, `wallet/pay_session.cpp` | only by calling `identity::signGated(const SignToken&, …)`; `SignToken` can be constructed only by `wallet::Gate` (see [Key gate](../wallet-core/signing-gate.md#key-gate)) |
-| **Trusted computing base** | all native firmware, including compiled-in C++ apps | not by contract; technically reachable, because it shares the address space (see [Security model](../security/security-model.md#non-goals-and-residual-risks)) |
-| **Untrusted** | Lua apps, everything received by radio, HTTP responses, the laptop, the phone | never; can only call `badge.identity.sign` and wait |
+Upstream runs everything on one task (the Arduino `loopTask`). Each pass of `loop()`:
 
-```mermaid
-flowchart TB
-  subgraph UNTRUSTED["Untrusted"]
-    lua["Lua apps in /apps"]
-    radio["ESP-NOW frames"]
-    http["HTTP and RPC responses"]
-    hosts["Laptop and phone"]
-  end
-  subgraph TCB["Trusted computing base: all native firmware"]
-    api["Badge API: Lua bindings and C ABI"]
-    native["Compiled-in C++ apps"]
-    subgraph GATE["Signing gate"]
-      wallet["wallet.cpp: wallet::Gate, policy"]
-      ui["wallet_ui.cpp: approval modal"]
-      sess["pay_session.cpp: REQ, CHAL, PROOF"]
-    end
-    subgraph KEY["Key holder"]
-      ident["identity.cpp: signGated"]
-      se["SE050 object 0xF0000001"]
-      seed["software seed in NVS badgeid"]
-    end
-  end
-  lua -->|"badge.identity.sign"| api
-  native -->|"badge_identity_sign"| api
-  api -->|"wallet_sign_transaction"| wallet
-  radio -->|"wallet_pay_on_frame"| sess
-  http -->|"attestation and balance data"| wallet
-  hosts -->|"transaction bytes and claims, through an app"| lua
-  wallet --> ui
-  sess -->|"session-checked helpers"| wallet
-  wallet -->|"SignToken"| ident
-  ident --> se
-  ident --> seed
+```
+buttons::update(), power, mic, leds            upstream
+wifi, espnow_mgr::update(), ble                upstream; ESP-NOW frames go to vk::host::router (hook H3)
+push server, store client                      upstream
+vk::update()                                   hook H5: runs every registered service
+serial console                                 hook H6: vk::serial gets each line first
+if vk::modalActive():                          hook H4
+    vk::modalUpdate()                          approval engine draws and reads buttons; nothing else runs
+else:
+    routeButtons()                             upstream: buttons to the running app
+    runtime::update() or shell::update()       Lua app or native app (hook H8); with no app, the BadgeOS shell (src/vk/shell/)
+runtime::processRequests()                     upstream: launches and stops between frames
+vk::flush()                                    hook H24: upstream's display::flush(), counted. Sends the canvas to the panel
+                                               only if something drew on it during this pass (34 ms); otherwise nothing
 ```
 
-Three points about this picture:
+A pass in which nothing draws is about 1 ms. Every screen must therefore draw only when its picture changed: the shell does ([shell](../ui/shell.md#framework)), the approval does ([approval](../wallet/approval.md#screen)), and Lua apps do through `vk.ui.frame` ([Lua API](../platform/lua-api.md#drawing-only-when-something-changed)). Code that draws on every pass holds the whole badge at about 20 passes a second.
 
-1. The boundary that is **enforced** is the one around Lua. A Lua app runs in a VM with no binding that reaches the key, and source-only loading means it cannot bring native code. [UPSTREAM `src/lua_sdk/lua_runtime.cpp:243-249`, `src/lua/linit.c`]
-2. The boundary around the signing gate inside native code is a **compile-time convention** (a passkey type, an include rule and a grep rule). It stops mistakes. It does not stop hostile native code, because the ESP32-S3 has no MMU and every native function shares one address space. That is why compiled-in C++ apps are counted as part of the trusted computing base. [OURS]
-3. Data from the untrusted zone reaches the approval screen only after firmware has checked it: transaction bytes are decoded by the wallet core, radio frames are verified by `pay_session.cpp`, attestation accounts are fetched by `attest.cpp` and checked field by field by `attest_parse.c`. What an app says about a payment is a **hint**; a hint can lower the trust level shown, never raise it. [OURS]
+Consequences that other documents rely on:
 
-## The signing rule
+- While the approval is up, **no app code runs**: not `on_update`, not `on_draw`, not `on_button`, not `on_espnow`, not `on_ble`, and no app is launched or stopped. Three hooks make this true together: H4 skips the per-frame callbacks and defers launch and stop requests; H19 makes every other Lua callback a no-op; the router does not forward frames. An app cannot draw over the approval (upstream gives Lua `badge.gfx.flush`, which pushes to the panel mid-callback; it cannot be called if the app is not executing).
+- The signature is made in the loop, outside any Lua callback, so upstream's 250 ms callback budget and 12 s extension cap do not apply to it.
+- While the approval is up, **the shell does not run either**: `shell::update()` is not called, so no shell screen reads a button or draws. When the approval closes it calls `vk::ui::requestShellRepaint()` and the shell redraws on its next pass ([shell](../ui/shell.md#approval-notifications-themes)).
+- With no app running, the screen belongs to the shell: launcher, settings and the dialogs upstream's loop asks for (`shell::onAppStopped()`, `shell::showError()`). There is no launcher app and no service that relaunches one.
+- There is one task. Nothing in our code takes a lock, and nothing may block the loop for longer than a signature or one HTTP request. Long work is a state machine advanced by a service. The one exception is the balance feature's poll: its HTTP request runs on a background task, and the loop only hands it a job and picks up the answer through an atomic flag ([ui](../ui/ui.md#balance)). An app's own requests (`vk.rpc`, `wallet.refresh_balance`) still run in the loop.
 
-> An app can ask for a signature. Only the wallet core can produce one. A transaction signature is produced only after the wallet core's own approval screen and a SELECT press on that screen. Message signatures exist only in three fixed, domain-separated formats built by the wallet core.
+## 6. Self-registration
 
-The three message formats are the signed payment request (`pay-req:`), the proof of presence (`pay-proof:`) and the receipt (`pay-rcpt:`). Their bytes and the argument that none of them can be mistaken for a transaction are in [Message signing](../wallet-core/signing-gate.md#message-signing). A fourth format, the upstream app-store registration string, exists only in builds with `WALLET_ENABLE_BROKER 1` and is off by default.
+Every extensible list in BadgeOS is a **registry**: a linked list that objects add themselves to when the firmware starts. There is no central table to edit. Adding a thing is writing one macro line in the feature's own file; removing a feature is deleting its folder.
 
-Why the rule is built this way:
+`src/vk/core/registry.h`, complete:
 
-- **Why below the app layer.** The attacker in this project includes a malicious or compromised app. If the app drew the approval screen, the app could draw a false one. So the screen, the button handling and the call into the key holder all live in firmware, and the app is suspended on the same task while they run. An app that is not executing cannot draw, dim the backlight, read buttons or dismiss the prompt. [OURS]
-- **Why "every transaction", not "every signature".** A proof of presence must be answered within a few hundred milliseconds, so it cannot wait for a button. Instead the SELECT press that opens a request or receive session names what it authorises: proofs for one request id, for a bounded time, at most eight of them. This is narrower than the product requirement "every signature requires a physical button press", and the documents say so wherever it matters. [OURS]
-- **Why fixed formats.** A general "sign these bytes" call would let an app obtain a signature over bytes that are also a valid transaction. Fixed prefixes plus the strict transaction decoder make the two sets of bytes disjoint; this is host-tested in `test_pay.c`. [OURS] host-tested
+```cpp
+#pragma once
+namespace vk {
+// Derive T from Registered<T>. Every static T links itself into one list before setup() runs.
+template <class T>
+class Registered {
+ public:
+  Registered() : next_(head()) { head() = static_cast<T *>(this); }
+  static T *first() { return head(); }
+  T *next() const { return next_; }
+ private:
+  static T *&head() { static T *h = nullptr; return h; }   // function-local: no init-order problem
+  T *next_;
+};
+}  // namespace vk
+```
 
-## Decisions
+Iteration: `for (auto *x = T::first(); x; x = x->next())`. A registered struct whose own member is named `first` or `next` hides the registry's function of that name: `EspnowRoute` has a field `first`, so `EspnowRoute::first()` does not compile. For such a struct, and in generic code over any `T`, name the base class: `for (auto *x = Registered<T>::first(); x; x = x->Registered<T>::next())` (`vk.cpp` counts every registry this way; routes also have the helper `router::firstRoute()`). Order of registration is not defined; a kind that needs an order carries an `order` field and is sorted by its owner.
 
-Each decision has an identifier that other documents cite.
+The registries:
 
-| # | Decision | Status and reason |
-|---|---|---|
-| D1 | The build stays an **Arduino sketch built with `arduino-cli`**; our code is added as folders under `src/`. CMake is used only for host unit tests. | [UPSTREAM] build (`README.md:50-96`); [OURS] layout. `arduino-cli` compiles everything under `src/` recursively, so no build files change. |
-| D2 | The signing rule is enforced by a **blocking modal inside the firmware call**: `wallet_sign_transaction()` draws the approval screen and pumps buttons itself; the calling app (Lua or C++) is suspended on the same task until it returns. | [OURS] An app that is not executing cannot draw or skip; no scheduler changes are needed. |
-| D3 | Everything shown on the approval screen comes from firmware: decoded transaction bytes, firmware-derived token accounts, firmware-fetched attestation, firmware-verified presence. Apps supply **hints** only; a hint can lower the trust level shown, never raise it. | [OURS] The screen is the only thing the user can trust, so nothing an app says may improve it. |
-| D4 | The decoder is strict: exactly one instruction, SPL Token `TransferChecked`, classic Token program, 5 account keys, 1 signer. ComputeBudget, Memo, ATA-create, Token-2022 and everything else are "Unknown instruction" and blocked. | [OURS] host-tested. Requirement F3; priority-fee instructions can drain SOL; this is not a general wallet. See [Transaction decoder](../wallet-core/transaction-decoder.md). |
-| D5 | `identity.sign()` signs a transaction **message**, not a wire transaction. | [OURS] The first byte `0x01` is ambiguous between the two (one required signature in a message header, one signature in a wire transaction). |
-| D6 | Amounts cross every API as **decimal strings of raw base units**. | [UPSTREAM] constraint: Lua is built with 32-bit integers and `float` numbers (`src/lua/luaconf.h:125`), so a `u64` cannot cross as a number. |
-| D7 | Fast Ed25519: vendor **Monocypher 4.0.2** for verification and for software-key signing. Signatures are byte-identical to TweetNaCl's. | [OURS] host-tested for equivalence. Upstream says TweetNaCl costs about a second per signature (`src/identity/TWEETNACL-README:15-22`). On-device speed is [UNVERIFIED]; fallback `WALLET_ED25519_BACKEND 0`. See [Keys and the SE050](../wallet-core/keys-and-se050.md). |
-| D8 | C++ apps are **compiled into the firmware image** and listed in an explicit registry table. They are trusted code and part of the TCB. | [OURS] No MMU and no loader: a loaded native blob would have full privileges anyway. One table is one review point. |
-| D9 | One host API ("badge API") with identical names in Lua (`badge.x.y`), C (`badge_x_y`) and the C++ SDK (`badge::x::y`). Our additions are implemented once in C/C++ and bound twice. | [OURS] One contract to document and test. |
-| D10 | Payment-protocol frames are parsed, verified and answered **in firmware**, before any app sees them. | [OURS] Proof latency, and D3: presence shown on the approval screen must not depend on what an app parsed. |
-| D11 | The upstream broker client (app store) is **compiled out** by default (`WALLET_ENABLE_BROKER 0`). | [OURS] It signs without a button press [UPSTREAM `src/net/broker_client.cpp:508-513`] and can raise install prompts during judging. |
-| D12 | Red states disable signing (`block_red = 1`). | [OURS] The product flow says a bad signature, slow reply or missing attestation "blocks the payment before anything is signed". Fallback: `block_red = 0` turns red into hold-SELECT-3-s. |
+| Kind | Macro | Declared in | What a row adds | Reference |
+|---|---|---|---|---|
+| Service | `VK_SERVICE(name, begin_fn, update_fn)` | `core/service.h` | code run once at boot and once per loop | this file, §7 |
+| Config key | `VK_CONFIG_KEY(...)` | `core/config.h` | a provisioned setting | [../platform/config.md](../platform/config.md) |
+| Serial command | `VK_SERIAL_COMMAND(...)` | `core/serial.h` | a USB console command | [../platform/config.md](../platform/config.md) |
+| Signing domain | `VK_SIGN_DOMAIN(...)` | `wallet/signer.h` | a kind of signature | [../wallet/signing.md](../wallet/signing.md) |
+| Approval listener | `VK_ON_APPROVAL(ident, fn)` | `wallet/approval.h` | code told about every approval outcome | [../wallet/approval.md](../wallet/approval.md) |
+| App-stop listener | `VK_ON_APP_STOP(ident, fn)` | `host/lifecycle.h` | code told when the running app stops | [../platform/app-host.md](../platform/app-host.md#lifecycle-events) |
+| Reset listener | `VK_ON_RESET(ident, fn)` | `core/config.h` | code run when the wallet config is erased | [../platform/config.md](../platform/config.md#provisioning) |
+| Info field | `VK_INFO_FIELD(ident, name, fn)` | `core/serial.h` | one `name=value` pair in the `VKINFO` reply | [../platform/config.md](../platform/config.md#serial-commands) |
+| ESP-NOW route | `VK_ESPNOW_ROUTE(...)` | `host/router.h` | firmware handling for a frame type | [../protocol/espnow.md](../protocol/espnow.md) |
+| Permission | `VK_PERMISSION(...)` | `host/permissions.h` | a permission name apps can request | [../platform/app-host.md](../platform/app-host.md) |
+| Lua function | `VK_LUA_FUNCTION(...)` | `host/lua_registry.h` | one function on a `badge.<module>` table | [../platform/lua-api.md](../platform/lua-api.md) |
+| Native app | `BADGE_APP(...)` | `sdk/badge_sdk.hpp` | a compiled-in app in the launcher (its optional last argument names its folder) | [../platform/native-apps.md](../platform/native-apps.md) |
 
-Working name: these documents say "the OS" or "Badge OS". The product name is open. Firmware constant `WALLET_VERSION "0.1.0"`; `SOLANA_OS_API_VERSION` is raised from 1 [UPSTREAM `src/config.h:20`] to **2** [OURS: bindings were added].
+Lua apps are not a C++ registry: an app is a folder under `apps/`, and its own `app.ini` says where the launcher lists it and how it is installed ([app host](../platform/app-host.md#launcher-and-install-keys)). The launcher's folders are not a list either: a folder exists because an app's manifest names its `category`.
+| LED pattern | `VK_LED_PATTERN(...)` | `ui/leds.h` | a named LED animation | [../ui/ui.md](../ui/ui.md) |
+| Settings page | `VK_SETTINGS_PAGE(...)`, `VK_SETTINGS_ACTION(...)` | `shell/page.h` | a row in Settings and, for a page, its screen | [../ui/shell.md](../ui/shell.md#settings-page-registry) |
+| Theme | `VK_THEME(...)` | `ui/theme.h` | a colour theme the Theme setting cycles through | [../ui/ui.md](../ui/ui.md#theme) |
 
-## PRD open questions, resolved
+Step-by-step recipes for each are in [../guides/extending.md](../guides/extending.md).
 
-| Question | Decision | Fallback |
-|---|---|---|
-| SAS or custom registry? | **SAS**, exactly as the dashboard uses it: credential "MHacks Verified", schema `badge-identity` v1, one String field `name`, nonce = badge public key. [OURS: the dashboard is already built on it; PDA derivation (`test_sol.c`) and account parsing (`test_attest.c`) are host-tested] See [Attestation](../identity/attestation.md). | A signed allowlist baked into firmware (`wallet_defaults.h`: array of `{pubkey, name}`), same screen states, no revocation. |
-| Transaction submission path | **The badge submits directly over Wi-Fi** (phone hotspot) with JSON-RPC `sendTransaction`. [OURS: no extra device in the loop; `net_route` already picks Wi-Fi first, UPSTREAM `src/net/net_route.cpp:116-144`] See [Transaction building](../protocol/transaction-building.md). | The phone BLE bridge works with no code change (`net_route`), but only for submission and balance reads; identity checks over the bridge are shown as "not checked" ([Transport trust](../identity/attestation.md#transport-trust)). |
-| Spending cap value; can judges change it? | `cap` = **100.00 HACK** (raw `10000`): above it a second confirmation is required. `max` = **1000.00 HACK** (raw `100000`): above it the wallet refuses. Judges cannot change either on the badge; both are configuration pushed by the team. [OURS: the 10.00 HACK demo purchase is below the cap; the 500.00 HACK attack is above the cap and still reaches the screen] See [Config, limits and audit](../wallet-core/config-limits-audit.md). | Set `cap` = `max` to disable the second confirmation. |
-| REQ/CHAL/PROOF field encoding | **Binary, fixed-size, little-endian.** [OURS: Lua strings are byte-safe; 155/60/108 bytes fit the frame budgets with room to grow; base64 would add a third and put a decoder in the radio path] See [Payment protocol](../protocol/payment-protocol.md#messages). | None needed. |
-| PROOF deadline | Config `deadline_ms`, default **400 ms**, measured radio-to-radio on the payer. The PRD target of 250 ms is [UNVERIFIED] and is not reachable with an SE050 key (about 261 ms per signature, cited, not measured). | 800 ms if any badge signs with the SE050; 2500 ms if the fast Ed25519 backend is not shipped. |
-| Attack-console transport | **Wi-Fi HTTP polling** of the dashboard's badge listener. [OURS: the listener exists; BLE would need a sender nobody has written] Dashboard `.env`: `BADGE_LISTEN_HOST=<laptop hotspot IP>`, `BADGE_LISTEN_PORT=8788`. See [Dashboard integration](../integration/dashboard.md). | The dashboard's manual "Mark rejected" button stays usable. |
-| Attack transaction version | The decoder accepts **legacy and v0 without address lookup tables**. Dashboard `.env`: `ATTACK_TX_VERSION=legacy`. [OURS: legacy is what the badge builds itself; accepting v0 costs four lines] | — |
-| Product name | open | — |
+Self-registration relies on the linker keeping object files that nothing references by name. `arduino-cli` links the sketch's own objects directly (not from an archive), which keeps them. Checked on a badge in WP01 (2026-10-03): a `VK_SERVICE` in a file that nothing else references ran at boot and logged its line, and the six dev commands registered by `features/devtools/devtools.cpp` are counted in the `[vk] registries:` line. The fallback (one file `src/vk/registry_anchor.cpp` that references one symbol from each feature) is therefore not used and the file does not exist. If a count in the boot line is ever lower than the build should have, that file is the fix.
 
-## Requirements covered
+## 7. Services
 
-This document introduces the structure that all requirements rely on. It is the primary reference for none; it supports:
+```cpp
+// core/service.h
+namespace vk {
+struct Service : Registered<Service> {
+  const char *name;
+  void (*begin)();     // may be nullptr; called once from vk::begin()
+  void (*update)();    // may be nullptr; called every loop from vk::update()
+  Service(const char *n, void (*b)(), void (*u)()) : name(n), begin(b), update(u) {}
+};
+}
+#define VK_SERVICE(ident, begin_fn, update_fn) \
+  static vk::Service vk_service_##ident(#ident, begin_fn, update_fn)
+```
 
-- F1, F2 (the signing rule and where it is enforced; detail in [Signing gate](../wallet-core/signing-gate.md)).
-- F3 (decision D4; detail in [Transaction decoder](../wallet-core/transaction-decoder.md)).
-- Non-functional "Security: no signing path exists outside the firmware approval screen" (trust zones, D2, D11).
-- The PRD open questions (table above).
+`vk::begin()` is called once from `setup()` (hook H2), after `runtime::begin()` and before the radios start. It loads the config, runs the domain-table self-check ([signing](../wallet/signing.md#self-check)) and calls every service's `begin`. `vk::update()` calls every service's `update`. A service's `update` must return within a few milliseconds unless it is doing one network request or one signature.
 
-## Open items
+## 8. Features and what they need
 
-- [UNVERIFIED] On-device Ed25519 speed for Monocypher, TweetNaCl and the SE050 (D7). Fallback: `WALLET_ED25519_BACKEND 0` and a longer `deadline_ms`.
-- [UNVERIFIED] PROOF deadline of 400 ms and the PRD target of 250 ms. Fallback: 800 ms with an SE050 signer, 2500 ms with TweetNaCl.
-- [UNVERIFIED] Nothing has been compiled with `arduino-cli` or flashed. First step of the [implementation plan](../roadmap/implementation-plan.md) is to build and flash upstream unmodified.
-- Product name: open.
+A feature is a folder under `src/vk/features/`. It registers what it needs and exposes nothing else. Dependencies between features go through small interfaces owned by the wallet core, so a missing feature degrades instead of breaking the build.
+
+| Feature | Registers | Needs | If removed |
+|---|---|---|---|
+| `solana_pay` | domain `solana`; Lua `begin_solana`, `build_transfer`, `check_record`, `wire_tx` | wallet core | no payments |
+| `requests` | domains `pay-req`, `pay-proof`; routes for frame types 1–3; Lua `request_*`, `requests`, `challenge`, `presence`; service | wallet core, router | payments still work but are "record only" (amber): no signed request, no presence |
+| `store_reg` | domain `store-reg` | wallet core | the app-store client cannot register (hook H10 then refuses). The client is off by default anyway: no broker URL is compiled in (hook H23) |
+| `contacts` | domain `contact`; store; Lua `contact_*`, `contacts` (frames 16–17 are exchanged by the Contacts app itself) | wallet core | no contacts |
+| `history` | approval listener; store; Lua `history` | approval engine | nothing is logged |
+| `balance` | service (its poll on a background task); Lua `balance`, `token_account`, `refresh_balance` | config, upstream HTTP | the launcher's `BALANCE` row shows `--`; apps must fetch balances themselves |
+| `bank` | domain `bank`; Lua `begin_bank` | wallet core, `requests` | no bank rail |
+| `devtools` | the dev serial commands listed in [testing](../testing/testing.md#dev-hooks) | dev profile | no unattended testing |
+
+Two cross-feature interfaces exist, both function pointers declared in `wallet/signer.h` ([signing](../wallet/signing.md#cross-feature-interfaces)): `presenceLookup`, set by `requests` ("what is the presence result for this request id?"; when null, presence counts as none), and `tokenInfoLookup`, set by `balance` ("what is this badge's token account and balance for this mint?"; when null, `build_transfer` needs an explicit `source`).
+
+## 9. Data flow of one payment
+
+Payer badge A pays merchant badge B 10.00 HACK. Each step names the document that specifies it.
+
+1. B's Request app calls `wallet.request_open{...}`. B's firmware builds and signs a REQ frame and broadcasts it once a second ([protocol](../protocol/espnow.md#req)).
+2. A's router receives the REQ, caches it and, if the Pay app is not open, posts a notification ([app host](../platform/app-host.md#notifications)).
+3. A's Pay app lists `wallet.requests()`, the user picks one, the app calls `wallet.challenge(mac, req)`. A's firmware sends CHAL; B's firmware answers with PROOF; A's firmware records `present`, `late` or `bad_sig` ([protocol](../protocol/espnow.md#presence)).
+4. The Pay app fetches B's registry record from the backend ([integration](../integration/backend.md)), a recent blockhash from the RPC node, and calls `wallet.build_transfer{...}` ([Lua API](../platform/lua-api.md)).
+5. The Pay app calls `wallet.begin_solana(msg, {record=..., record_sig=..., req=...})`. The wallet core decodes the bytes and runs the check chain ([checks](../wallet/checks.md)), builds an approval request and opens the approval ([approval](../wallet/approval.md)). The app stops running.
+6. The user reads the firmware's screen and presses SELECT. The wallet core signs ([signing](../wallet/signing.md)). The history feature logs it.
+7. The app runs again, `wallet.poll()` returns the signature, the app submits the transaction and sends RESULT to B.
+
+## 10. Compile-time switches
+
+`src/vk/vk_build.h`. These are the only build-time choices; everything else is provisioned config ([../platform/config.md](../platform/config.md)).
+
+| Macro | Dev profile | Release profile | Meaning |
+|---|---|---|---|
+| `VK_PROFILE_DEV` | 1 | 0 | set by `scripts/build.sh` in the generated `vk_profile.h` |
+| `VK_DEV_ALLOW_UNVERIFIED` | 1 | 0 | SELECT allowed on some red screens, with a permanent "DEV BUILD" banner ([approval](../wallet/approval.md#dev-builds)) |
+| `VK_TEST_HOOKS` | 1 | 0 | compiles `features/devtools/` (screen dump, button injection) |
+| `VK_ED25519_BACKEND` | 0 | 0 | 0 = TweetNaCl (upstream), 1 = Monocypher ([signing](../wallet/signing.md#crypto-backend)) |
+| `VK_FORCE_SOFTWARE_KEY` | 0 | 0 | 1 = never use the SE050 for the key ([signing](../wallet/signing.md#key)) |
+| `VK_API_VERSION` | 2 | 2 | reported to apps as `badge.api_version` |
+| `VK_SE050_QUARANTINE` | 1 | 1 | 1 = never address the SE050 on the I²C bus (hook H21; the button/I²C fix): the badge behaves as if it had no secure element, so its key is a software key |
+
+A judge badge is flashed only with the release profile. `scripts/preflash-check.sh` enforces it ([../guides/build-flash-provision.md](../guides/build-flash-provision.md#pre-flash-checks)).
+
+## 11. Conventions
+
+- Buttons are named by the silkscreen: SELECT, CANCEL, UP, DOWN, LEFT, RIGHT. In code SELECT is `BTN_A` / Lua `"a"`, CANCEL is `BTN_B` / Lua `"b"`.
+- Token amounts cross every API as decimal strings in display units (`"12.50"`) or as raw bytes inside signed structures. Never as Lua numbers: upstream Lua has 32-bit integers.
+- Public keys are 32 raw bytes in C and in frames, base58 in URLs, JSON and Lua return values, lowercase hex inside the registry record's signed text.
+- Log lines use `badge_log::tagf("vk", ...)` or a feature tag (`"pay"`, `"req"`, `"contact"`).
+- Every refusal has a reason code from [../reference/reasons.md](../reference/reasons.md). No function returns a bare `false` to an app.
+- The product is written **BadgeOS**, one word. On the badge the header reads `BADGEOS`. The prefix `vk` in paths, namespaces and macros, and the Lua table `badge`, are identifiers and are not renamed. "Solana" in an identifier (`solana_pay`, domain `solana`, `begin_solana`, `sol_*.c`) means the blockchain the badge pays on, never the OS ([names that stay](upstream-hooks.md#names-that-stay)).
+- `[UPSTREAM]` marks a fact read from Solana OS at commit `812b8c7`. `[UNVERIFIED]` marks something that must be confirmed on a badge and always comes with a fallback.
