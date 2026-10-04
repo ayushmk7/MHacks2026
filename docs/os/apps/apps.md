@@ -21,7 +21,7 @@ Every app BadgeOS ships: what it is for, its permissions, its screens and its fl
 | Sign test | `signtest` | Lua, dev only | `sign,net` |
 | Home | `home` | Lua | `net` |
 | Pay | `pay` | Lua | `sign,net,espnow` |
-| Request | `request` | Lua | `request,net,espnow` |
+| Request | `request` | Lua | `request,net,espnow,history` |
 | History | `history` | Lua | `history` |
 | Contacts | `contacts` | Lua | `contacts,espnow` |
 | Game | `game` | Lua | `sign,net,espnow,storage` |
@@ -106,9 +106,11 @@ As built (WP40):
 
 ## Pay
 
-1. **List.** `wallet.requests()` sorted by `rssi`, strongest first: claimed name, amount, signal bars. Empty: "No requests nearby". Refreshes every 500 ms.
+1. **List.** `wallet.requests()` sorted by `rssi`, strongest first: claimed name, amount, signal bars. Empty: "No requests nearby: open Request on the payee" (`config.empty`). Refreshes every 500 ms. While Wi-Fi is not joined (`badge.wifi.connected()` false) the footer says `No Wi-Fi: Settings > Wi-Fi` (`config.offline_hint`), before any payment is tried.
 2. **Pay.** SELECT on a request starts `vk.pay.start{request = entry}`. The screen shows the flow's state (`checking presence`, `fetching record`, `building`, `approve on the firmware screen`, `sending`, `confirming`).
-3. **Result.** `done`: "Paid", the short signature, green LEDs; a RESULT frame has been sent to the payee. `failed`: the reason in words; for a firmware block (`unverified`, `revoked`, `mismatch`, `bad_proof`, `expired`) the app calls `vk.report{...}` so the dashboard shows the refusal.
+3. **Result.** `done`: "Paid", the short signature, green LEDs; a RESULT frame has been sent to the payee. `failed`: the reason in words from the shared table (`vk.reason_text(flow:reason())`, [lua-api](../platform/lua-api.md#reason-texts)); with no network the words say what to do next (join Wi-Fi in Settings > Wi-Fi, start the dashboard, ...). For a firmware block (`unverified`, `revoked`, `mismatch`, `bad_proof`, `expired`) the app calls `vk.report{...}` so the dashboard shows the refusal; not when the red UNVERIFIED came from a missing registry route, which is shown as `registry_missing` ("the listener has no registry"), not as an impostor.
+
+The payment carries the request's id as its memo: `vk.pay` passes `req_id` to `wallet.build_transfer` ([request memo](../wallet/solana-payments.md#request-memo)). Without it the approval would be red WRONG MEMO and the payee could not match the payment.
 
 The app shows the request's *claimed* name in the list, labelled as a claim. The verified name appears only on the firmware approval.
 
@@ -122,33 +124,52 @@ As built (WP41):
 ## Request
 
 1. **Amount.** UP/DOWN change the amount by `config.step` minor units; LEFT/RIGHT by ten steps. SELECT opens the request.
-2. **Waiting.** `wallet.request_open{amount = ...}`; the screen shows the amount, "waiting for payment", seconds left, and `request_status().proofs` as "badges checking: n". CANCEL closes the request.
-3. **Paid.** On a RESULT frame (`vk.result_parse`) for this `req_id` with status 0: `vk.confirm(ref)` until `confirmed` (poll every 2 s, up to 30 s), then the left stub's label reads `PAID` (drawn in the `STAMP_OK` colour) and the LEDs go green. Status 1 or 2: "Payer cancelled" / "Payment failed". A RESULT is never trusted without the on-chain confirmation.
+2. **Waiting.** `wallet.request_open{amount = ...}`; the screen shows the amount, "waiting for payment", seconds left, and `request_status().proofs` as "badges checking: n". The screen is kept awake (`vk.keep_awake`) while a request is open. CANCEL closes the request.
+3. **Checking.** A RESULT frame (`vk.result_parse`) for this `req_id` with status 0 goes to a `vk.receive` watch ([lua-api](../platform/lua-api.md#vkreceive)): the transaction it names is fetched (`getTransaction`, every `config.confirm_every_ms` for up to `config.confirm_for_ms` while it is not visible) and the firmware checks that it pays this request (`wallet.verify_payment`: this badge's account, the amount, the token, the request memo, the payer's signature). The stub's label reads `CHECKING`, never "received" or "paid", until that check passes.
+4. **Paid.** Only after the check: the stub's label reads `PAID` (in the `stamp_ok` colour), the LEDs go green, the request is closed, and the payment is written to the history (`wallet.record_received`, a `received` row).
 
-As built (WP41):
+As built (WP41, then the payment check):
 
-- **A RESULT with status 1 or 2 does not end the request.** RESULT is unauthenticated, so a forged frame must not be able to close a request: "Payer cancelled" / "Payment failed" is a line on the waiting screen and the request stays open. The same holds when a status-0 RESULT is not confirmed on chain within 30 s ("Payment not confirmed"). Further RESULT frames are ignored while one is being confirmed.
-- Once a payment is confirmed the app calls `wallet.request_close`, so the badge stops asking.
-- Body rows. Amount: `UP / DOWN`, `LEFT / RIGHT`, `SELECT open`. Waiting: `EXPIRES IN`, `BADGES CHECKING n`, `STATUS on air`, and "waiting for payment" under the rule. Paid: `CONFIRMED on chain`, `REF`, `STATUS closed`; there is no `FROM` row, because a RESULT carries no verified payer.
+- **A RESULT never ends the request by itself.** Status 1 or 2 puts "The payer says they cancelled / the payment failed. Still waiting." on the waiting screen; the request stays open. A status-0 RESULT whose transaction is not this payment, failed on chain, or was not found in time puts the reason on the waiting screen in the payee's words (`vk.reason_text(reason, "receive")`), and the request stays open.
+- **Several RESULTs.** RESULTs are taken while waiting and while checking; up to three reported transactions are checked in turn and the first that verifies is PAID, so a forged RESULT with a junk signature cannot make the app ignore the real one.
+- **No network.** A check that failed for want of network or time leaves the footer `SELECT check again`, which checks the same transactions again.
+- **CANCEL while checking asks first** (a real payment may be being checked): the note reads "A payment is being checked. Close the request anyway? ..." and the footer `SELECT keep checking` / `CANCEL close anyway`. A second CANCEL closes the request; the check goes on while the question is up, and a payment that verifies meanwhile still shows PAID. CANCEL while only waiting closes at once.
+- Body rows. Amount: `UP / DOWN`, `LEFT / RIGHT`, `SELECT open`. Waiting: `EXPIRES IN`, `BADGES CHECKING n`, `STATUS on air`. Checking: `REPORTED paid`, `REF` (the signature being checked), `VERIFIED not yet`. Paid: `VERIFIED on chain`, `FROM` (the payer's key, from the verified transaction), `HISTORY saved` / `not saved`.
+- Permission `history` is for `record_received`. A failure to write the row does not undo PAID (`REQ record failed <why>`).
 - Defaults in `config.lua`: `start = 1000` (10.00) and `step = 50` (0.50). Decimals come from `wallet.tokens()`.
-- With no clock it logs `REQ err no_time` and stays open. Log lines: `REQ amount <text>`, `REQ open <req_id>`, `REQ closed`.
+- With no clock it logs `REQ err no_time` and stays open. Log lines: `REQ amount <text>`, `REQ open <req_id>`, `REQ err <reason>`, `REQ result <status>`, `REQ confirm pending` / `REQ confirm failed <reason>`, `REQ paid <signature>`, `REQ payer <address>`, `REQ recorded` / `REQ record failed <why>`, `REQ expired`, `REQ closed`.
 
 ## History
 
 A scrolling list of `wallet.history(64)`: time, outcome (coloured), amount and symbol, recipient name or short address, app. SELECT on a row shows the full record including the reason and the short signature.
 
-As built (WP42): each list row is the name (or the short address, or the domain's label) and the amount with its symbol, coloured by outcome; the subline is `HH:MM · app · outcome`. A record with no amount (a confirmation, which is what `VKDEMOAPPROVE` writes) shows the label `Confirmation` and the outcome word as the coloured value. The detail screen has nine rows (Time in UTC, Outcome, Reason, Amount, To, Address, App, Domain, Signature short); UP/DOWN step between records; CANCEL goes detail → list → launcher. Cancelled and timed-out records use the warning ink (`tone` in `config.lua`; the simulation uses the faint ink). Log line: `HIST n <count>`.
+As built (WP42, then the three row kinds):
+
+- **Approval rows** (`kind` `approval`): the name (or the short address, or the domain's label) and the amount with its symbol, coloured by outcome; the subline is `HH:MM · app · outcome`. A record with no amount (a confirmation, which is what `VKDEMOAPPROVE` writes) shows the label `Confirmation` and the outcome word as the coloured value. Detail: nine rows (Time in UTC, Outcome, Reason, Amount, To, Address, App, Domain, Signature short); a payment that answered a request shows `Request <req_id>` in place of Domain.
+- **Automatic rows** (`auto`): the domain's label (`Payment request`, `Presence proof`, `Contact card`, `Store registration`, from `config.domain_label`) and `<n> signed` in the faint ink; the subline is `HH:MM · app · automatic`. Detail: Time, Kind, Domain, What, Signatures, Outcome, App, then one row per signature, newest first, as many as fit (`HH:MM:SS` and the first 16 hex characters of its digest).
+- **Received rows** (`received`): `From <short payer>` and `+<amount> <symbol>` in the `stamp_ok` ink; the subline is `HH:MM · app · received`. Detail: Time, Kind, Amount, From, Request, App, Signature.
+- Reasons are in the shared short words (`vk.reason_text(reason, "short")`).
+- **Refresh.** The list is read again every `config.refresh_ms` (10 s) while it shows, when a detail screen is closed, and on SELECT when the list is empty (footer `SELECT reload`). The cursor stays on its record when new ones arrive on top.
+- UP/DOWN step between records; CANCEL goes detail → list → launcher. Cancelled and timed-out records use the warning ink (`tone` in `config.lua`; the simulation uses the faint ink). Log line: `HIST n <count>`, on start and whenever a reload finds another count.
 
 ## Contacts
 
-- **List.** `wallet.contacts()`: name, short address, date added. RIGHT removes after a confirm line.
+- **List.** `wallet.contacts()`: name, short address, date added. RIGHT removes after a confirm line (SELECT removes, CANCEL keeps, other keys do nothing). With no contact yet, the "Swap contacts" row's subline says `no contacts yet: SELECT to swap with a badge`.
 - **Swap** (SELECT on "Swap contacts"): the app broadcasts `wallet.contact_hello()` once a second and listens.
   - On a CONTACT_HELLO from another badge (`vk.hello_parse`): show "Swap with `<name>`?"; SELECT sends `wallet.contact_card(hello)` unicast to it.
   - On a CONTACT_CARD: `wallet.contact_accept(card)`; on success show "Saved `<name>`" and pulse green; on failure show the reason.
   - Both badges do both halves, so each ends up with the other's card.
 - Names here are labelled "self-named"; they are not verified identities.
 
-As built (WP43): `wallet.contacts()` is oldest first; the list shows newest first with the date as `Oct 3` (blank when `added` is 0). The card frame is matched with `vk.T_CONTACT_CARD`. ESP-NOW is left on when swap mode ends. Log lines: `CON list <n>`, `CON swap on`, `CON swap off`.
+As built (WP43): `wallet.contacts()` is oldest first; the list shows newest first with the date as `Oct 3` (blank when `added` is 0). The card frame is matched with `vk.T_CONTACT_CARD`. ESP-NOW is left on when swap mode ends. Refusals are in the shared words (`vk.reason_text(reason, "contact")`). Log lines: `CON list <n>`, `CON removed <short>`, `CON swap on`, `CON swap off`, `CON hello <short>`, `CON card sent <short>`, `CON saved <name>`, `CON accept failed <reason>`.
+
+The badges heard in swap mode are a [`vk.peers`](../platform/lua-api.md#vkpeers) list of `config.max_peers` (4):
+
+- A new badge is never kept waiting for room: the one heard longest ago leaves, except the selected one and one a card was just sent to. Made-up HELLOs from many MACs therefore cannot lock an honest badge out; it is listed again on its next HELLO.
+- A HELLO from a listed MAC under another key is ignored: it cannot rename the badge or change the key a card is made for.
+- After a card is sent to a badge its HELLO frame is held for `config.card_hold_ms` (10 s), so a HELLO sent as its MAC during the swap cannot change what the card answered. The same key's new nonce is taken after that.
+
+There is no "Pay" action on a contact. A contact's address is a device key that may have no registry record, so a payment to it would be red UNVERIFIED RECIPIENT; it would also need an amount screen and the `sign` and `net` permissions (a new consent). Paying a person goes through their Request.
 
 ## Game
 

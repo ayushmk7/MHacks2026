@@ -17,7 +17,7 @@ return {
   -- ttl_s = 60,                 -- default: config req_ttl_s (10 to 600)
 
   status_ms = 500,               -- how often the waiting screen reads the request's status
-  confirm_every_ms = 2000,       -- how often a reported payment is looked up on chain
-  confirm_for_ms = 30000,        -- and for how long, before it counts as not confirmed
-  led_ms = 1500,                 -- how long the LEDs stay green after a confirmed payment
+  confirm_every_ms = 2000,       -- how often a reported transaction is looked up on chain
+  confirm_for_ms = 30000,        -- and for how long, before it counts as not found
+  led_ms = 1500,                 -- how long the LEDs stay green after a verified payment
 }

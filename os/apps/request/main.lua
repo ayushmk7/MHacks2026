@@ -1,29 +1,35 @@
--- Request: asks to be paid, waits, and confirms the payment on chain (docs/os/apps/apps.md, "Request").
+-- Request: asks to be paid, waits, and checks the payment on chain (docs/os/apps/apps.md, "Request").
 --
 --   amount      UP/DOWN change the amount by config.step minor units, LEFT/RIGHT by ten steps.
 --               SELECT opens the request. The amount is an integer count of minor units and is
 --               turned into text ("10.00") by amount_text(); it is never a float.
 --   waiting     wallet.request_open: the firmware signs and broadcasts the request and answers
 --               presence checks. The screen shows the seconds left and how many badges are checking.
---   confirming  a RESULT frame for this request said "paid". A RESULT is not authenticated, so the
---               transaction it names is looked up on chain (vk.confirm) every
---               config.confirm_every_ms for up to config.confirm_for_ms.
---   paid        only after the chain said "confirmed": the label reads PAID and the LEDs go green.
+--               The screen is kept awake while a request is open.
+--   checking    a RESULT frame for this request said "paid". A RESULT is not authenticated, so
+--               vk.receive fetches the transaction it names and the firmware checks that it pays
+--               this request (wallet.verify_payment); up to three reported transactions are
+--               checked in turn, so a forged RESULT cannot hide the real one.
+--   paid        only after that check passed: the label reads PAID, the LEDs go green, and the
+--               payment is written to the history (wallet.record_received).
 --
--- A RESULT that says cancelled or failed, or a payment that does not confirm, puts a line on the
--- waiting screen and the request stays open: anyone in range can send such a frame, so it must not
--- be able to end a request.
+-- A RESULT that says cancelled or failed, or a transaction that is not this payment, puts a line
+-- on the waiting screen and the request stays open: anyone in range can send such a frame, so it
+-- must not be able to end a request.
 --
--- CANCEL: on the amount screen it exits; on every other screen it closes the request and goes back
--- to the amount.
+-- CANCEL: on the amount screen it exits. While waiting it closes the request and goes back to the
+-- amount. While checking it first asks (a real payment may be being checked): a second CANCEL
+-- closes anyway, SELECT keeps checking.
 --
 -- Log lines (test/device/t_app_request.py, t_pay_2.py), each "[app] REQ ...":
 --   amount <text>       the amount shown, on start and after every change
 --   open <req_id>       a request was opened
 --   err <reason>        request_open refused
 --   result <status>     a RESULT frame for the open request: 0 paid, 1 rejected, 2 failed
---   confirm <status>    what the chain said: confirmed, pending, failed, or the network error
---   paid <signature>    confirmed on chain (base58)
+--   confirm <state>     what the check says: pending, or failed <reason>
+--   paid <signature>    the payment was verified (base58)
+--   payer <address>     who paid, from the verified transaction (base58)
+--   recorded / record failed <why>     the history row
 --   expired             the request ran out
 --   closed              CANCEL closed the request
 
@@ -31,27 +37,20 @@ local vk = require("vk")
 local config = require("config")
 local ui, wallet = vk.ui, badge.wallet
 
-local REASONS = {          -- why request_open refused, in words (reference/reasons.md)
-  not_provisioned = "This badge is not set up",
-  no_time = "The clock is not set (no_time). Join Wi-Fi to set it",
-  busy = "Two requests are already open",
-  bad_arg = "This amount cannot be requested",
-  sign_failed = "The key did not sign",
-}
-
-local LABELS = {amount = "PAY ME", waiting = "WAITING", confirming = "RECEIVED", paid = "PAID"}
+local LABELS = {amount = "PAY ME", waiting = "WAITING", confirming = "CHECKING", paid = "PAID"}
 
 local view = "amount"      -- "amount", "waiting", "confirming" or "paid"
+local asking = false       -- CANCEL was pressed while checking: the question is on screen
 local symbol, decimals, unit = "", 2, 100
 local minor = 0            -- the amount, in minor units
 local want_open = false    -- SELECT was pressed: open from on_update (one signature)
 local request = nil        -- {id =, expiry =, amount =}
+local watch = nil          -- vk.receive for the open request
+local watch_state = nil    -- the state last logged
 local proofs = 0
 local note = nil           -- a line under the rows
 local note_bad = false
 local status_at = 0
-local ref = nil            -- the 64-byte transaction signature a RESULT named
-local confirm_at, confirm_until = 0, 0
 local shown = false        -- the current screen has been drawn at least once
 
 local function amount_text(n)
@@ -61,6 +60,11 @@ end
 
 local function set_note(text, bad)
   note, note_bad = text, bad or false
+end
+
+local function set_view(name)
+  view, shown = name, false
+  ui.dirty()
 end
 
 local function change(delta)
@@ -76,13 +80,6 @@ local function change(delta)
   badge.log("REQ amount " .. amount_text(minor))
 end
 
--- The LEDs in a theme colour: badge.theme gives RGB565, the LEDs take 0..255 each.
-local function pulse(token)
-  local c = math.floor(ui.color(token))
-  local r, g, b = c // 2048, (c // 32) % 64, c % 32
-  badge.led.pulse(r * 255 // 31, g * 255 // 63, b * 255 // 31, config.led_ms)
-end
-
 local function open()
   if not badge.espnow.enabled() then badge.espnow.enable(true) end
   local text = amount_text(minor)
@@ -91,23 +88,36 @@ local function open()
   }
   if not opened then
     why = tostring(why)
-    set_note(REASONS[why] or why, true)
+    set_note(vk.reason_text(why, "request"), true)
     badge.log("REQ err " .. why)
     return
   end
   request = {id = opened.req_id, expiry = opened.expiry, amount = text}
-  proofs, ref = 0, nil
+  watch = vk.receive.start{
+    req_id = opened.req_id, amount = text, symbol = config.symbol,
+    every_ms = config.confirm_every_ms, for_ms = config.confirm_for_ms,
+  }
+  watch_state = nil
+  proofs = 0
   set_note("waiting for payment")
   status_at = badge.millis()
-  view = "waiting"
+  set_view("waiting")
+  vk.keep_awake(true)
   badge.log("REQ open " .. request.id)
 end
 
 -- Back to the amount screen. The firmware keeps nothing of a closed request that this app needs.
 local function to_amount(text, bad)
-  request, ref = nil, nil
-  view = "amount"
+  request, watch, asking = nil, nil, false
+  set_view("amount")
   set_note(text, bad)
+  vk.keep_awake(false)
+end
+
+local function close_request()
+  wallet.request_close(request.id)
+  badge.log("REQ closed")
+  to_amount(nil)
 end
 
 local function seconds_left()
@@ -127,24 +137,39 @@ local function read_status(now)
   end
 end
 
-local function confirm_step()
-  local status, why = vk.confirm(ref)          -- one blocking request
-  badge.log("REQ confirm " .. tostring(status or why))
-  local now = badge.millis()
-  if status == "confirmed" then
-    wallet.request_close(request.id)           -- paid: stop asking
-    view = "paid"
-    set_note("payment confirmed on chain")
-    pulse("green")
-    badge.log("REQ paid " .. tostring(badge.codec.b58enc(ref)))
-  elseif status == "failed" then
-    view = "waiting"
-    set_note("Payment failed", true)
-  elseif now >= confirm_until then
-    view = "waiting"
-    set_note("Payment not confirmed", true)
+local function paid()
+  wallet.request_close(request.id)             -- paid: stop asking
+  asking = false
+  set_view("paid")
+  set_note("payment verified on chain")
+  vk.led_pulse("green", config.led_ms)
+  vk.keep_awake(false)
+  badge.log("REQ paid " .. tostring(watch.sig))
+  badge.log("REQ payer " .. tostring(watch.payer))
+  if watch.recorded then
+    badge.log("REQ recorded")
   else
-    confirm_at = now + config.confirm_every_ms
+    badge.log("REQ record failed " .. tostring(watch.record_error))
+  end
+end
+
+-- One step of the check (at most one blocking call), and what it means for the screen.
+local function check_step()
+  local state, detail = watch:update()
+  local logged = state == "failed" and ("failed " .. tostring(detail)) or state
+  if logged ~= watch_state then
+    watch_state = logged
+    if state ~= "paid" and state ~= "waiting" then badge.log("REQ confirm " .. logged) end
+  end
+  if state == "paid" then
+    paid()
+  elseif state == "pending" and view == "waiting" then
+    set_view("confirming")
+    set_note("checking the payment on chain")
+  elseif state == "failed" and view == "confirming" then
+    asking = false
+    set_view("waiting")
+    set_note(vk.reason_text(detail, "receive"), true)
   end
 end
 
@@ -172,31 +197,34 @@ function on_update(dt)
   if not request then return end
   local now = badge.millis()
   if view == "confirming" then
-    -- Not before the RECEIVED screen has been drawn: the lookup blocks for up to vk.timeout_ms.
-    if shown and now >= confirm_at then confirm_step() end
-  elseif view == "waiting" and now - status_at >= config.status_ms then
-    read_status(now)
+    -- Not before the CHECKING screen has been drawn: a look-up blocks for up to vk.timeout_ms.
+    if shown then check_step() end
+  elseif view == "waiting" then
+    if watch:pending() > 0 then
+      check_step()
+    elseif now - status_at >= config.status_ms then
+      read_status(now)
+    end
   end
 end
 
--- The payer's RESULT (protocol/espnow.md). Unauthenticated: status 0 only starts the lookup.
+-- The payer's RESULT (protocol/espnow.md). Unauthenticated: status 0 only queues the check.
 function on_espnow(mac, data, rssi)
-  if view ~= "waiting" or not request then return end
+  if not request or not watch or (view ~= "waiting" and view ~= "confirming") then return end
   local result = vk.result_parse(data)
   if not result or result.req_id ~= request.id then return end
   badge.log("REQ result " .. result.status)
-  if result.status == vk.RESULT_OK then
-    ref = result.ref
-    view = "confirming"
-    shown = false
-    set_note("confirming on chain")
-    confirm_at = badge.millis()
-    confirm_until = confirm_at + config.confirm_for_ms
-  elseif result.status == vk.RESULT_REJECTED then
-    set_note("Payer cancelled", true)
-  else
-    set_note("Payment failed", true)
+  if watch:result(result) then
+    if view == "waiting" then
+      set_view("confirming")
+      set_note("checking the payment on chain")
+    end
+  elseif view == "waiting" and result.status == vk.RESULT_REJECTED then
+    set_note("The payer says they cancelled. Still waiting.", true)
+  elseif view == "waiting" and result.status == vk.RESULT_FAILED then
+    set_note("The payer says the payment failed. Still waiting.", true)
   end
+  ui.dirty()
 end
 
 function on_button(key, pressed)
@@ -217,10 +245,17 @@ function on_button(key, pressed)
     end
   elseif view == "paid" then
     if key == "a" or key == "b" then to_amount(nil) end
-  elseif key == "b" then                       -- waiting or confirming: CANCEL closes the request
-    wallet.request_close(request.id)
-    badge.log("REQ closed")
-    to_amount(nil)
+  elseif view == "confirming" then
+    if key == "b" then
+      if asking then close_request() else asking = true end   -- a real payment may be being checked
+    elseif key == "a" and asking then
+      asking = false
+    end
+  elseif key == "b" then                       -- waiting: CANCEL closes the request
+    close_request()
+  elseif key == "a" and watch and watch:retryable() > 0 and watch:again() > 0 then
+    set_view("confirming")                     -- the last check failed for want of network or time
+    set_note("checking the payment on chain")
   end
 end
 
@@ -257,11 +292,25 @@ local function body_rows()
       {"STATUS", "on air"},
     }
   end
-  local short = vk.short(badge.codec.b58enc(ref) or "")
   if view == "confirming" then
-    return {{"REPORTED", "paid"}, {"REF", short}, {"CONFIRMED", "not yet"}}
+    return {{"REPORTED", "paid"}, {"REF", vk.short(watch:checking() or "")}, {"VERIFIED", "not yet"}}
   end
-  return {{"CONFIRMED", "on chain", ui.color("stamp_ok")}, {"REF", short}, {"STATUS", "closed"}}
+  return {
+    {"VERIFIED", "on chain", ui.color("stamp_ok")},
+    {"FROM", vk.short(watch.payer)},
+    {"HISTORY", watch.recorded and "saved" or "not saved"},
+  }
+end
+
+local function footer()
+  if view == "amount" then return "SELECT open", "CANCEL back" end
+  if view == "paid" then return "SELECT new request", "CANCEL back" end
+  if view == "confirming" then
+    if asking then return "SELECT keep checking", "CANCEL close anyway" end
+    return "", "CANCEL close"
+  end
+  if watch and watch:retryable() > 0 then return "SELECT check again", "CANCEL close" end
+  return "", "CANCEL close"
 end
 
 function on_draw()
@@ -281,7 +330,7 @@ function on_draw()
   end
   ui.barcode(20, 128, 106, 44)
 
-  -- Body: the title, three rows, a rule, one note.
+  -- Body: the title, three rows, a rule, one note (or the question while checking).
   ui.title("REQUEST", 30, ui.BODY_CX)
   local rows = body_rows()
   for i = 1, #rows do
@@ -289,21 +338,18 @@ function on_draw()
   end
   local rule_y = 56 + #rows * ui.ROW_PITCH
   ui.rule(rule_y, x0, x1)
-  if note then
-    local color = ui.color(note_bad and "stamp_bad" or "sub")
-    local lines = wrap(note, (x1 - x0) // 6)
-    for i = 1, math.min(#lines, 4) do
+  local line, bad = note, note_bad
+  if asking then
+    line, bad = "A payment is being checked. Close the request anyway? You may lose track of it.", true
+  end
+  if line then
+    local color = ui.color(bad and "stamp_bad" or "sub")
+    local lines = wrap(line, (x1 - x0) // 6)
+    for i = 1, math.min(#lines, 6) do
       ui.text_center(lines[i], ui.BODY_CX, rule_y + 10 + (i - 1) * 13, color)
     end
   end
-
-  if view == "amount" then
-    ui.footer("SELECT open", "CANCEL back")
-  elseif view == "paid" then
-    ui.footer("SELECT new request", "CANCEL back")
-  else
-    ui.footer("", "CANCEL close")
-  end
+  ui.footer(footer())
 end
 
 -- Draw only when the screen changed (lib/vk.lua, "ui.frame"): a frame every pass would hold the

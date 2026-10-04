@@ -9,4 +9,9 @@ return {
   signal_dbm = {-55, -67, -78},
 
   led_ms = 1500,                 -- how long the LEDs stay green after a confirmed payment
+
+  -- The list with no request heard: what to do about it.
+  empty = "No requests nearby: open Request on the payee",
+  -- The list's footer while Wi-Fi is not joined (a payment would fail at its first network step).
+  offline_hint = "No Wi-Fi: Settings > Wi-Fi",
 }

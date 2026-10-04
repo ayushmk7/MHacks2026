@@ -10,6 +10,10 @@
 --   vk.record    report, feed                      the laptop at config listener_url (permission net)
 --   vk.frame_type, result_frame, result_parse, hello_parse, app_frame, app_body      ESP-NOW frames
 --   vk.pay       the payer flow as a state machine (permissions sign, net, espnow)
+--   vk.receive   the payee's check of a RESULT before PAID (permission net; history to record it)
+--   vk.reason_text, vk.reasons, vk.offline      one text for every reason, for every app
+--   vk.peers     badges heard nearby by MAC (Contacts)
+--   vk.keep_awake, vk.led_pulse
 --   vk.ui        the Receipt look: the firmware's kit (badge.receipt), or badge.gfx without it
 --
 -- Rules this file keeps:
@@ -325,8 +329,26 @@ local function config_url(name)
   return (url:gsub("/+$", ""))
 end
 
--- One request. Returns the status code and the body, or nil and a message (no route, timeout, ...).
-local function request(method, url, body)
+-- A transport failure (no answer at all) is returned as one of these codes, so that every app can
+-- say what to do next (vk.reason_text). The transport's own message is kept in vk.last_error.
+--   no_wifi                not joined: badge.http has no route ("wifi not connected", "no network")
+--   no_route               the phone bridge, the only route, failed
+--   rpc_unreachable        a route, but the Solana node (config rpc_url) did not answer
+--   listener_unreachable   a route, but the laptop (config listener_url) did not answer
+--   bad_url                rpc_url or listener_url is not a URL the badge can use
+local NOT_JOINED = {["wifi not connected"] = true, ["no network"] = true}
+local BRIDGE_DOWN = {["bridge unavailable"] = true, ["bridge failed"] = true}
+local OFFLINE = {no_wifi = true, no_route = true, rpc_unreachable = true, listener_unreachable = true}
+
+vk.last_error = nil
+
+-- vk.offline(reason) -> true for the four codes above that mean "no network": the app can then
+-- offer the next step (the texts of vk.reason_text name it).
+function vk.offline(reason) return OFFLINE[reason] == true end
+
+-- One request to `server` ("rpc" or "listener"). Returns the status code and the body, or nil and
+-- a transport code (above).
+local function request(method, url, body, server)
   local http = badge.http
   local code, reply
   if method == "GET" then
@@ -334,19 +356,42 @@ local function request(method, url, body)
   else
     code, reply = http.post(url, body, "application/json", vk.timeout_ms)
   end
-  if not code then return nil, tostring(reply or "request failed") end
+  if not code then
+    local message = tostring(reply or "request failed")
+    vk.last_error = message
+    if NOT_JOINED[message] then return nil, "no_wifi" end
+    if BRIDGE_DOWN[message] then return nil, "no_route" end
+    if message == "bad url" then return nil, "bad_url" end
+    return nil, server .. "_unreachable"
+  end
   return code, reply or ""
 end
 
--- POSTs a JSON body to <listener_url><path>. Returns true, or nil and a message.
+-- When the firmware's balance fetch answers "timeout" (no route, or no answer), which of the
+-- no-network codes it was. badge.wifi needs the permission net; without it, rpc_unreachable.
+local function balance_reason(why)
+  if why ~= "timeout" then return why end
+  local wifi = badge.wifi
+  local ok, joined = pcall(function() return wifi and wifi.connected() end)
+  if ok and joined == false then return "no_wifi" end
+  return "rpc_unreachable"
+end
+
+-- POSTs a JSON body to <listener_url><path>. Returns true, or nil and a message. A 2xx reply
+-- whose JSON body says {"ok": false} is a refusal, not a success: nil and its `reason` (the
+-- backend answers 200 {"ok":false,"reason":"bad_request"} to a body it will not take).
 local function listener_post(path, body)
   local url, why = config_url("listener_url")
   if not url then return nil, why end
   local text, bad = json.encode(body)
   if not text then return nil, bad end
-  local code, reply = request("POST", url .. path, text)
+  local code, reply = request("POST", url .. path, text, "listener")
   if not code then return nil, reply end
   if code < 200 or code > 299 then return nil, "listener http " .. code end
+  local parsed = json.decode(reply)
+  if type(parsed) == "table" and parsed.ok == false then
+    return nil, type(parsed.reason) == "string" and parsed.reason ~= "" and parsed.reason or "listener refused"
+  end
   return true
 end
 
@@ -357,7 +402,7 @@ function vk.rpc(method, params)
   if params == nil or (type(params) == "table" and next(params) == nil) then params = json.array() end
   local body, bad = json.encode({jsonrpc = "2.0", id = 1, method = method, params = params})
   if not body then return nil, bad end
-  local code, reply = request("POST", url, body)
+  local code, reply = request("POST", url, body, "rpc")
   if not code then return nil, reply end
   local parsed = json.decode(reply)
   if type(parsed) ~= "table" then
@@ -393,7 +438,8 @@ function vk.send_tx(wire_b64)
 end
 
 -- vk.confirm(sig) -> "confirmed", "pending" or "failed". `sig` is base58, or the 64 raw bytes
--- (the `ref` of a RESULT frame).
+-- (the `ref` of a RESULT frame). It says only that *some* transaction with that signature landed,
+-- not that it paid anyone: a payee checks a RESULT with vk.receive, never with this.
 function vk.confirm(sig)
   if type(sig) ~= "string" or sig == "" then return nil, "bad_arg" end
   if #sig == 64 then sig = badge.codec.b58enc(sig) end
@@ -409,17 +455,35 @@ function vk.confirm(sig)
   return "pending"
 end
 
--- vk.record(address) -> record, sig (bytes), or nil, "unverified" when the registry has no record
--- for that key (404), or nil, message.
+-- True when a 404 reply says the registry has no record for the key (integration/backend.md: the
+-- listener answers {"error":{"code":"not_found","message":"no registry record for this key"}}),
+-- rather than that the route does not exist ({"error":{..., "message":"no such route"}}).
+local function names_missing_record(reply)
+  local parsed = json.decode(reply)
+  if type(parsed) ~= "table" then return false end
+  local err = parsed.error
+  local text = type(err) == "table" and err.message or err
+  if type(text) ~= "string" then text = parsed.message end
+  if type(text) ~= "string" then return false end
+  text = text:lower()
+  return text:find("record", 1, true) ~= nil or text:find("attestation", 1, true) ~= nil
+end
+
+-- vk.record(address) -> record, sig (bytes), or nil, reason:
+--   "unverified"        the registry answered 404 and says it has no record for that key;
+--   "registry_missing"  a 404 that does not say so: the listener has no registry route (or is not
+--                       the dashboard). Not an impostor warning, but no record either;
+--   a transport code (listener_unreachable, no_wifi, ...) or another message.
+-- Neither 404 is ever a record: a payment goes on to the firmware's red UNVERIFIED RECIPIENT.
 function vk.record(address)
   if type(address) ~= "string" or #address > 44 or not address:find("^[1-9A-HJ-NP-Za-km-z]+$") then
     return nil, "bad_arg"
   end
   local url, why = config_url("listener_url")
   if not url then return nil, why end
-  local code, reply = request("GET", url .. "/registry/" .. address)
+  local code, reply = request("GET", url .. "/registry/" .. address, nil, "listener")
   if not code then return nil, reply end
-  if code == 404 then return nil, "unverified" end
+  if code == 404 then return nil, names_missing_record(reply) and "unverified" or "registry_missing" end
   if code ~= 200 then return nil, "registry http " .. code end
   local parsed = json.decode(reply)
   if type(parsed) ~= "table" or type(parsed.record) ~= "string" or type(parsed.sig) ~= "string" then
@@ -457,9 +521,15 @@ function vk.report(event)
 end
 
 -- vk.feed(sig_b58, req) -> true. Tells the laptop about a confirmed payment
--- (<listener_url>/feed/solana). `req` is the REQ frame that was paid, or nil.
+-- (<listener_url>/feed/solana). `req` is the REQ frame that was paid. A payment that answers no
+-- request (a shop) is not posted: the backend refuses req = null (200 {"ok":false}), so it gives
+-- nil, "no request" with no HTTP request, and logs why.
 function vk.feed(sig_b58, req)
   if type(sig_b58) ~= "string" or sig_b58 == "" then return nil, "bad_arg" end
+  if type(req) ~= "string" or req == "" then
+    badge.log("vk feed skipped: no request (the backend refuses req null)")
+    return nil, "no request"
+  end
   return listener_post("/feed/solana", {tx_sig = sig_b58, req = feed_req(req)})
 end
 
@@ -495,7 +565,8 @@ function vk.result_frame(req_id_hex, status, sig_bytes)
 end
 
 -- vk.result_parse(data) -> {req_id = 16 hex characters, status = 0..2, ref = 64 bytes}, or nil.
--- A RESULT is unauthenticated: confirm `ref` on chain (vk.confirm) before showing "paid".
+-- A RESULT is unauthenticated: check `ref` with vk.receive (getTransaction + wallet.verify_payment)
+-- before showing "paid".
 function vk.result_parse(data)
   if vk.frame_type(data) ~= T_RESULT or #data ~= RESULT_LEN then return nil end
   local status = data:byte(13)
@@ -552,12 +623,16 @@ end
 --               approval is then amber instead of green.
 --   record      vk.record. No record (404) is not a failure either: the flow goes on with no
 --               record and pays the address itself, so the firmware shows red UNVERIFIED
---               RECIPIENT and nothing can be signed.
+--               RECIPIENT and nothing can be signed. flow.record_miss says which 404 it was
+--               ("unverified" or "registry_missing"), and flow:reason() reads it.
 --   blockhash   vk.blockhash
 --   approve     wallet.build_transfer and wallet.begin_solana, then wallet.poll. The firmware
---               pauses the app while its approval is open.
+--               pauses the app while its approval is open. A request payment passes
+--               req_id = request.req_id, so the firmware writes the request memo (without it the
+--               approval is red WRONG MEMO); a free memo is used only for a payment with no request.
 --   submit      vk.send_tx
---   confirm     vk.confirm every 2 s for up to 30 s, then vk.feed (failures ignored)
+--   confirm     vk.confirm every 2 s for up to 30 s, then vk.feed (failures ignored; a payment
+--               with no request is not fed: the backend refuses req null)
 -- When paying a request the payee is sent a RESULT frame: status 0 with the signature once the
 -- payment is confirmed (and also when it was accepted by the node but not confirmed in time: the
 -- payee confirms on chain itself), 1 when the approval did not sign, 2 when the transaction
@@ -632,7 +707,8 @@ function STEPS.record(flow)
   if record then
     flow.record, flow.record_sig = record, sig
     flow.destination = flow.destination or record_account(record) or flow.to
-  elseif sig == "unverified" then
+  elseif sig == "unverified" or sig == "registry_missing" then
+    flow.record_miss = sig
     flow.destination = flow.destination or flow.to
   else
     return flow_fail(flow, sig)
@@ -651,9 +727,12 @@ function STEPS.approve(flow, now)
   local wallet = badge.wallet
   if not flow.begun then
     if not flow.msg then
+      local request = flow.request
       local msg, why = wallet.build_transfer({
         destination = flow.destination, amount = flow.amount, blockhash = flow.blockhash,
-        symbol = flow.symbol, memo = flow.memo,
+        symbol = flow.symbol,
+        memo = not request and flow.memo or nil,            -- a request payment's memo is its id,
+        req_id = request and request.req_id or nil,         -- written by the firmware
       })
       if not msg then return flow_fail(flow, why) end
       flow.msg = msg
@@ -739,12 +818,21 @@ function Flow:update()
       flow_fail(self, "not_provisioned")
     elseif wallet.token_account(self.symbol) == nil then
       local ok, why = wallet.refresh_balance()
-      if not ok then flow_fail(self, why) end
+      if not ok then flow_fail(self, balance_reason(why)) end
     end
     return self.state, self.detail
   end
   STEPS[state](self, now)
   return self.state, self.detail
+end
+
+-- flow:reason() -> the reason to show the user once the flow failed (nil otherwise): the detail,
+-- except that a red UNVERIFIED RECIPIENT that came from a missing registry route is
+-- "registry_missing", so it does not read as an impostor (the approval stayed red either way).
+function Flow:reason()
+  if self.state ~= "failed" then return nil end
+  if self.detail == "unverified" and self.record_miss == "registry_missing" then return "registry_missing" end
+  return self.detail
 end
 
 local function is_text(value)
@@ -789,6 +877,466 @@ function pay.start(opts)
   end
   flow.detail = nil
   return flow
+end
+
+-- ---------------------------------------------------------------------------------------------
+-- vk.receive: the payee's check of a payment (docs/os/platform/lua-api.md, "vk.receive")
+-- ---------------------------------------------------------------------------------------------
+--   local watch = vk.receive.start{ req_id = req.req_id, amount = "10.00",
+--                                   [symbol =], [to =], [payer =], [record = true],
+--                                   [every_ms =], [for_ms =] }
+--   function on_espnow(mac, data) watch:result(data) end         -- every frame; it filters
+--   local state, detail = watch:update()                         -- every frame
+--
+-- A RESULT frame is unauthenticated: anyone in range can send one naming any transaction. So a
+-- status-0 RESULT only queues its `ref` (the transaction signature) to be checked; the payment is
+-- "paid" only once the transaction itself has been fetched (getTransaction), did not fail on
+-- chain (meta.err), and the firmware's wallet.verify_payment says those bytes pay this request:
+-- this badge's token account, the amount, the token, the request memo, the payer's signature.
+--
+-- States:
+--   "waiting"  no status-0 RESULT to check (status 1 and 2 are only noted in watch.reported)
+--   "pending"  checking one or more refs
+--   "paid"     detail = {payer =, sig =} (base58, from the verified transaction). Final
+--   "failed"   detail = the reason the last ref was refused: verify_payment's reason (mismatch,
+--              bad_proof, undecodable), "transaction failed", "not confirmed" (never visible in
+--              for_ms), or a no-network code. Not final: another RESULT, or watch:again(), goes
+--              back to "pending". Final only for a watch that cannot work (bad_arg, unsupported:
+--              watch.fatal).
+--
+-- Several RESULTs: up to receive.slots (3) distinct refs are held and checked in turn (each
+-- update looks up the next one that is due), so a forged RESULT with a junk ref cannot make the
+-- watch ignore the real one; the first ref that verifies wins. A fourth ref is still taken: the
+-- held ref tried most often (the oldest on a tie) makes room. A refused ref is remembered and not
+-- tried again. A sender that keeps sending fresh junk refs faster than they are checked can delay
+-- PAID (denial of service); nothing it sends can make PAID appear.
+--
+-- update() makes at most one blocking call: one getTransaction (vk.timeout_ms at most), or one
+-- wallet.refresh_balance (when verify_payment needs this badge's token account), or the check
+-- (verify_payment, about 18 ms, then record_received). Each ref is looked up every every_ms for
+-- up to for_ms from its first look-up.
+--
+-- record (default true): after a verified payment, wallet.record_received writes the received row
+-- to the history (permission history). A failure there (no permission, file full) does not undo
+-- the payment: watch.recorded is false and watch.record_error says why.
+--
+-- Fields an app may read: state, detail, payer, sig, recorded, record_error, reported (the last
+-- status 1 or 2 heard), last_reason and last_detail (of the last refused ref), fatal.
+
+local receive = {}
+vk.receive = receive
+
+receive.slots = 3               -- refs held at once
+receive.every_ms = 2000         -- between two look-ups of one ref
+receive.for_ms = 30000          -- how long one ref is looked up before it counts as not confirmed
+receive.remember = 8            -- refused refs remembered, so they are not tried again
+
+local Watch = {}
+Watch.__index = Watch
+
+local ZERO_REF = string.rep("\0", 64)
+-- Refusals that may pass on a later try (the transaction appears, the network comes back).
+local FINAL = {mismatch = true, bad_proof = true, undecodable = true, ["transaction failed"] = true}
+
+local function positive(value, default)
+  if value == nil then return default end
+  if math.type(value) ~= "integer" or value <= 0 then return nil end
+  return value
+end
+
+function receive.start(opts)
+  local watch = setmetatable({state = "failed", detail = "bad_arg", fatal = true, queue = {},
+                              refused = {}, refused_order = {}, again_list = {}}, Watch)
+  if type(opts) ~= "table" or not is_text(opts.req_id) or #opts.req_id ~= 16 or opts.req_id:find("%X")
+      or not is_text(opts.amount) then
+    return watch
+  end
+  for _, key in ipairs({"symbol", "to", "payer"}) do
+    if opts[key] ~= nil and not is_text(opts[key]) then return watch end
+  end
+  local every, window = positive(opts.every_ms, receive.every_ms), positive(opts.for_ms, receive.for_ms)
+  if not every or not window then return watch end
+  if not badge.wallet.verify_payment then
+    watch.detail = "unsupported"                -- a firmware with no payment check: never paid
+    return watch
+  end
+  watch.req_id, watch.amount = opts.req_id:lower(), opts.amount
+  watch.symbol, watch.to, watch.expect_payer = opts.symbol, opts.to, opts.payer
+  watch.record = opts.record ~= false
+  watch.every_ms, watch.for_ms = every, window
+  watch.state, watch.detail, watch.fatal = "waiting", nil, false
+  return watch
+end
+
+local function queue_ref(watch, ref)
+  local queue = watch.queue
+  if #queue >= receive.slots then
+    local victim = 1
+    for i = 2, #queue do
+      if queue[i].tries > queue[victim].tries then victim = i end
+    end
+    table.remove(queue, victim)
+  end
+  queue[#queue + 1] = {ref = ref, sig58 = badge.codec.b58enc(ref), tries = 0, next_at = 0}
+  watch.state, watch.detail = "pending", nil
+end
+
+-- watch:result(data) -> true when this RESULT queued a new ref to check. `data` is the frame (any
+-- ESP-NOW payload: others are ignored) or a table from vk.result_parse.
+function Watch:result(data)
+  local result = type(data) == "table" and data or vk.result_parse(data)
+  if type(result) ~= "table" or type(result.req_id) ~= "string" or result.req_id:lower() ~= self.req_id then
+    return false
+  end
+  if result.status ~= vk.RESULT_OK then
+    self.reported = result.status               -- never decisive: anyone can send it
+    return false
+  end
+  if self.fatal or self.state == "paid" then return false end
+  local ref = result.ref
+  if type(ref) ~= "string" or #ref ~= 64 or ref == ZERO_REF or self.refused[ref] then return false end
+  for i = 1, #self.queue do
+    if self.queue[i].ref == ref then return false end
+  end
+  for i = #self.again_list, 1, -1 do
+    if self.again_list[i] == ref then table.remove(self.again_list, i) end
+  end
+  queue_ref(self, ref)
+  return true
+end
+
+-- watch:pending() -> the number of refs being checked; watch:checking() -> the base58 signature
+-- of the next one, or nil.
+function Watch:pending() return #self.queue end
+function Watch:checking() return self.queue[1] and self.queue[1].sig58 end
+
+-- watch:retryable() -> the number of refs that were given up for a reason that may pass (not
+-- found in time, no network); watch:again() queues them again (at most receive.slots), each with
+-- a new window, and returns how many.
+function Watch:retryable() return #self.again_list end
+
+function Watch:again()
+  if self.fatal or self.state == "paid" then return 0 end
+  local n = 0
+  while #self.again_list > 0 and #self.queue < receive.slots do
+    queue_ref(self, table.remove(self.again_list, 1))
+    n = n + 1
+  end
+  return n
+end
+
+local function fail_watch(watch, reason)
+  watch.fatal, watch.queue = true, {}
+  watch.state, watch.detail = "failed", reason
+end
+
+local function refuse(watch, cand, reason, detail)
+  for i = #watch.queue, 1, -1 do
+    if watch.queue[i] == cand then table.remove(watch.queue, i) end
+  end
+  if FINAL[reason] then
+    watch.refused[cand.ref] = true
+    local order = watch.refused_order
+    order[#order + 1] = cand.ref
+    if #order > receive.remember then watch.refused[table.remove(order, 1)] = nil end
+  else
+    local list = watch.again_list
+    list[#list + 1] = cand.ref
+    if #list > receive.slots then table.remove(list, 1) end
+  end
+  watch.last_reason, watch.last_detail = reason, detail
+  if #watch.queue == 0 then watch.state, watch.detail = "failed", reason end
+end
+
+-- Not this time: look again after every_ms, until the ref's window is over.
+local function later(watch, cand, now, reason)
+  if now >= cand.until_ms then return refuse(watch, cand, reason) end
+  cand.next_at = now + watch.every_ms
+end
+
+local function expected_for(watch, cand)
+  return {amount = watch.amount, req_id = watch.req_id, symbol = watch.symbol, to = watch.to,
+          payer = watch.expect_payer, sig = cand.ref}
+end
+
+local function fetch(watch, cand, now)
+  cand.tries = cand.tries + 1
+  local tx, why = vk.rpc("getTransaction", {cand.sig58,
+    {encoding = "base64", commitment = vk.commitment, maxSupportedTransactionVersion = 0}})
+  if not tx then
+    -- A null result: the node does not have it (yet) at this commitment.
+    return later(watch, cand, now, why == "rpc reply has no result" and "not confirmed" or why)
+  end
+  local meta = type(tx) == "table" and tx.meta
+  local body = type(tx) == "table" and tx.transaction
+  if type(meta) ~= "table" or type(body) ~= "table" or type(body[1]) ~= "string" then
+    return later(watch, cand, now, "rpc reply not understood")
+  end
+  if meta.err ~= nil then return refuse(watch, cand, "transaction failed") end
+  local raw = badge.codec.b64dec(body[1])
+  if not raw or raw == "" then return later(watch, cand, now, "rpc reply not understood") end
+  cand.raw = raw                                -- checked by the next update
+end
+
+local function check_payment(watch, cand)
+  local wallet = badge.wallet
+  local expected = expected_for(watch, cand)
+  local ok, info, detail = wallet.verify_payment(cand.raw, expected)
+  if ok then
+    if watch.record then
+      local called, done, why = pcall(wallet.record_received, cand.raw, expected)
+      watch.recorded = called and done == true
+      if not watch.recorded then watch.record_error = tostring(called and why or done) end
+    end
+    watch.payer, watch.sig = info.payer, info.sig
+    watch.queue, watch.again_list = {}, {}
+    watch.state, watch.detail = "paid", {payer = info.payer, sig = info.sig}
+    return
+  end
+  if info == "unsupported" and detail == "to" and not cand.refreshed then
+    cand.need_refresh = true                    -- learn this badge's token account, then again
+    return
+  end
+  if info == "bad_arg" or info == "unsupported" then return fail_watch(watch, info) end
+  cand.raw = nil
+  refuse(watch, cand, info, detail)
+end
+
+function Watch:update()
+  if self.fatal or self.state == "paid" then return self.state, self.detail end
+  local now = badge.millis()
+  local cand
+  for i = 1, #self.queue do
+    if now >= self.queue[i].next_at then cand = self.queue[i] break end
+  end
+  if not cand then return self.state, self.detail end
+  cand.until_ms = cand.until_ms or now + self.for_ms
+  if cand.need_refresh then
+    local ok, why = badge.wallet.refresh_balance()
+    if ok then
+      cand.need_refresh, cand.refreshed = nil, true
+    else
+      later(self, cand, now, balance_reason(why))
+    end
+  elseif cand.raw then
+    check_payment(self, cand)
+  else
+    fetch(self, cand, now)
+  end
+  return self.state, self.detail
+end
+
+-- ---------------------------------------------------------------------------------------------
+-- Reason texts: one table for every app (docs/os/reference/reasons.md)
+-- ---------------------------------------------------------------------------------------------
+-- vk.reason_text(reason, [context]) -> a sentence for the user, with the next step when there is
+-- one. `reason` is a reason code of reasons.md, a code of this library (no_wifi, no_route,
+-- rpc_unreachable, listener_unreachable, bad_url, registry_missing) or a message of a network
+-- helper ("rpc http 503", "rpc_url not set", ...); anything else is shown as it is.
+-- `context` picks other words for codes whose meaning depends on who asks:
+--   "receive"  the payee checking a transaction (vk.receive)
+--   "request"  wallet.request_open refusing
+--   "contact"  wallet.contact_accept / contact_card refusing
+--   "short"    a few words, for a row's value (History)
+-- or is a table of the app's own overrides. A context falls back to the common table.
+
+vk.REASON_MAX = 96              -- the longest text, so that it fits a screen's note lines
+
+local REASONS = {
+  ok = "Done.",
+  cancelled = "You cancelled.",
+  timeout = "Not answered in time.",
+  undecodable = "The payment could not be read. Nothing was signed.",
+  unverified = "The recipient has no verified record. It may be an impostor: do not pay.",
+  revoked = "The recipient's record was revoked. Do not pay.",
+  expired = "The record or the request has expired. Ask for a new request.",
+  mismatch = "The payment does not match the record or the request. Nothing was signed.",
+  bad_proof = "The badge that answered is not the recipient on record. Do not pay.",
+  over_cap = "The amount is over this badge's limit.",
+  no_time = "The clock is not set. Join Wi-Fi in Settings > Wi-Fi to set it.",
+  busy = "The wallet is busy. Try again in a moment.",
+  denied = "This app is not allowed to do that.",
+  not_provisioned = "This badge is not set up yet. Provision it over USB.",
+  too_long = "The payment is too long for this badge's key to sign.",
+  sign_failed = "The key did not sign.",
+  bad_arg = "That could not be used.",
+  unsupported = "This badge or firmware cannot do that.",
+  idle = "Nothing was waiting.",
+  over_daily = "Over today's spending limit. Try tomorrow, or raise day_limit over USB.",
+  low_battery = "Battery too low to approve a payment. Plug in USB power.",
+  -- This library's codes.
+  no_wifi = "No network: Wi-Fi is not joined. Join Wi-Fi in Settings > Wi-Fi.",
+  no_route = "No network: the phone bridge failed. Join Wi-Fi in Settings > Wi-Fi.",
+  rpc_unreachable = "The Solana node did not answer. Check the hotspot's internet, then try again.",
+  listener_unreachable = "The laptop listener did not answer. Start the dashboard, then try again.",
+  bad_url = "rpc_url or listener_url is not a usable address. Fix it over USB.",
+  registry_missing = "The listener has no registry, so the recipient could not be checked. Fix the dashboard.",
+  ["transaction failed"] = "The transaction failed on chain. Nothing was paid.",
+  ["not confirmed"] = "Sent, but not confirmed in time. Check History later.",
+  ["rpc reply not understood"] = "The Solana node's answer was not understood. Check rpc_url.",
+  ["rpc reply has no result"] = "The Solana node did not have it. Try again.",
+  ["registry reply not understood"] = "The registry's answer was not understood. Check the dashboard.",
+}
+vk.reasons = REASONS
+
+local CONTEXTS = {
+  receive = {
+    undecodable = "That transaction is not a payment this badge can read.",
+    mismatch = "That transaction is not this payment.",
+    bad_proof = "That transaction's signature is not valid.",
+    unsupported = "This badge's token account is not known yet. Join Wi-Fi, then try again.",
+    bad_arg = "This request cannot be checked.",
+    ["transaction failed"] = "That transaction failed on chain: nothing was paid.",
+    ["not confirmed"] = "No such payment was found on chain in time.",
+  },
+  request = {
+    busy = "Two requests are already open.",
+    bad_arg = "This amount cannot be requested.",
+  },
+  contact = {
+    bad_arg = "That was not a valid card.",
+    mismatch = "The card was made for another badge.",
+    expired = "The swap expired. Try again.",
+    bad_proof = "The card's signature is wrong.",
+    unsupported = "The contact could not be saved.",
+    sign_failed = "This badge has no key.",
+  },
+  short = {
+    ok = "ok", cancelled = "cancelled by you", timeout = "not answered in time",
+    undecodable = "could not be read", unverified = "recipient not verified",
+    revoked = "recipient revoked", expired = "expired", mismatch = "does not match",
+    bad_proof = "wrong badge answered", over_cap = "over the limit", no_time = "clock not set",
+    busy = "wallet busy", denied = "not allowed", not_provisioned = "not set up",
+    too_long = "too long to sign", sign_failed = "key did not sign", bad_arg = "bad argument",
+    unsupported = "not supported", idle = "nothing waiting", over_daily = "over daily limit",
+    low_battery = "battery too low",
+  },
+}
+vk.reason_contexts = CONTEXTS
+
+local PATTERNS = {
+  {"^(.+) not set$", "This badge is not set up: %s is not set. Provision it over USB."},
+  {"^rpc http (%d+)$", "The Solana node answered HTTP %s. Check rpc_url."},
+  {"^registry http (%d+)$", "The registry answered HTTP %s. Check the dashboard."},
+  {"^listener http (%d+)$", "The listener answered HTTP %s. Check the dashboard."},
+}
+
+function vk.reason_text(reason, context)
+  reason = tostring(reason == nil and "failed" or reason)
+  local words = type(context) == "table" and context or CONTEXTS[context]
+  local text = words and words[reason] or REASONS[reason]
+  if text then return text end
+  for i = 1, #PATTERNS do
+    local value = reason:match(PATTERNS[i][1])
+    if value then return string.format(PATTERNS[i][2], value) end
+  end
+  return reason                                 -- a node's own message ("insufficient funds")
+end
+
+-- ---------------------------------------------------------------------------------------------
+-- vk.peers: badges heard nearby, by MAC (Contacts' swap list)
+-- ---------------------------------------------------------------------------------------------
+--   local list = vk.peers.new{ max = 4, timeout_ms = 4000, hold_ms = 10000 }
+--   list:heard(mac, {address =, name =, frame =, rssi =}, now, [keep_mac]) -> peer, how
+--   list:sent(mac, now)      a card went to that badge: its frame is held for hold_ms
+--   list:expire(now)         drops badges not heard for timeout_ms
+--   list:find(mac), list.items (strongest signal first)
+--
+-- `how`: "new"; "updated"; "held" (the same key with a new frame while a card sent to it is
+-- pending: the frame is kept, so a HELLO sent as that MAC cannot change what was answered);
+-- "ignored" (a known MAC with another key: a made-up HELLO cannot rename or re-key a listed
+-- badge); "full" (every listed badge is kept: the selected one, `keep_mac`, and those with a card
+-- pending). A new badge is never refused otherwise: the one heard longest ago makes room, so
+-- made-up HELLOs from many MACs cannot lock an honest badge out.
+
+local peers = {}
+vk.peers = peers
+
+local Peers = {}
+Peers.__index = Peers
+
+function peers.new(opts)
+  opts = opts or {}
+  return setmetatable({items = {}, max = opts.max or 4, timeout_ms = opts.timeout_ms or 4000,
+                       hold_ms = opts.hold_ms or 10000}, Peers)
+end
+
+function Peers:find(mac)
+  for i = 1, #self.items do
+    if self.items[i].mac == mac then return self.items[i], i end
+  end
+  return nil
+end
+
+local function held(peer, now) return peer.sent_until ~= nil and now < peer.sent_until end
+
+local function by_signal(a, b)
+  if a.rssi ~= b.rssi then return a.rssi > b.rssi end
+  return a.mac < b.mac
+end
+
+function Peers:heard(mac, info, now, keep)
+  local peer = self:find(mac)
+  local rssi = info.rssi or -127
+  if peer then
+    if peer.address ~= info.address then return peer, "ignored" end
+    peer.name, peer.rssi, peer.heard = info.name, rssi, now
+    local how = "updated"
+    if info.frame ~= peer.frame then
+      if held(peer, now) then
+        how = "held"
+      else
+        peer.frame, peer.sent, peer.sent_until = info.frame, false, nil
+      end
+    end
+    table.sort(self.items, by_signal)
+    return peer, how
+  end
+  if #self.items >= self.max then
+    local victim
+    for i = 1, #self.items do
+      local p = self.items[i]
+      if p.mac ~= keep and not held(p, now) and (not victim or p.heard < self.items[victim].heard) then
+        victim = i
+      end
+    end
+    if not victim then return nil, "full" end
+    table.remove(self.items, victim)
+  end
+  peer = {mac = mac, address = info.address, name = info.name, frame = info.frame, rssi = rssi,
+          heard = now, sent = false}
+  self.items[#self.items + 1] = peer
+  table.sort(self.items, by_signal)
+  return peer, "new"
+end
+
+function Peers:sent(mac, now)
+  local peer = self:find(mac)
+  if peer then peer.sent, peer.sent_until = true, now + self.hold_ms end
+end
+
+function Peers:expire(now)
+  for i = #self.items, 1, -1 do
+    if now - self.items[i].heard > self.timeout_ms then table.remove(self.items, i) end
+  end
+end
+
+-- ---------------------------------------------------------------------------------------------
+-- Small helpers
+-- ---------------------------------------------------------------------------------------------
+
+-- vk.keep_awake(on): badge.screen.keep_awake, or nothing on a firmware without it. A request
+-- being waited on, a game being played: the screen would otherwise dim after 30 s.
+function vk.keep_awake(on)
+  local screen = badge.screen
+  if screen and screen.keep_awake then screen.keep_awake(on and true or false) end
+end
+
+-- vk.led_pulse(token, ms): the LEDs in a colour of the active theme (RGB565 to 0..255 each).
+function vk.led_pulse(token, ms)
+  local c = math.floor(vk.ui.color(token))
+  local r, g, b = c // 2048, (c // 32) % 64, c % 32
+  badge.led.pulse(r * 255 // 31, g * 255 // 63, b * 255 // 31, ms)
 end
 
 -- ---------------------------------------------------------------------------------------------

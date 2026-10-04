@@ -1,10 +1,16 @@
 -- Contacts (docs/os/apps/apps.md, "Contacts")
 --
 --   List   wallet.contacts(), newest first: name, short address, the date it was added. The first
---          row is "Swap contacts". RIGHT on a contact asks on a confirm line; SELECT then removes.
+--          row is "Swap contacts"; with no contact yet its subline says what to do. RIGHT on a
+--          contact asks on a confirm line; SELECT then removes, CANCEL keeps, other keys do nothing.
 --   Swap   broadcasts wallet.contact_hello() once a second and listens.
 --            a CONTACT_HELLO (vk.hello_parse): "Swap with <name>?"; SELECT sends
 --              wallet.contact_card(hello) unicast to that badge.
+--            The badges heard are a vk.peers list: a new badge never waits for room (the one
+--            heard longest ago leaves, except the selected one and one a card was just sent to);
+--            a HELLO from a listed MAC under another key is ignored; and once a card is sent,
+--            that badge's HELLO frame is held for config.card_hold_ms, so a HELLO sent as its
+--            MAC cannot change what the card answered.
 --            a CONTACT_CARD: wallet.contact_accept(card); "Saved <name>" and a green flash, or the
 --              reason in words.
 --          Both badges do both halves, so each ends up with the other's card.
@@ -38,8 +44,8 @@ local contacts = {}                       -- newest first
 local rows = {}                           -- the list screen's rows; row 1 is "Swap contacts"
 local sel = 1
 
-local peers = {}                          -- swap: {mac, frame, name, address, rssi, heard, sent}
-local peer_sel = 1
+local peers = vk.peers.new{max = cfg.max_peers, timeout_ms = cfg.peer_timeout_ms, hold_ms = cfg.card_hold_ms}
+local chosen = nil                        -- swap: the MAC of the selected badge
 local next_hello = 0                      -- badge.millis() of the next broadcast
 local message, message_tone, message_until = nil, nil, 0
 
@@ -52,7 +58,7 @@ local function date_text(added)
 end
 
 local function build_rows()
-  rows = {{l = text.swap_row, sub = text.swap_sub, r = ARROW}}
+  rows = {{l = text.swap_row, sub = #contacts == 0 and text.empty or text.swap_sub, r = ARROW}}
   for i = 1, #contacts do
     local c = contacts[i]
     local removing = mode == "confirm" and sel == i + 1
@@ -84,14 +90,17 @@ local function say(line, tone)
 end
 
 local function reason_text(reason)
-  reason = tostring(reason or "failed")
-  return cfg.reasons[reason] or reason
+  return vk.reason_text(reason, "contact")
 end
 
--- An LED flash in a colour of the active theme (RGB565 -> 8-bit components).
-local function flash(spec)
-  local c = ui.color(spec.color)
-  badge.led.pulse((c // 2048) * 255 // 31, ((c // 32) % 64) * 255 // 63, (c % 32) * 255 // 31, spec.ms)
+-- The selected badge, and its place in the list (strongest signal first).
+local function selected()
+  local items = peers.items
+  for i = 1, #items do
+    if items[i].mac == chosen then return items[i], i end
+  end
+  chosen = items[1] and items[1].mac or nil
+  return items[1], items[1] and 1 or nil
 end
 
 -- ---------------------------------------------------------------------------------------------
@@ -100,7 +109,7 @@ end
 
 local function enter_swap()
   if not espnow.enabled() then espnow.enable(true) end
-  peers, peer_sel = {}, 1
+  peers.items, chosen = {}, nil
   message = nil
   next_hello = 0
   set_mode("swap")
@@ -108,7 +117,7 @@ local function enter_swap()
 end
 
 local function leave_swap()
-  peers = {}
+  peers.items, chosen = {}, nil
   badge.log("CON swap off")
   mode = "list"
   load_contacts()
@@ -124,35 +133,18 @@ local function swap_update(now)
       say(reason_text(why), "bad")
     end
   end
-  for i = #peers, 1, -1 do
-    if now - peers[i].heard > cfg.peer_timeout_ms then table.remove(peers, i) end
-  end
-  if peer_sel > #peers then peer_sel = math.max(1, #peers) end
+  peers:expire(now)
+  selected()
   if message and now >= message_until then message = nil end
 end
 
 -- A HELLO from a badge in swap mode: remember its newest frame (it carries the nonce a card for
 -- it must be signed over).
 local function heard_hello(mac, frame, hello, rssi)
-  local now = badge.millis()
-  local chosen = peers[peer_sel] and peers[peer_sel].mac
-  local peer
-  for i = 1, #peers do
-    if peers[i].mac == mac then peer = peers[i] break end
-  end
-  if not peer then
-    if #peers >= cfg.max_peers then return end
-    peer = {mac = mac}
-    peers[#peers + 1] = peer
-    badge.log("CON hello " .. vk.short(hello.address))
-  end
-  if peer.frame ~= frame then peer.sent = false end      -- a new nonce: the old card is spent
-  peer.frame, peer.name, peer.address = frame, hello.name, hello.address
-  peer.rssi, peer.heard = rssi or -127, now
-  table.sort(peers, function(a, b) return a.rssi > b.rssi end)
-  for i = 1, #peers do                                   -- keep the cursor on the same badge
-    if peers[i].mac == chosen then peer_sel = i break end
-  end
+  local info = {address = hello.address, name = hello.name, frame = frame, rssi = rssi}
+  local _, how = peers:heard(mac, info, badge.millis(), chosen)
+  if how == "new" then badge.log("CON hello " .. vk.short(hello.address)) end
+  selected()                                             -- the cursor stays on the same badge
 end
 
 local function heard_card(frame)
@@ -160,7 +152,7 @@ local function heard_card(frame)
   if contact then
     badge.log("CON saved " .. tostring(contact.name))
     say(string.format(text.saved, tostring(contact.name)), "ok")
-    flash(cfg.saved_led)
+    vk.led_pulse(cfg.saved_led.color, cfg.saved_led.ms)
     next_hello = 0            -- the accept spent this badge's nonce: the next HELLO draws a new one
   else
     badge.log("CON accept failed " .. tostring(why))
@@ -169,12 +161,12 @@ local function heard_card(frame)
 end
 
 local function send_card()
-  local peer = peers[peer_sel]
+  local peer = selected()
   if not peer then return end
   local card, why = wallet.contact_card(peer.frame)
   if not card then return say(reason_text(why), "bad") end
   if espnow.send(peer.mac, card) then
-    peer.sent = true
+    peers:sent(peer.mac, badge.millis())
     badge.log("CON card sent " .. vk.short(peer.address))
     say(string.format(text.sent_to, peer.name), "ok")
   else
@@ -186,23 +178,25 @@ local function draw_swap()
   ui.page()
   ui.header(cfg.header)
   ui.title(text.swap_title, ui.TITLE_Y)
-  if #peers == 0 then
+  local items = peers.items
+  local current = selected()
+  if #items == 0 then
     ui.text_center(text.looking, ui.W // 2, 96, ui.color("ink"))
     ui.text_center(text.looking_sub, ui.W // 2, 114, ui.color("sub"))
   else
-    ui.text_center(string.format(text.ask, peers[peer_sel].name), ui.W // 2, 52, ui.color("ink"))
-    for i = 1, #peers do
-      local peer = peers[i]
+    ui.text_center(string.format(text.ask, current.name), ui.W // 2, 52, ui.color("ink"))
+    for i = 1, #items do
+      local peer = items[i]
       local y = 72 + (i - 1) * ui.SUB_PITCH
-      local selected = i == peer_sel
-      ui.row(y, peer.name:upper(), peer.sent and text.sent or ARROW, selected)
-      ui.subline(y + 13, vk.short(peer.address) .. DOT .. text.self_named, selected)
+      local on = peer == current
+      ui.row(y, peer.name:upper(), peer.sent and text.sent or ARROW, on)
+      ui.subline(y + 13, vk.short(peer.address) .. DOT .. text.self_named, on)
     end
   end
   if message then
     ui.text_center(message, ui.W // 2, 200, ui.color(message_tone == "ok" and "stamp_ok" or "stamp_bad"))
   end
-  ui.footer(#peers > 0 and text.hint_send or "", text.back)
+  ui.footer(#items > 0 and text.hint_send or "", text.back)
 end
 
 -- ---------------------------------------------------------------------------------------------
@@ -240,10 +234,11 @@ end
 function on_button(key, pressed)
   if not pressed then return end
   if mode == "swap" then
+    local _, index = selected()
     if key == "b" then leave_swap()
     elseif key == "a" then send_card()
-    elseif key == "up" and peer_sel > 1 then peer_sel = peer_sel - 1
-    elseif key == "down" and peer_sel < #peers then peer_sel = peer_sel + 1
+    elseif key == "up" and index and index > 1 then chosen = peers.items[index - 1].mac
+    elseif key == "down" and index and index < #peers.items then chosen = peers.items[index + 1].mac
     end
   elseif mode == "confirm" then
     local contact = contacts[sel - 1]
@@ -253,8 +248,8 @@ function on_button(key, pressed)
       end
       mode = "list"
       load_contacts()
-    else
-      set_mode("list")                    -- CANCEL, or any other key: keep the contact
+    elseif key == "b" then
+      set_mode("list")                    -- CANCEL keeps the contact; other keys do nothing
     end
   else
     if key == "b" then badge.system.exit()

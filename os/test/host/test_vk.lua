@@ -117,6 +117,13 @@ local function reset_world()
     sent = {},
     draws = {},
     theme = nil,
+    wifi_up = true,             -- badge.wifi.connected()
+    txs = {},                   -- getTransaction replies by signature (base58): {raw =, err =} or a list
+    verifies = {},              -- every wallet.verify_payment call: {raw =, expected =}
+    received = {},              -- every wallet.record_received call
+    record_received = nil,      -- function(raw, expected) -> true | nil, reason (default: true)
+    awake = {},                 -- every badge.screen.keep_awake(on)
+    leds = {},                  -- every badge.led.pulse
   }
 end
 reset_world()
@@ -189,7 +196,27 @@ badge = {
       if #sig ~= 64 then return nil, "bad_arg" end
       return b64enc("\1" .. sig .. msg)
     end,
+    -- A fetched transaction in the tests is "\1" .. sig(64) .. body. The body "GOOD" is the
+    -- payment asked for; "BAD:<reason>:<detail>" is refused with that reason and detail.
+    verify_payment = function(raw, expected)
+      world.verifies[#world.verifies + 1] = {raw = raw, expected = expected}
+      check(type(expected.amount) == "string" and type(expected.req_id) == "string", "verify_payment: amount and req_id are strings")
+      local sig, body = raw:sub(2, 65), raw:sub(66)
+      if expected.sig ~= nil and expected.sig ~= sig and expected.sig ~= b58enc(sig) then return nil, "mismatch", "sig" end
+      if world.verify then return world.verify(raw, expected) end
+      if body == "GOOD" then return true, {payer = "PayerKey", sig = b58enc(sig)} end
+      local reason, detail = body:match("^BAD:([%w_]+):(%w*)$")
+      return nil, reason or "undecodable", detail or "wire"
+    end,
+    record_received = function(raw, expected)
+      world.received[#world.received + 1] = {raw = raw, expected = expected}
+      if world.record_received then return world.record_received(raw, expected) end
+      return true
+    end,
   },
+  wifi = {connected = function() return world.wifi_up end},
+  screen = {keep_awake = function(on) world.awake[#world.awake + 1] = on end},
+  led = {pulse = function(r, g, b, ms) world.leds[#world.leds + 1] = {r, g, b, ms} end},
   espnow = {
     enabled = function() return world.espnow_on end,
     enable = function(on) world.espnow_on = on ~= false return true end,
@@ -469,6 +496,10 @@ local RECORD = table.concat({
 }, "\n")
 local RECORD_SIG = string.rep("\x33", 64)
 local ATA = b58enc(from_hex("178d80b67636ac4539a4c92fb3285cb17684ef97a9bdb5c354bf16b5f4e22b5b"))
+-- The two 404s the listener can give (dashboard/server/src/http.js): the registry route with no
+-- record for the key, and no such route at all.
+local NO_RECORD = '{"error":{"code":"not_found","message":"no registry record for this key"}}'
+local NO_ROUTE = '{"error":{"code":"not_found","message":"no such route"}}'
 
 -- Every network helper, called once. Returns the list of {name, first, second}.
 local function call_helpers()
@@ -479,7 +510,7 @@ local function call_helpers()
     {"confirm", vk.confirm(SIG_B58)},
     {"record", vk.record(PAYEE)},
     {"report", vk.report({payee = PAYEE, reason = "unverified"})},
-    {"feed", vk.feed(SIG_B58, nil)},
+    {"feed", vk.feed(SIG_B58, REQ_FRAME)},
   }
 end
 
@@ -490,9 +521,10 @@ do
   for i = 1, #results do
     local name, first, second = results[i][1], results[i][2], results[i][3]
     check(first == nil, "with no network vk." .. name .. " returns nil")
-    eq(second, "wifi not connected", "with no network vk." .. name .. " passes the message on")
+    eq(second, "no_wifi", "with no network vk." .. name .. " says no_wifi")
   end
   eq(#world.http_calls, 7, "one request per helper, no retries")
+  eq(vk.last_error, "wifi not connected", "the transport's own message is kept in vk.last_error")
 
   -- A transport failure with no message at all still gives a message.
   reset_world()
@@ -634,6 +666,33 @@ do
   world.http = function() return 404, '{"error":"no attestation"}' end
   first, second = vk.record(PAYEE)
   check(first == nil and second == "unverified", "404 is unverified")
+  -- Audit finding 2: a 404 that does not say "no record for this key" is the route missing, not an
+  -- impostor. Neither is ever a record.
+  world.http = function() return 404, NO_RECORD end
+  first, second = vk.record(PAYEE)
+  check(first == nil and second == "unverified", "404 naming the record is unverified")
+  for _, body in ipairs({NO_ROUTE, "Not Found", "", "{}", '{"error":"not_found"}'}) do
+    world.http = function() return 404, body end
+    first, second = vk.record(PAYEE)
+    check(first == nil and second == "registry_missing", "404 " .. body .. " is registry_missing")
+  end
+  world.http = function() return nil, "connection refused" end
+  first, second = vk.record(PAYEE)
+  check(first == nil and second == "listener_unreachable", "a listener that does not answer")
+  eq(vk.last_error, "connection refused", "with the transport's message kept")
+  world.http = function() return nil, "read Timeout" end
+  first, second = vk.rpc("getHealth")
+  check(first == nil and second == "rpc_unreachable", "a node that does not answer")
+  world.http = function() return nil, "bridge unavailable" end
+  first, second = vk.rpc("getHealth")
+  check(first == nil and second == "no_route", "the phone bridge failing is no_route")
+  world.http = function() return nil, "no network" end
+  first, second = vk.record(PAYEE)
+  check(first == nil and second == "no_wifi", "net_route's own no network is no_wifi")
+  for _, code in ipairs({"no_wifi", "no_route", "rpc_unreachable", "listener_unreachable"}) do
+    check(vk.offline(code), code .. " is in the no-network family")
+  end
+  check(not vk.offline("unverified") and not vk.offline(nil), "other reasons are not")
   world.http = function() return 200, json.encode({record = b64enc(RECORD), sig = b64enc("short")}) end
   first, second = vk.record(PAYEE)
   check(first == nil and second == "registry reply not understood", "a signature that is not 64 bytes")
@@ -688,13 +747,43 @@ do
     return 200, '{"ok":true}'
   end
   eq(vk.feed(SIG_B58, REQ_FRAME), true, "vk.feed")
-  world.http = function(method, url, body)
-    check(body:find('"req":null', 1, true), "no request is sent as null")
-    return 201, ""
-  end
-  eq(vk.feed(SIG_B58, nil), true, "vk.feed without a request")
+  world.http = function() return 201, "" end
+  eq(vk.feed(SIG_B58, REQ_FRAME), true, "a 2xx with no JSON body is a success")
+  -- (2) A payment that answers no request is not posted (the backend refuses req null), and why
+  -- is logged.
+  world.http_calls = {}
+  local logged = {}
+  local saved_log = badge.log
+  badge.log = function(line) logged[#logged + 1] = line end
+  first, second = vk.feed(SIG_B58, nil)
+  check(first == nil and second == "no request", "vk.feed without a request is skipped")
+  first, second = vk.feed(SIG_B58, "")
+  check(first == nil and second == "no request", "an empty request too")
+  badge.log = saved_log
+  eq(#world.http_calls, 0, "nothing is posted for a payment with no request")
+  check(logged[1] and logged[1]:find("no request", 1, true), "the skip is logged")
   first, second = vk.feed(nil, nil)
   check(first == nil and second == "bad_arg", "no signature")
+
+  -- (1) A 200 whose body says ok false is a refusal, for the feed and for a report.
+  world.http = function() return 200, '{"ok":false,"reason":"bad_request"}' end
+  first, second = vk.feed(SIG_B58, REQ_FRAME)
+  check(first == nil and second == "bad_request", "200 ok:false on /feed/solana is nil, its reason")
+  first, second = vk.report({payee = PAYEE, reason = "unverified"})
+  check(first == nil and second == "bad_request", "200 ok:false on /feed/event is nil, its reason")
+  world.http = function() return 200, '{"ok":false}' end
+  first, second = vk.feed(SIG_B58, REQ_FRAME)
+  check(first == nil and second == "listener refused", "ok:false with no reason")
+  world.http = function() return 200, '{"ok":true}' end
+  eq(vk.feed(SIG_B58, REQ_FRAME), true, "ok:true is a success")
+
+  -- A registry fetch that times out reads as the network, never as an impostor.
+  world.http = function() return nil, "read Timeout" end
+  first, second = vk.record(PAYEE)
+  check(first == nil and second == "listener_unreachable", "a registry timeout is listener_unreachable")
+  check(vk.offline(second), "and in the no-network family")
+  check(vk.reason_text(second) ~= vk.reason_text("unverified"), "its text is not the no-record text")
+  check(not vk.reason_text(second):lower():find("impostor", 1, true), "its text says nothing of an impostor")
 end
 
 -- ---------------------------------------------------------------------------------------------
@@ -725,7 +814,8 @@ local function network(opts)
   local confirms = 0
   return function(method, url, body)
     if url:find("/registry/", 1, true) then
-      if opts.no_record then return 404, "{}" end
+      if opts.no_record then return 404, NO_RECORD end
+      if opts.no_route then return 404, NO_ROUTE end
       return 200, json.encode({record = b64enc(RECORD), sig = b64enc(RECORD_SIG)})
     end
     if url:find("/feed/", 1, true) then
@@ -777,7 +867,7 @@ do
   eq(flow.state, "record", "a payment with no request starts at the record")
   local state, detail, seen = run_flow(flow)
   eq(state, "failed", "no network: the flow fails")
-  eq(detail, "wifi not connected", "no network: the reason is the transport's message")
+  eq(detail, "no_wifi", "no network: the reason is no_wifi")
   eq(seen, "record failed", "no network: it fails in the record step")
   eq(flow.failed_in, "record", "the step it failed in")
   eq(#world.begins, 0, "no network: no approval was opened")
@@ -791,7 +881,7 @@ do
   flow = vk.pay.start({request = request_entry()})
   eq(flow.state, "presence", "paying a request starts with presence")
   state, detail, seen = run_flow(flow)
-  check(state == "failed" and detail == "wifi not connected", "no network: a request payment fails")
+  check(state == "failed" and detail == "no_wifi", "no network: a request payment fails")
   eq(seen, "presence record failed", "no network: presence, then the record")
   eq(#world.challenges, 2, "two challenges, then no more")
   eq(#world.sent, 0, "nothing is sent to the payee before the approval")
@@ -801,9 +891,14 @@ do
   world.token_account = nil
   flow = vk.pay.start({to = PAYEE, amount = "5.00"})
   state, detail = run_flow(flow)
-  check(state == "failed" and detail == "timeout", "an unknown token account that cannot be fetched")
+  check(state == "failed" and detail == "rpc_unreachable", "an unknown token account that cannot be fetched (joined)")
   eq(world.refresh_calls, 1, "refresh_balance is called once")
   eq(#world.http_calls, 0, "nothing else is tried")
+  reset_world()
+  world.token_account = nil
+  world.wifi_up = false
+  state, detail = run_flow(vk.pay.start({to = PAYEE, amount = "5.00"}))
+  check(state == "failed" and detail == "no_wifi", "a balance timeout with Wi-Fi not joined is no_wifi")
 
   -- Not provisioned.
   reset_world()
@@ -853,7 +948,7 @@ do
   eq(world.begins[1].ctx.req, nil, "no ctx.req without a request")
   eq(count_calls("sendTransaction"), 1, "sent once")
   eq(count_calls("getSignatureStatuses"), 3, "asked for the status until confirmed")
-  eq(count_calls("/feed/solana"), 1, "the feed was told once")
+  eq(count_calls("/feed/solana"), 0, "a shop payment is not fed (no request)")
   eq(#world.sent, 0, "no RESULT frame without a request")
   eq(#world.challenges, 0, "no challenge without a request")
 
@@ -1033,7 +1128,7 @@ do
   while flow:update() ~= "submit" do world.now = world.now + 100 end
   world.http = nil
   state, detail = run_flow(flow)
-  check(state == "failed" and detail == "wifi not connected", "the network going away while sending")
+  check(state == "failed" and detail == "no_wifi", "the network going away while sending")
 
   reset_world()
   world.http = network()
@@ -1061,6 +1156,456 @@ do
     world.now = world.now + 100
   end
   eq(flow.state, "done", "the flow ended")
+
+  -- The request memo: a request payment passes req_id (the firmware writes the memo) and no free
+  -- memo; a shop payment passes its memo and no req_id.
+  reset_world()
+  world.http = network()
+  world.presence = {"present"}
+  world.polls = {SIG}
+  state = run_flow(vk.pay.start({request = request_entry(), memo = "ignored"}))
+  eq(state, "done", "the request payment with its memo is done")
+  eq(world.builds[1].req_id, REQ_ID, "a request payment passes req_id to build_transfer")
+  eq(world.builds[1].memo, nil, "and no free memo with it (bad_arg in the firmware)")
+  reset_world()
+  world.http = network()
+  world.polls = {SIG}
+  run_flow(vk.pay.start({to = PAYEE, amount = "5.00", memo = "sword"}))
+  eq(world.builds[1].req_id, nil, "a shop payment passes no req_id")
+  eq(world.builds[1].memo, "sword", "a shop payment keeps its memo")
+
+  -- The registry route missing: the flow goes on to the red screen as for no record, but the
+  -- reason to show is registry_missing, not an impostor.
+  reset_world()
+  world.http = network({no_route = true})
+  world.presence = {"present"}
+  world.polls = {{nil, "unverified"}}
+  flow = vk.pay.start({request = request_entry()})
+  state, detail = run_flow(flow)
+  check(state == "failed" and detail == "unverified", "route missing: the firmware still says unverified")
+  eq(world.begins[1].ctx.record, nil, "route missing: no record is passed, so it can never be green")
+  eq(flow:reason(), "registry_missing", "route missing: the reason shown is registry_missing")
+  reset_world()
+  world.http = network({no_record = true})
+  world.polls = {{nil, "unverified"}}
+  flow = vk.pay.start({to = PAYEE, amount = "5.00"})
+  run_flow(flow)
+  eq(flow:reason(), "unverified", "no record for the key: the reason shown stays unverified")
+  reset_world()
+  world.http = function(method, url, body)
+    if url:find("/registry/", 1, true) then return nil, "read Timeout" end
+    return network()(method, url, body)
+  end
+  flow = vk.pay.start({to = PAYEE, amount = "5.00"})
+  state, detail = run_flow(flow)
+  check(state == "failed" and detail == "listener_unreachable", "a registry timeout fails as the network")
+  eq(flow:reason(), "listener_unreachable", "and is shown as the network")
+  eq(#world.begins, 0, "no approval is opened on a registry timeout")
+  reset_world()
+  world.http = network()
+  world.polls = {SIG}
+  flow = vk.pay.start({to = PAYEE, amount = "5.00"})
+  run_flow(flow)
+  eq(flow:reason(), nil, "a paid flow has no reason")
+end
+
+-- ---------------------------------------------------------------------------------------------
+-- vk.receive: the payee checks a RESULT before PAID
+-- ---------------------------------------------------------------------------------------------
+
+local function sig_of(n) return string.rep(string.char(n), 64) end
+local REAL, JUNK, JUNK2, JUNK3 = sig_of(0x21), sig_of(0x22), sig_of(0x23), sig_of(0x24)
+
+-- A RESULT frame for the vector request.
+local function result_of(ref, status) return vk.result_frame(REQ_ID, status or 0, ref) end
+
+-- The RPC node for getTransaction: world.txs[sig58] is {raw =, err =}, or a list of such answers
+-- (nil entries: not visible yet) played in turn, the last one repeating.
+local function chain()
+  return function(method, url, body)
+    local call = json.decode(body)
+    if call.method ~= "getTransaction" then return 500, "unexpected" end
+    eq(call.params[2].encoding, "base64", "getTransaction asks for base64")
+    eq(call.params[2].commitment, "confirmed", "getTransaction at vk.commitment")
+    eq(call.params[2].maxSupportedTransactionVersion, 0, "getTransaction accepts legacy and v0")
+    local answer = world.txs[call.params[1]]
+    if type(answer) == "table" and answer.raw == nil and answer.err == nil and #answer > 0 then
+      local first = answer[1]
+      if #answer > 1 then table.remove(answer, 1) end
+      answer = first
+    end
+    if answer == nil or answer == false then return 200, '{"jsonrpc":"2.0","result":null,"id":1}' end
+    local meta = answer.err and '{"err":{"InstructionError":[0,{"Custom":1}]}}' or '{"err":null}'
+    return 200, '{"jsonrpc":"2.0","result":{"slot":9,"meta":' .. meta .. ',"transaction":["'
+      .. b64enc(answer.raw) .. '","base64"]},"id":1}'
+  end
+end
+
+local function tx(ref, body) return {raw = "\1" .. ref .. (body or "GOOD")} end
+
+-- Calls watch:update() every 100 ms until it is paid or failed. Returns state, detail, the states
+-- passed through.
+local function run_watch(watch, limit)
+  local seen, last = {}, nil
+  for _ = 1, limit or 2000 do
+    local requests = #world.http_calls
+    local state, detail = watch:update()
+    check(#world.http_calls - requests <= 1, "at most one HTTP request per update")
+    if state ~= last then
+      seen[#seen + 1] = state
+      last = state
+    end
+    if state == "paid" or state == "failed" then return state, detail, table.concat(seen, " ") end
+    world.now = world.now + 100
+  end
+  error("the watch did not end: " .. table.concat(seen, " "), 2)
+end
+
+local function watch_for()
+  return vk.receive.start({req_id = REQ_ID, amount = "10.00"})
+end
+
+do
+  -- Bad options: already failed, never raises.
+  reset_world()
+  for i, opts in ipairs({false, {}, {req_id = REQ_ID}, {amount = "10.00"}, {req_id = "13ce", amount = "10.00"},
+                         {req_id = REQ_ID, amount = 10}, {req_id = "zz" .. REQ_ID:sub(3), amount = "10.00"},
+                         {req_id = REQ_ID, amount = "10.00", to = 7}}) do
+    local w = vk.receive.start(opts or nil)
+    local state, detail = w:update()
+    check(state == "failed" and detail == "bad_arg", "bad receive options " .. i)
+    eq(w:result(result_of(REAL)), false, "a failed watch takes no RESULT")
+  end
+
+  -- Nothing heard: waiting, no request.
+  reset_world()
+  world.http = chain()
+  local w = watch_for()
+  eq(w:update(), "waiting", "no RESULT yet: waiting")
+  eq(#world.http_calls, 0, "nothing is looked up before a RESULT")
+
+  -- Status 1 and 2 are noted, never decisive; another request's RESULT is ignored.
+  eq(w:result(result_of(nil, 1)), false, "a rejected RESULT is not queued")
+  eq(w.reported, 1, "but noted")
+  eq(w:result(result_of(nil, 2)), false, "a failed RESULT is not queued")
+  eq(w.reported, 2, "but noted")
+  eq(w:update(), "waiting", "still waiting after status 1 and 2")
+  eq(w:result(vk.result_frame("00000000000000aa", 0, REAL)), false, "another request's RESULT")
+  eq(w:result(vk.result_frame(REQ_ID, 0)), false, "status 0 with an all-zero ref")
+  eq(w:result("junk"), false, "not a RESULT frame")
+  eq(w:update(), "waiting", "still waiting")
+
+  -- The honest payment, visible at once: paid with the payer and the signature, and recorded.
+  reset_world()
+  world.http = chain()
+  world.txs[b58enc(REAL)] = tx(REAL)
+  w = watch_for()
+  eq(w:result(result_of(REAL)), true, "a status-0 RESULT is queued")
+  eq(w:result(result_of(REAL)), false, "the same ref twice is queued once")
+  local state, detail, seen = run_watch(w)
+  eq(state, "paid", "the honest payment is paid")
+  eq(seen, "pending paid", "pending, then paid")
+  check(type(detail) == "table" and detail.payer == "PayerKey" and detail.sig == b58enc(REAL), "paid: payer and sig")
+  check(w.payer == "PayerKey" and w.sig == b58enc(REAL), "w.payer and w.sig")
+  eq(#world.verifies, 1, "verified once")
+  local expected = world.verifies[1].expected
+  check(expected.amount == "10.00" and expected.req_id == REQ_ID and expected.sig == REAL, "the expected payment")
+  eq(world.verifies[1].raw, "\1" .. REAL .. "GOOD", "the raw wire bytes are checked, not base64")
+  eq(#world.received, 1, "the received payment is recorded once")
+  eq(w.recorded, true, "w.recorded")
+  eq(w:result(result_of(JUNK)), false, "nothing is queued after paid")
+  eq(w:update(), "paid", "paid stays paid")
+  eq(count_calls("getTransaction"), 1, "one look-up")
+
+  -- PAID is never shown for a ref that does not verify: every refusal of verify_payment.
+  for _, case in ipairs({{"mismatch", "amount"}, {"mismatch", "memo"}, {"mismatch", "recipient"},
+                         {"bad_proof", "signature"}, {"undecodable", "shape"}}) do
+    reset_world()
+    world.http = chain()
+    world.txs[b58enc(JUNK)] = tx(JUNK, "BAD:" .. case[1] .. ":" .. case[2])
+    w = watch_for()
+    w:result(result_of(JUNK))
+    state, detail, seen = run_watch(w)
+    check(state == "failed" and detail == case[1], "a " .. case[1] .. "/" .. case[2] .. " transaction is not paid")
+    check(not seen:find("paid", 1, true), "never paid on the way")
+    eq(w.last_detail, case[2], "the detail is kept")
+    eq(#world.received, 0, "nothing is recorded")
+    eq(w:result(result_of(JUNK)), false, "a refused ref is not tried again")
+  end
+
+  -- A transaction that failed on chain moved nothing.
+  reset_world()
+  world.http = chain()
+  world.txs[b58enc(JUNK)] = {raw = "\1" .. JUNK .. "GOOD", err = true}
+  w = watch_for()
+  w:result(result_of(JUNK))
+  state, detail = run_watch(w)
+  check(state == "failed" and detail == "transaction failed", "meta.err: not paid")
+  eq(#world.verifies, 0, "a failed transaction is not even verified")
+
+  -- Retry while the transaction is not visible yet: null twice, then the transaction.
+  reset_world()
+  world.http = chain()
+  world.txs[b58enc(REAL)] = {false, false, tx(REAL)}
+  w = watch_for()
+  w:result(result_of(REAL))
+  local started = world.now
+  state = run_watch(w)
+  eq(state, "paid", "paid once the transaction is visible")
+  eq(count_calls("getTransaction"), 3, "looked up three times")
+  check(world.now - started >= 2 * vk.receive.every_ms, "every every_ms, not every update")
+
+  -- Never visible: given up after for_ms with "not confirmed"; bounded requests.
+  reset_world()
+  world.http = chain()
+  w = watch_for()
+  w:result(result_of(JUNK))
+  started = world.now
+  state, detail = run_watch(w)
+  check(state == "failed" and detail == "not confirmed", "never visible: not confirmed")
+  check(world.now - started <= vk.receive.for_ms + vk.receive.every_ms, "given up in bounded time")
+  check(count_calls("getTransaction") <= vk.receive.for_ms // vk.receive.every_ms + 1, "a bounded number of look-ups")
+  -- again() re-queues what failed for a reason that may pass (not found, no network).
+  eq(w:retryable(), 1, "one ref can be tried again")
+  world.txs[b58enc(JUNK)] = tx(JUNK)
+  eq(w:again(), 1, "again() re-queues it")
+  state = run_watch(w)
+  eq(state, "paid", "found on the second try")
+
+  -- A forged RESULT with a junk ref first, then the real one: the real one is paid.
+  reset_world()
+  world.http = chain()
+  world.txs[b58enc(JUNK)] = tx(JUNK, "BAD:mismatch:memo")
+  world.txs[b58enc(REAL)] = tx(REAL)
+  w = watch_for()
+  w:result(result_of(JUNK))
+  eq(w:update(), "pending", "checking the forged ref")
+  w:result(result_of(REAL))
+  state, detail = run_watch(w)
+  check(state == "paid" and detail.sig == b58enc(REAL), "the real payment after a forged RESULT is paid")
+
+  -- A forged ref that is never visible does not delay the real one by its whole window.
+  reset_world()
+  world.http = chain()
+  world.txs[b58enc(REAL)] = tx(REAL)
+  w = watch_for()
+  w:result(result_of(JUNK))
+  w:result(result_of(REAL))
+  started = world.now
+  state = run_watch(w)
+  eq(state, "paid", "a junk ref that is never found does not hide the real one")
+  check(world.now - started < vk.receive.every_ms * 2, "the refs are checked in turn")
+
+  -- Three junk refs, then the real one: the real one is still checked (the most-tried junk ref
+  -- makes room), and the newest ref is never refused for want of a slot.
+  reset_world()
+  world.http = chain()
+  world.txs[b58enc(REAL)] = tx(REAL)
+  w = watch_for()
+  for _, junk in ipairs({JUNK, JUNK2, JUNK3}) do w:result(result_of(junk)) end
+  for _ = 1, 3 do w:update() world.now = world.now + 100 end   -- each junk ref tried once
+  eq(w:pending(), vk.receive.slots, "three refs held")
+  eq(w:result(result_of(REAL)), true, "the fourth ref is still taken")
+  eq(w:pending(), vk.receive.slots, "and the slots stay three")
+  state = run_watch(w)
+  eq(state, "paid", "the real ref after three junk refs is paid")
+
+  -- The badge's own token account is not known yet: refresh, then the check passes.
+  reset_world()
+  world.http = chain()
+  world.txs[b58enc(REAL)] = tx(REAL)
+  local asked = 0
+  world.verify = function(raw, expected)
+    asked = asked + 1
+    if asked == 1 then return nil, "unsupported", "to" end
+    return true, {payer = "PayerKey", sig = b58enc(REAL)}
+  end
+  world.refresh = function() return true end
+  w = watch_for()
+  w:result(result_of(REAL))
+  state = run_watch(w)
+  eq(state, "paid", "paid after learning the token account")
+  eq(world.refresh_calls, 1, "refresh_balance once")
+
+  -- The history cannot be written (or the app has no history permission): still paid.
+  reset_world()
+  world.http = chain()
+  world.txs[b58enc(REAL)] = tx(REAL)
+  world.record_received = function() error("permission 'history' not granted") end
+  w = watch_for()
+  w:result(result_of(REAL))
+  eq(run_watch(w), "paid", "a record that raises does not undo a verified payment")
+  eq(w.recorded, false, "w.recorded is false")
+  check(type(w.record_error) == "string", "w.record_error says why")
+  reset_world()
+  world.http = chain()
+  world.txs[b58enc(REAL)] = tx(REAL)
+  w = vk.receive.start({req_id = REQ_ID, amount = "10.00", record = false})
+  w:result(result_of(REAL))
+  eq(run_watch(w), "paid", "record = false: paid")
+  eq(#world.received, 0, "record = false: nothing recorded")
+
+  -- No network: tried until the window ends, with the no-network reason; then again() works.
+  reset_world()
+  world.wifi_up = false
+  w = watch_for()
+  w:result(result_of(REAL))
+  state, detail = run_watch(w)
+  check(state == "failed" and detail == "no_wifi", "no network: failed, no_wifi")
+  check(vk.offline(detail), "an offline reason")
+  world.http = chain()
+  world.txs[b58enc(REAL)] = tx(REAL)
+  w:again()
+  eq(run_watch(w), "paid", "paid once the network is back")
+
+  -- A transaction whose fetched signature is not the RESULT's is refused (the firmware compares).
+  reset_world()
+  world.http = chain()
+  world.txs[b58enc(REAL)] = tx(JUNK)
+  w = watch_for()
+  w:result(result_of(REAL))
+  state, detail = run_watch(w)
+  check(state == "failed" and detail == "mismatch", "another transaction under that signature is refused")
+
+  -- The firmware with no verify_payment: no watch can be paid.
+  reset_world()
+  local saved = badge.wallet.verify_payment
+  badge.wallet.verify_payment = nil
+  state, detail = watch_for():update()
+  check(state == "failed" and detail == "unsupported", "no verify_payment: unsupported")
+  badge.wallet.verify_payment = saved
+end
+
+-- ---------------------------------------------------------------------------------------------
+-- Reason texts
+-- ---------------------------------------------------------------------------------------------
+
+do
+  -- Every Lua reason code of docs/os/reference/reasons.md has a text in the shared table.
+  local file = io.open("../docs/os/reference/reasons.md", "r")
+  check(file, "docs/os/reference/reasons.md can be read from the firmware folder")
+  local codes = 0
+  for line in file:lines() do
+    local code = line:match("^| %d+ | `VK_[%u_]+` | `([%l_]+)` |")
+    if code then
+      codes = codes + 1
+      check(type(vk.reasons[code]) == "string" and vk.reasons[code] ~= "", "a text for " .. code)
+      local text = vk.reason_text(code)
+      check(text ~= code and #text <= vk.REASON_MAX, "reason_text(" .. code .. ") is words that fit")
+    end
+  end
+  file:close()
+  check(codes >= 21, "the reasons table was found (" .. codes .. " codes)")
+
+  -- The library's own reasons, the no-network family with its next step.
+  for _, code in ipairs({"no_wifi", "no_route", "rpc_unreachable", "listener_unreachable", "registry_missing",
+                         "bad_url", "transaction failed", "not confirmed"}) do
+    check(type(vk.reasons[code]) == "string", "a text for " .. code)
+  end
+  check(vk.reason_text("no_wifi"):find("Settings > Wi-Fi", 1, true), "no_wifi says where to join Wi-Fi")
+  check(vk.reason_text("over_daily"):find("limit", 1, true), "over_daily")
+  check(vk.reason_text("low_battery"):find("USB", 1, true), "low_battery says to plug in")
+  check(vk.reason_text("registry_missing") ~= vk.reason_text("unverified"), "a missing route does not read as an impostor")
+  check(not vk.reason_text("registry_missing"):lower():find("impostor", 1, true), "registry_missing does not say impostor")
+
+  -- Messages with a value in them, and anything unknown.
+  check(vk.reason_text("rpc_url not set"):find("rpc_url", 1, true), "<key> not set names the key")
+  check(vk.reason_text("rpc http 503"):find("503", 1, true), "rpc http N keeps N")
+  check(vk.reason_text("registry http 500"):find("500", 1, true), "registry http N")
+  check(vk.reason_text("listener http 502"):find("502", 1, true), "listener http N")
+  check(vk.reason_text("insufficient funds"):find("insufficient funds", 1, true), "an unknown message is shown as it is")
+  check(type(vk.reason_text(nil)) == "string", "nil gives a text")
+
+  -- Contexts and overrides.
+  check(vk.reason_text("mismatch", "receive") ~= vk.reason_text("mismatch"), "the payee's mismatch has its own words")
+  check(vk.reason_text("mismatch", "contact"):find("another badge", 1, true), "a contact card for another badge")
+  eq(vk.reason_text("mismatch", {mismatch = "mine"}), "mine", "an app's override table")
+  eq(vk.reason_text("busy", {mismatch = "mine"}), vk.reason_text("busy"), "an override table falls back")
+  check(#vk.reason_text("over_cap", "short") <= 24, "the short words fit a row")
+  for context, words in pairs(vk.reason_contexts) do
+    for code, text in pairs(words) do
+      check(#text <= vk.REASON_MAX, context .. "." .. code .. " fits")
+    end
+  end
+end
+
+-- ---------------------------------------------------------------------------------------------
+-- vk.peers: badges heard nearby (Contacts' swap list)
+-- ---------------------------------------------------------------------------------------------
+
+do
+  reset_world()
+  local list = vk.peers.new({max = 2, timeout_ms = 4000, hold_ms = 10000})
+  local function hello(address, nonce, rssi) return {address = address, name = "n" .. address, frame = address .. nonce, rssi = rssi} end
+  local p, how = list:heard("m1", hello("A", "1", -40), 0)
+  check(p and how == "new", "a new badge")
+  list:heard("m2", hello("B", "1", -50), 10)
+  eq(#list.items, 2, "two badges")
+  -- A third badge: the one heard longest ago makes room; new badges are never refused.
+  list:heard("m1", hello("A", "1", -40), 20)
+  p, how = list:heard("m3", hello("C", "1", -60), 30)
+  check(p and how == "new", "a third badge is taken")
+  eq(#list.items, 2, "the list stays at max")
+  check(list:find("m2") == nil and list:find("m1") and list:find("m3"), "the least recently heard left")
+  -- Made-up HELLOs from many MACs do not lock an honest badge out: it comes back on its next HELLO.
+  for i = 1, 10 do list:heard("fake" .. i, hello("F" .. i, "1", -30), 40 + i) end
+  p, how = list:heard("m1", hello("A", "1", -40), 60)
+  check(p and how == "new" and list:find("m1"), "the honest badge is listed again")
+  -- The selected badge is kept while others come and go.
+  list = vk.peers.new({max = 2, timeout_ms = 4000, hold_ms = 10000})
+  list:heard("m1", hello("A", "1", -40), 0)
+  list:heard("m2", hello("B", "1", -50), 10)
+  list:heard("m3", hello("C", "1", -60), 20, "m1")
+  check(list:find("m1") and list:find("m3") and not list:find("m2"), "the kept badge is not evicted")
+  -- A known MAC with another key is ignored: it cannot replace the badge's name or frame.
+  p, how = list:heard("m1", hello("EVIL", "9", -20), 30)
+  eq(how, "ignored", "another key from a known MAC")
+  eq(list:find("m1").address, "A", "the address is kept")
+  eq(list:find("m1").frame, "A1", "the frame is kept")
+  -- The same key with a new nonce updates the frame; but not while a card sent to it is pending.
+  p, how = list:heard("m1", hello("A", "2", -40), 40)
+  check(how == "updated" and p.frame == "A2", "a new nonce updates the frame")
+  list:sent("m1", 50)
+  check(list:find("m1").sent, "marked sent")
+  p, how = list:heard("m1", hello("A", "3", -40), 60)
+  check(how == "held" and p.frame == "A2" and p.sent, "a HELLO during a swap in progress does not replace the frame")
+  p, how = list:heard("m1", hello("A", "3", -40), 50 + 10000)
+  check(how == "updated" and p.frame == "A3" and not p.sent, "after hold_ms the new frame is taken")
+  -- A pinned (sent) badge is not evicted; when everything is pinned, a newcomer waits.
+  list = vk.peers.new({max = 1, timeout_ms = 4000, hold_ms = 10000})
+  list:heard("m1", hello("A", "1", -40), 0)
+  list:sent("m1", 0)
+  p, how = list:heard("m2", hello("B", "1", -40), 10)
+  check(p == nil and how == "full", "a full list of pinned badges")
+  -- Expiry.
+  list = vk.peers.new({max = 4, timeout_ms = 4000, hold_ms = 10000})
+  list:heard("m1", hello("A", "1", -40), 0)
+  list:heard("m2", hello("B", "1", -70), 3000)
+  list:expire(4500)
+  check(not list:find("m1") and list:find("m2"), "a badge not heard for timeout_ms leaves")
+  -- Strongest first.
+  list:heard("m3", hello("C", "1", -30), 4600)
+  eq(list.items[1].mac, "m3", "strongest signal first")
+end
+
+-- ---------------------------------------------------------------------------------------------
+-- Small helpers: keep_awake, led_pulse
+-- ---------------------------------------------------------------------------------------------
+
+do
+  reset_world()
+  vk.keep_awake(true)
+  vk.keep_awake(false)
+  check(world.awake[1] == true and world.awake[2] == false, "vk.keep_awake passes on/off")
+  local saved = badge.screen
+  badge.screen = nil
+  vk.keep_awake(true)                         -- an older firmware: nothing, no error
+  badge.screen = saved
+  vk.led_pulse("green", 600)
+  local led = world.leds[1]
+  check(led and led[4] == 600, "vk.led_pulse")
+  check(led[1] >= 0 and led[1] <= 255 and led[2] >= 0 and led[2] <= 255 and led[3] >= 0 and led[3] <= 255, "0..255")
+  check(led[1] == 24 and led[2] == 190 and led[3] == 115, "green 0x1FBF75 through RGB565 (3, 47, 14)")
 end
 
 -- ---------------------------------------------------------------------------------------------

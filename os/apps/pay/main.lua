@@ -5,8 +5,13 @@
 --            shown only by the firmware's approval.
 --   paying   SELECT starts vk.pay.start{request = entry}; the screen says in words what the flow
 --            is doing. The approval itself is the firmware's screen, never this app's.
---   result   PAID with the short signature and green LEDs, or the reason in words. A refusal by
---            the firmware's checks is reported to the dashboard feed (vk.report).
+--   result   PAID with the short signature and green LEDs, or the reason in words
+--            (vk.reason_text, the one table every app shares). A refusal by the firmware's checks
+--            is reported to the dashboard feed (vk.report). With no network the text says what to
+--            do (join Wi-Fi in Settings), and the list says so before a payment is tried.
+--
+-- A request payment carries the request's id as its memo: vk.pay passes req_id to
+-- wallet.build_transfer, and the payee's badge looks for it before it shows PAID.
 --
 -- CANCEL: on the list it exits. While paying, before anything is signed, it abandons the payment
 -- and goes back to the list; once the approval has opened the payment is finished in the
@@ -33,29 +38,6 @@ local WORDS = {            -- the flow's states, in words
   confirm = "confirming",
 }
 
-local REASONS = {          -- why a payment was not made, in words (reference/reasons.md)
-  cancelled = "You cancelled the payment",
-  timeout = "No answer in time",
-  undecodable = "The payment could not be read",
-  unverified = "The recipient is not verified",
-  revoked = "The recipient was revoked",
-  expired = "The record or the request has expired",
-  mismatch = "The payment does not match the request",
-  bad_proof = "The presence proof was not valid",
-  over_cap = "The amount is over the limit",
-  no_time = "The clock is not set",
-  busy = "The wallet is busy, try again",
-  not_provisioned = "This badge is not set up",
-  too_long = "The payment is too long to sign",
-  sign_failed = "The key did not sign",
-  bad_arg = "The request could not be used",
-  unsupported = "This kind of request cannot be paid here",
-  ["transaction failed"] = "The transaction failed on chain",
-  ["not confirmed"] = "Sent, but not confirmed in time",
-}
-
--- The firmware blocks the dashboard feed shows (vk.report forwards only these).
-local REPORTED = {unverified = true, revoked = true, mismatch = true, bad_proof = true, expired = true}
 -- States in which nothing has been signed or shown for approval yet.
 local EARLY = {presence = true, record = true, blockhash = true}
 
@@ -69,6 +51,7 @@ local target = nil         -- the request being paid, or last paid
 local last_state = nil
 local result = nil         -- {paid =, signature =, reason =}
 local report = nil         -- a refusal still to be sent to the feed
+local offline = false      -- the list's last look: Wi-Fi is not joined
 
 local function selected_index()
   for i = 1, #requests do
@@ -105,13 +88,6 @@ local function bars(rssi)
   return string.rep("|", n) .. string.rep(".", #levels + 1 - n)
 end
 
--- The LEDs in a theme colour: badge.theme gives RGB565, the LEDs take 0..255 each.
-local function pulse(token)
-  local c = math.floor(ui.color(token))
-  local r, g, b = c // 2048, (c // 32) % 64, c % 32
-  badge.led.pulse(r * 255 // 31, g * 255 // 63, b * 255 // 31, config.led_ms)
-end
-
 local function start(entry)
   target = entry
   result = nil
@@ -124,13 +100,15 @@ end
 local function finish(state, detail)
   local paid = state == "done"
   detail = tostring(detail or "failed")
-  result = {paid = paid, signature = flow.signature, reason = not paid and detail or nil}
+  local shown = flow:reason()                -- registry_missing is not reported as an impostor
+  result = {paid = paid, signature = flow.signature, reason = not paid and shown or nil}
   if paid then
-    pulse("green")
+    vk.led_pulse("green", config.led_ms)
     badge.log("PAY done " .. detail)
   else
-    if REPORTED[detail] then
+    if shown == detail then
       -- Sent from the next update, so that the result is on screen before the request blocks.
+      -- vk.report forwards only the firmware blocks the feed shows.
       report = {payee = target.payee, reason = detail, req = target.req}
     end
     badge.log("PAY failed " .. detail)
@@ -163,6 +141,8 @@ function on_update(dt)
   if view == "list" and now - refreshed_at >= config.refresh_ms then
     refreshed_at = now
     refresh()
+    local wifi = badge.wifi
+    offline = wifi ~= nil and not wifi.connected()
   end
 end
 
@@ -220,10 +200,11 @@ local function draw_list()
     }
   end
   local hint = #rows > 0 and "SELECT pay" or ""
+  if offline then hint = config.offline_hint end      -- nothing can be paid: say what to do
   if flow then hint = WORDS[flow.state] or "" end     -- a payment finishing in the background
   ui.list{
     header = config.header, title = "PAY", rows = rows, sel = selected_index(),
-    empty = "No requests nearby", hint = hint, back = "CANCEL back",
+    empty = config.empty, hint = hint, back = "CANCEL back",
   }
 end
 
@@ -251,7 +232,7 @@ local function draw_payment()
     ui.text_center("Paid " .. money(target), cx, text_y + 16, ui.color("sub"))
   else
     ui.text_center("NOT PAID", cx, text_y, ui.color("stamp_bad"))
-    local lines = wrap(REASONS[result.reason] or result.reason, 48)
+    local lines = wrap(vk.reason_text(result.reason), 48)
     for i = 1, math.min(#lines, 3) do
       ui.text_center(lines[i], cx, text_y + 3 + i * 13, ui.color("sub"))
     end

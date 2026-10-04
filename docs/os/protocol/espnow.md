@@ -82,13 +82,19 @@ Type 3. Unicast from payee to the challenger. 76 bytes.
 
 ### RESULT
 
-Type 4. "I paid" or "I did not." Unicast from payer to payee. 77 bytes. **Unauthenticated**: the payee confirms on chain before showing PAID.
+Type 4. "I paid" or "I did not." Unicast from payer to payee. 77 bytes. **Unauthenticated**: anyone in range can send one, naming any transaction.
 
 | Offset | Size | Field |
 |---|---|---|
 | 4 | 8 | `req_id` |
 | 12 | 1 | `status`: 0 ok, 1 rejected, 2 failed |
 | 13 | 64 | `ref`: the transaction signature (64 raw bytes), or zeros |
+
+What the payee does with it (`vk.receive`, [lua-api](../platform/lua-api.md#vkreceive)):
+
+- Status 1 or 2 is only noted: it never ends a request, since a stranger could send it.
+- Status 0 queues `ref`. The payee fetches that transaction with `getTransaction` (`base64`, commitment `confirmed`, `maxSupportedTransactionVersion` 0), retrying every 2 s for up to 30 s while the node returns null, requires `meta.err` to be null, and passes the raw wire bytes to `wallet.verify_payment` with the requested amount and `req_id` ([checking a received payment](../wallet/solana-payments.md#checking-a-received-payment)). The firmware checks the payer's signature, that the transaction's signature is `ref`, the token, that this badge's token account is credited, the exact amount, and the **memo**: one Memo instruction whose data is exactly `req_id` as 16 lower-case hex characters ([request memo](../wallet/solana-payments.md#request-memo)), which the payer's `wallet.build_transfer{req_id=}` wrote and its approval required (check 12a). Only then is PAID shown, and `wallet.record_received` writes the received row to the history.
+- Up to 3 distinct refs are held and checked in turn, the first that verifies wins, and a refused ref is not tried again, so a forged RESULT with a junk ref cannot hide the real one. A sender who keeps sending fresh junk refs can delay PAID, never cause it.
 
 ### CONTACT_HELLO
 
@@ -268,7 +274,7 @@ request_open  -->  build+sign REQ
                                               checks -> GREEN, approval, SELECT, sign
                                                                 <--   poll() -> sig; submit; send RESULT
 on_espnow(RESULT) <------------------------------------------------- RESULT
-confirm on chain, show PAID
+getTransaction(ref), verify_payment (memo = req_id), record_received, show PAID
 ```
 
 What each attack looks like on the payer's screen:
@@ -287,6 +293,7 @@ What each attack looks like on the payer's screen:
 | App builds a transaction paying someone other than the record's account | destination ≠ `record.solana_ata` | red, WRONG RECIPIENT |
 | App builds a transaction for more than the request | amount ≠ `req.amount` | red, WRONG AMOUNT |
 | Merchant's attestation is revoked | record says revoked | red, REVOKED |
+| Stranger sends the payee a RESULT naming some confirmed transaction | the payee fetches it; it is not a transfer of this amount to this badge with this request's memo | payee: no PAID; the request stays open |
 
 ## Limits
 

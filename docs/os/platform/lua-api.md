@@ -87,7 +87,7 @@ Permission `request`. Feature `requests`.
 
 `request_open` costs one signature (about 0.2 s with a software key) and does not turn ESP-NOW on: the app calls `badge.espnow.enable(true)` (upstream enables it at boot by default). A request belongs to the app that opened it and closes when that app stops.
 
-The payer's RESULT frame arrives in `on_espnow` (needs `espnow`). It is unauthenticated: before showing "paid", fetch the transaction it names and check it with `wallet.verify_payment` ([below](#badgewallet-received-payments)). A confirmed status alone (`vk.confirm`) proves only that *some* transaction landed.
+The payer's RESULT frame arrives in `on_espnow` (needs `espnow`). It is unauthenticated: before showing "paid", fetch the transaction it names and check it with `wallet.verify_payment` ([below](#badgewallet-received-payments)); [`vk.receive`](#vkreceive) does all of it. A confirmed status alone (`vk.confirm`) proves only that *some* transaction landed.
 
 ## `badge.wallet`: received payments
 
@@ -130,7 +130,7 @@ A field of the wrong type (or a missing `amount` or `req_id`) raises a Lua error
 
 Each call extends the callback deadline by 2500 ms for one Ed25519 verification (about 18 ms with Monocypher); `record_received` adds 1500 ms for the history scan and write.
 
-The intended use in the payee's flow (`lib/vk.lua`):
+What [`vk.receive`](#vkreceive) does for each reported transaction, in outline (an app uses `vk.receive`, not this):
 
 ```lua
 -- after a RESULT with status 0 for request `req` (from request_open) and amount `amount`
@@ -250,25 +250,40 @@ Shared, pure Lua. Source: `os/lib/vk.lua`. Upstream's push can write only under 
 |---|---|---|
 | `vk.json.decode(text)` | — | JSON text → Lua tables, or `nil, message` for malformed text. Numbers become Lua numbers (do not rely on them for amounts; RPC amounts are strings). A `null` object field is left out (so `reply.error` is nil); a `null` array element is `vk.json.null`, so arrays have no holes |
 | `vk.json.encode(value)` | — | Lua value → JSON text, or `nil, message` for a value JSON cannot hold. A plain empty table encodes as `{}`; `vk.json.array(t)` marks a table as an array, so an empty one encodes as `[]` (decoded arrays are marked the same way) |
-| `vk.rpc(method, params)` | `net` | POSTs a JSON-RPC 2.0 call to `wallet.config("rpc_url")`; returns the `result` table, or `nil, message` |
+| `vk.rpc(method, params)` | `net` | POSTs a JSON-RPC 2.0 call to `wallet.config("rpc_url")`; returns the `result` table, or `nil, message`. A null `result` gives `nil, "rpc reply has no result"` |
 | `vk.blockhash()` | `net` | recent blockhash, base58 (`getLatestBlockhash`, commitment `vk.commitment`) |
 | `vk.send_tx(wire_b64)` | `net` | `sendTransaction` with base64 encoding and `vk.commitment` as the preflight commitment (so the preflight knows the blockhash `vk.blockhash` returned); returns the signature (base58) |
-| `vk.confirm(sig)` | `net` | `"confirmed"`, `"pending"` or `"failed"` (`getSignatureStatuses`). `sig` is base58, or the 64 raw bytes a RESULT frame's `ref` carries |
-| `vk.record(address)` | `net` | `GET <listener_url>/registry/<address>`; returns `record, sig` (bytes), or `nil, "unverified"` on 404 |
+| `vk.confirm(sig)` | `net` | `"confirmed"`, `"pending"` or `"failed"` (`getSignatureStatuses`). `sig` is base58, or the 64 raw bytes a RESULT frame's `ref` carries. It says only that *some* transaction landed: a payee checks a RESULT with `vk.receive`, never with this |
+| `vk.record(address)` | `net` | `GET <listener_url>/registry/<address>`; returns `record, sig` (bytes), or `nil, reason`: `"unverified"` for a 404 whose JSON body names the missing record (`{"error":{"message":"no registry record for this key"}}`, or any error text with "record" or "attestation" in it), `"registry_missing"` for any other 404 (the listener has no registry route: not an impostor warning, and not a record either), a transport code on no answer |
 | `vk.report{payee=, reason=, [req=], [payer=]}` | `net` | `POST <listener_url>/feed/event` (a badge-side refusal for the dashboard feed). `payer` defaults to `wallet.address()`; a raw REQ frame in `req` is sent as base64. Only `unverified`, `revoked`, `expired`, `mismatch` and `bad_proof` are posted ([reasons](../reference/reasons.md)); any other reason gives `nil, "not reported"` and no request |
 | `vk.frame_type(data)` | — | the VK frame type of an ESP-NOW payload, or `nil`. Compare it with `vk.T_RESULT` (4), `vk.T_CONTACT_HELLO` (16) or `vk.T_CONTACT_CARD` (17) |
 | `vk.result_frame(req_id_hex, status, sig_bytes)` | — | RESULT frame bytes |
 | `vk.result_parse(data)` | — | `{req_id, status, ref}` (`req_id` hex, `ref` bytes), or `nil` if not a RESULT frame |
 | `vk.hello_parse(data)` | — | `{address, name}` from a CONTACT_HELLO frame, or `nil` |
-| `vk.feed(sig_b58, req)` | `net` | `POST <listener_url>/feed/solana` after a confirmed payment; `req` may be nil |
+| `vk.feed(sig_b58, req)` | `net` | `POST <listener_url>/feed/solana` after a confirmed request payment. With no `req` (a shop payment) nothing is posted, because the backend refuses `req: null`: it returns `nil, "no request"` and logs `vk feed skipped: no request (the backend refuses req null)` |
 | `vk.app_frame(type, body)` / `vk.app_body(data, type)` | — | build / match an app-range frame |
 | `vk.pay.start(opts)` | `sign`, `net`, `espnow` | starts the whole payer flow; returns a flow object (below) |
+| `vk.receive.start(opts)` | `net` (`history` to record) | the payee's check of RESULT frames before PAID; returns a watch object ([below](#vkreceive)) |
+| `vk.reason_text(reason, [context])`, `vk.reasons`, `vk.offline(reason)` | — | one text for every reason, shared by every app ([below](#reason-texts)) |
+| `vk.peers.new{max=, timeout_ms=, hold_ms=}` | — | badges heard nearby by MAC, for a swap list ([below](#vkpeers)) |
+| `vk.keep_awake(on)` | — | `badge.screen.keep_awake(on)`, or nothing on a firmware without it |
+| `vk.led_pulse(token, ms)` | — | the LEDs in a theme colour (`vk.ui.color(token)` turned from RGB565 into 0..255 per channel) |
 | `vk.ui.page()`, `vk.ui.header(left, right)`, `vk.ui.title(text, y)`, `vk.ui.rule(y)`, `vk.ui.row(y, label, value, selected)`, `vk.ui.subline(y, text, selected)`, `vk.ui.amount(cx, y, label, value, unit)`, `vk.ui.footer(left, right)`, `vk.ui.list(model)` | — | the receipt look for Lua apps. Each function calls the firmware's kit through [`badge.receipt`](#badgereceipt) when the firmware has it, and otherwise draws the same picture with `badge.gfx` in the active theme's colours; same geometry as the firmware's receipt kit ([ui](../ui/ui.md#the-receipt-kit)) either way. `vk.ui.list{title=, rows={{l=, r=, sub=, tone=}}, sel=, hint=}` draws a whole list screen |
 | `vk.ui.qr(x, y, size, text)` | — | a QR code of `text` (a link) on a light patch, through `badge.receipt.qr`. Returns `true` when it drew; `false`, with nothing drawn, on a firmware without the kit's QR code, for an empty text and for one over 154 bytes. Home shows `wallet.config("repo_url")` with it |
 | `vk.ui.frame(draw, [period_ms])`, `vk.ui.dirty()` | — | draw only when the screen changed (below, "Drawing only when something changed") |
-| `vk.short(text)`, `vk.timeout_ms`, `vk.commitment`, `vk.RESULT_OK` / `RESULT_REJECTED` / `RESULT_FAILED` | — | first 4 + `..` + last 4 of an address; the timeout of one HTTP request (4000); the commitment used for the blockhash, the send preflight and the confirmation (`"confirmed"`); RESULT status 0, 1, 2 |
+| `vk.short(text)`, `vk.timeout_ms`, `vk.commitment`, `vk.RESULT_OK` / `RESULT_REJECTED` / `RESULT_FAILED`, `vk.last_error` | — | first 4 + `..` + last 4 of an address; the timeout of one HTTP request (4000); the commitment used for the blockhash, the send preflight, the confirmation and `getTransaction` (`"confirmed"`); RESULT status 0, 1, 2; the transport's own message of the last request that got no answer |
 
-Every network helper returns `nil, message` on any failure; nothing loops or raises.
+Every network helper returns `nil, message` on any failure; nothing loops or raises. When a request gets no answer at all, the message is one of these codes, so that an app can say what to do next (the transport's own text is in `vk.last_error`):
+
+| Code | When | Text says |
+|---|---|---|
+| `no_wifi` | not joined: `badge.http` has no route (`"wifi not connected"`, `"no network"`) | join Wi-Fi in Settings > Wi-Fi |
+| `no_route` | the phone bridge, the only route, failed (`"bridge unavailable"`, `"bridge failed"`) | join Wi-Fi in Settings > Wi-Fi |
+| `rpc_unreachable` | a route, but the node at `rpc_url` did not answer (refused, timed out, lost) | check the hotspot's internet |
+| `listener_unreachable` | a route, but the laptop at `listener_url` did not answer | start the dashboard |
+| `bad_url` | `"bad url"`: the key's value is not a usable address | fix it over USB |
+
+`vk.offline(code)` is true for the first four. A registry fetch that times out is `listener_unreachable`: it reads as the network, never as an impostor. A listener reply with status 2xx whose JSON body is `{"ok": false, ...}` is a refusal: `vk.report` and `vk.feed` return `nil` and its `reason` (`"listener refused"` when it has none). Other messages are unchanged: `"<key> not set"`, `"rpc http N"`, `"rpc reply not understood"`, `"rpc reply has no result"`, a node's own error message, `"registry http N"`, `"registry reply not understood"`, `"listener http N"`, `"not reported"`, `"no request"`.
 
 `vk.ui`, beyond the table:
 
@@ -307,6 +322,8 @@ The payer flow as a small state machine, so an app that takes payments is a few 
 - `{request = entry}`: pay a request from `wallet.requests()` (challenge, record, build, approve, submit, RESULT);
 - `{to = address, amount = "5.00", symbol = "HACK", memo = "..."}`: pay a registered recipient with no request (a shop; the approval will be amber).
 
+A request payment carries the request memo: the flow passes `req_id = request.req_id` to `wallet.build_transfer` and no free `memo` (a `memo` option is ignored with a request), so the firmware writes the memo the approval (check 12a) and the payee (`verify_payment`) look for.
+
 ```lua
 local flow = vk.pay.start{ to = SHOP, amount = "5.00", memo = "sword" }
 function on_update(dt)
@@ -316,7 +333,9 @@ function on_update(dt)
 end
 ```
 
-`flow:update()` does at most one blocking step per call. During `"approve"` the app is paused by the firmware and resumes when the user has decided. If `wallet.token_account()` is nil the flow first calls `wallet.refresh_balance()`. After `"confirm"` succeeds it calls `vk.feed` (failures there are ignored) and, when paying a request, sends the RESULT frame.
+`flow:update()` does at most one blocking step per call. During `"approve"` the app is paused by the firmware and resumes when the user has decided. If `wallet.token_account()` is nil the flow first calls `wallet.refresh_balance()` (its `timeout` becomes `no_wifi` when `badge.wifi.connected()` is false, else `rpc_unreachable`). After `"confirm"` succeeds it calls `vk.feed` (failures there are ignored; a payment with no request is not fed) and, when paying a request, sends the RESULT frame.
+
+`flow:reason()` is the reason to show once the flow failed (nil otherwise): `flow.detail`, except that a red UNVERIFIED RECIPIENT whose record fetch got `registry_missing` is `"registry_missing"`, so a missing route does not read as an impostor. The approval was red either way: with no record nothing can be signed.
 
 As built (WP35):
 
@@ -338,11 +357,57 @@ As built (WP35):
   | `flow.result_sent` | true once the flow has sent a RESULT frame to the payee (request payments only). An app that abandons a flow early checks it to decide whether to send a RESULT itself (Duel does) |
   | `flow.request` | the request being paid (`opts.request`), or nil for a shop payment |
   | `flow.failed_in` | on `"failed"`, the state it failed in |
+  | `flow.record_miss` | `"unverified"` or `"registry_missing"` when the record fetch got a 404 (the flow then went on with no record); nil otherwise |
 
   `flow.sig` and `flow.signature` are the same signature in two encodings, not two spellings of one field.
 - When paying a request, RESULT is also sent on failure: status 1 (rejected) when the approval did not sign, 2 (failed) when send or the chain failed, and 0 with the signature when the node accepted the transaction but it was not seen confirmed within 30 s (the payee confirms on chain itself).
 - Option `destination` overrides the token account the transfer is built to (the evil game's WRONG RECIPIENT demo).
 - A shop payment (`to=`) never touches `badge.espnow`, so it works for an app without the `espnow` permission.
+
+### `vk.receive`
+
+The payee's half: turns RESULT frames into PAID only for a transaction that pays this request. Duel's winner and the Request app use it.
+
+```lua
+local watch = vk.receive.start{ req_id = req.req_id, amount = "10.00" }   -- req from wallet.request_open
+function on_espnow(mac, data) watch:result(data) end   -- any frame; others are ignored
+function on_update(dt)
+  local state, detail = watch:update()                 -- every frame
+  -- "waiting" | "pending" | "paid" (detail {payer, sig}) | "failed" (detail: the reason)
+end
+```
+
+Options: `req_id` (16 hex) and `amount` (a string) are required; `symbol`, `to`, `payer` are passed to `wallet.verify_payment` as given ([received payments](#badgewallet-received-payments)); `record` (default true) writes the received row with `wallet.record_received`; `every_ms` and `for_ms` override `vk.receive.every_ms` (2000) and `for_ms` (30000). Bad options give a watch that is already `"failed"` with `bad_arg` (`unsupported` on a firmware without `verify_payment`); it never raises.
+
+- `watch:result(data)` takes a RESULT frame (or a table from `vk.result_parse`) for this request. Status 1 and 2 are only noted in `watch.reported`: anyone can send them. Status 0 with a non-zero `ref` queues that transaction signature and returns true; a ref already queued or already refused returns false.
+- `watch:update()` makes at most one blocking call: one `getTransaction` (`encoding` base64, `commitment` `vk.commitment`, `maxSupportedTransactionVersion` 0), or one `wallet.refresh_balance()` when `verify_payment` answers `unsupported`/`to` (this badge's token account is not known yet; once per ref), or the check itself (`wallet.verify_payment` on the raw bytes, about 18 ms, then `wallet.record_received`). A `null` result means not visible yet; each ref is looked up every `every_ms` for up to `for_ms` from its first look-up, so a transaction that takes a few seconds to appear is still found.
+- **Paid** only when the transaction was fetched, `meta.err` is null, and `verify_payment` returned true. `detail` and `watch.payer`, `watch.sig` are the verified payer and signature (base58). `watch.recorded` is true when the history row was written; a failure there (no `history` permission, the file could not be written) leaves the payment paid and puts the reason in `watch.record_error`. Paid is final: later RESULTs are ignored.
+- **Several RESULTs.** Up to `vk.receive.slots` (3) refs are held and looked up in turn (each update takes the next one that is due), so a forged RESULT naming a junk ref does not delay the real one by its window; the first ref that verifies wins. A fourth ref is still taken: the held ref tried most often (the oldest on a tie) makes room. A ref refused for `mismatch`, `bad_proof`, `undecodable` or `"transaction failed"` is remembered (the last 8) and never tried again.
+- **Failed** when no ref is left to check; `detail` (and `watch.last_reason`, `watch.last_detail`) is why the last one was refused: `verify_payment`'s reason, `"transaction failed"` (`meta.err`), `"not confirmed"` (never visible in `for_ms`), or a network code. It is not final: another RESULT goes back to `"pending"`, and `watch:again()` re-queues the refs given up for a reason that may pass (not found, no network; `watch:retryable()` counts them). `watch.fatal` is true only for a watch that cannot work (`bad_arg`, `unsupported`).
+- `watch:pending()` is the number of refs held; `watch:checking()` the base58 signature of the next one.
+
+What it cannot stop: a sender that keeps sending fresh junk refs faster than they are checked delays PAID (a denial of service, as in [protocol limits](../protocol/espnow.md#limits)). Nothing it sends makes PAID appear. A lying RPC node is out of reach of any badge-side check.
+
+### Reason texts
+
+`vk.reason_text(reason, [context])` returns a sentence for the user, at most `vk.REASON_MAX` (96) characters, with the next step when there is one. Pay, Request, History and Contacts use it and keep no table of their own; Duel and Game (and so Evil game) still have their own until they are moved to it. `reason` is any code of [reasons](../reference/reasons.md) (`vk.reasons` has a text for each, `over_daily` and `low_battery` included), a code of this library (the no-network codes above, `bad_url`, `registry_missing`, `"transaction failed"`, `"not confirmed"`), or a helper's message: `"<key> not set"`, `"rpc http N"`, `"registry http N"` and `"listener http N"` get a text with the key or the status in it; anything else (a node's own message) is returned as it is.
+
+`context` picks other words for codes whose meaning depends on who asks: `"receive"` (the payee checking a transaction: `mismatch` is "That transaction is not this payment."), `"request"` (`request_open`), `"contact"` (`contact_accept`, `contact_card`), `"short"` (a few words for a row's value, as History uses). It may instead be a table of the app's own overrides. Missing words fall back to the common table. The context tables are `vk.reason_contexts`.
+
+`registry_missing` and `unverified` have different texts: the first says the listener has no registry and the recipient could not be checked; only the second warns of an impostor. Both came from a red approval.
+
+### `vk.peers`
+
+A list of badges heard nearby by MAC, strongest signal first (`list.items`), for Contacts' swap screen.
+
+| Call | Does |
+|---|---|
+| `list:heard(mac, {address=, name=, frame=, rssi=}, now, [keep_mac])` | returns `peer, how`. `how` is `"new"`; `"updated"`; `"ignored"` (a listed MAC with another key: a made-up HELLO cannot rename or re-key a listed badge); `"held"` (the same key with a new frame while a card sent to it is pending: the frame is kept); `"full"` (every listed badge is kept, see below; the call returns `nil`) |
+| `list:sent(mac, now)` | a card went to that badge: its frame is held for `hold_ms` (default 10000) |
+| `list:expire(now)` | drops badges not heard for `timeout_ms` (default 4000) |
+| `list:find(mac)` | the peer and its index, or nil |
+
+When the list holds `max` (default 4) badges, a new one takes the place of the one heard longest ago, except `keep_mac` (the selected badge) and badges with a card pending. A new badge is therefore never refused while one of those can leave, and made-up HELLOs from many MACs cannot lock an honest badge out: it is listed again on its next HELLO.
 
 ## The smallest paying app
 

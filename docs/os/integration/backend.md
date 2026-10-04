@@ -2,7 +2,7 @@
 
 What the badge expects from the laptop: the routes it calls, the exact bytes of a registry record, and the values both sides must agree on. The backend is the existing Node server in `dashboard/server/`; its own documentation is in `docs/dashboard/`.
 
-This document specifies the badge's side of the contract. Routes marked **needed** do not exist yet and are built by the backend owner; they are not part of the OS work packages, but the OS cannot reach gate 2 without `/registry`.
+This document specifies the badge's side of the contract. The routes below under "Badge routes added by the backend" are built by the backend owner; they are not part of the OS work packages, but the OS cannot reach gate 2 without `/registry`. They exist since backend commit `afd7992` (`dashboard/server/src/http.js`, `handleBadge`, badge listener only). Checked on 2026-10-04 with the backend's own code and a throwaway issuer key: the served record is accepted byte for byte by `vk_record_parse` and `vk_record_verify`, and a request payment with its memo and a PRESENT proof comes out green. Open gaps on the backend side: `POST /feed/solana` refuses `req: null` (a payment with no request), and the issuer key the backend actually holds has not been compared with the pinned one below.
 
 ## Network
 
@@ -19,13 +19,13 @@ To open the listener, set `BADGE_LISTEN_HOST` in `dashboard/.env` to the laptop'
 
 Set `ATTACK_TX_VERSION=legacy` in `.env`: the badge refuses versioned messages.
 
-## Needed routes
+## Badge routes added by the backend
 
 | Method and path | Request → reply | Used by |
 |---|---|---|
 | `GET /health` | → `{ok: true}` | provisioning check |
 | `GET /registry/<address>` | → `200` `{record: "<base64 canonical bytes>", sig: "<base64 64 bytes>"}`; `404` for a key with no attestation | `vk.record()` in every payment |
-| `POST /feed/solana` | `{tx_sig, req}` (base58, base64 REQ frame or null) → `{ok}`. The backend confirms on chain before writing the feed row | Pay, after a confirmed payment |
+| `POST /feed/solana` | `{tx_sig, req}` (base58, base64 REQ frame or null) → `{ok}`. The backend confirms on chain before writing the feed row | Pay, after a confirmed request payment (`vk.feed`; a payment with no request is not posted, because the route refuses `req: null` with 200 `{ok:false}`; a 2xx `{ok:false}` counts as a refusal) |
 | `POST /feed/event` | `{payer, payee, reason, req}` → `{ok}`. A refusal seen on a badge; shown on the feed as "reported by badge" | `vk.report()` |
 
 For the optional bank rail: `GET /balance/<address>` → `{usd_cents, account_id}` and `POST /bank/authorize` with `{payload, sig, payer_pubkey, req, proof_sig}`.
