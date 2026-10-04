@@ -239,6 +239,7 @@ Payer badge A pays merchant badge B 10.00 HACK. Each step names the document tha
 | `VK_ED25519_BACKEND` | 0 | 0 | 0 = TweetNaCl (upstream), 1 = Monocypher ([signing](../wallet/signing.md#crypto-backend)) |
 | `VK_FORCE_SOFTWARE_KEY` | 0 | 0 | 1 = never use the SE050 for the key ([signing](../wallet/signing.md#key)) |
 | `VK_API_VERSION` | 2 | 2 | reported to apps as `badge.api_version` |
+| `VK_SE050_QUARANTINE` | 1 | 1 | 1 = never address the SE050 at boot (hook H21; the button/I²C fix). Implies a software key |
 
 A judge badge is flashed only with the release profile. `scripts/preflash-check.sh` enforces it ([../guides/build-flash-provision.md](../guides/build-flash-provision.md#pre-flash-checks)).
 

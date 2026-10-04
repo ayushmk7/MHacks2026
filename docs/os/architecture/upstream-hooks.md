@@ -36,6 +36,7 @@ Line numbers are for upstream commit `812b8c7`. Upstream's `solana-os.ino` is `o
 | H18 | `src/identity/identity.cpp` | optional: never use the SE050 for a new key |
 | H19 | `src/lua_sdk/lua_runtime.cpp` `callGlobal()` | no Lua callback runs while the approval is up |
 | H20 | `src/ui/shell.cpp` `update()` | the shell repaints when Badge OS asks |
+| H21 | `os.ino` `setup()` | provisional: keep the SE050 off the I²C bus (button fix, finding F17) |
 
 ## The edits
 
@@ -323,6 +324,22 @@ In `shell::update()` in `src/ui/shell.cpp`, directly before `if (!sDirty) return
 
 Upstream's shell redraws only when its private dirty flag is set, so without this the approval's last frame would stay on the panel after it closes over the launcher, and status items would never update.
 
+### H21 — SE050 quarantine (provisional)
+
+Finding F17: on the development badge, a Solana OS session leaves an I²C slave holding SCL low. The hold survives resets and reflashing and clears only when power is removed; while it lasts the button expander cannot be read under any firmware, which is why the buttons "work in the test kit but not in Solana OS". By elimination the slave is the SE050 (it stretches the clock, has no usable reset on this board, and is the device addressed just before the failure). The two operations only Solana OS performs on it are the boot-time bus scan's zero-length probe of `0x48` and the applet-select write. Which of them latches the part is **not yet proven**: that needs a power cycle and a second deliberate failure.
+
+Until it is proven, the fork does not address the SE050 at boot at all. In `setup()` in `os.ino`:
+
+```cpp
+  if (!VK_SE050_QUARANTINE) se050::test();       // VK: H21
+  ...
+  if (!VK_SE050_QUARANTINE) badge_i2c::scan();   // VK: H21
+```
+
+`VK_SE050_QUARANTINE` is defined in `src/vk/vk_build.h` and is 1. With it set, upstream's identity code sees no secure element and uses (or creates) a software key; nothing else in the firmware addresses `0x48`. Set it to 0 only on a badge whose SE050 is known to work.
+
+This hook does not release a bus that is already held: **the badge must be power-cycled once** (USB unplugged, battery off, a few seconds) after flashing a build that contains it. It is provisional: when the trigger is identified, replace it with the narrowest change that avoids that one operation and update this section.
+
 ## Checking the hooks
 
 ```bash
@@ -330,4 +347,4 @@ cd os
 grep -rn "// VK: H" os.ino src | grep -v "src/vk/" | sed -E 's/.*VK: (H[0-9]+[a-g]?).*/\1/' | sort -u
 ```
 
-Expected output: `H1 H2 H3 H4 H5 H6 H7 H8a H8b H8c H8d H8e H8f H9 H10 H11 H12 H13 H14 H15 H16 H17 H19 H20`, plus `H18` if used.
+Expected output: `H1 H2 H3 H4 H5 H6 H7 H8a H8b H8c H8d H8e H8f H9 H10 H11 H12 H13 H14 H15 H16 H17 H19 H20 H21`, plus `H18` if used.

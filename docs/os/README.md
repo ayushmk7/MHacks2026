@@ -104,7 +104,8 @@ Everything marked `[UNVERIFIED]`, with the fallback and the package that settles
 | U2 | Self-registering statics survive linking | `src/vk/registry_anchor.cpp` | WP01 |
 | U3 | Ed25519 speed on the ESP32-S3 (TweetNaCl) | Monocypher backend | WP51 (M2) |
 | U12 | Upstream's 7-frame ESP-NOW queue loses frames while a signature blocks the loop | re-challenge; amber when presence is unknown | WP51 (M1) |
-| U4 | SE050 signs a 214-byte message with the limit raised to 242 | software key (H18) | WP50 |
+| U4 | SE050 signs a 214-byte message with the limit raised to 242 | software key (H18) | WP50; blocked on this badge, whose SE050 refuses select |
+| U13 | Which SE050 operation latches the I²C clock low (finding F17) | H21 quarantines the SE050 entirely | needs a power cycle, then one more debugging session |
 | U5 | SNTP sync callback exists in the installed core | poll the sync status | WP20 |
 | U6 | The hotspot lets badges and the laptop reach each other, and passes SNTP | clock floor from records (amber at best) | WP20, WP21 |
 | U7 | Presence round-trip time | `presence_ms` from M1; presence shown amber if unusable | WP51 (M1) |
