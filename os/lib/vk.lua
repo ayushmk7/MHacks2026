@@ -1167,14 +1167,14 @@ local REASONS = {
   -- This library's codes.
   no_wifi = "No network: Wi-Fi is not joined. Join Wi-Fi in Settings > Wi-Fi.",
   no_route = "No network: the phone bridge failed. Join Wi-Fi in Settings > Wi-Fi.",
-  rpc_unreachable = "The RPC node did not answer. Check the hotspot's internet, then try again.",
+  rpc_unreachable = "The Solana node did not answer. Check the hotspot's internet, then try again.",
   listener_unreachable = "The laptop listener did not answer. Start the dashboard, then try again.",
   bad_url = "rpc_url or listener_url is not a usable address. Fix it over USB.",
   registry_missing = "The listener has no registry, so the recipient could not be checked. Fix the dashboard.",
   ["transaction failed"] = "The transaction failed on chain. Nothing was paid.",
   ["not confirmed"] = "Sent, but not confirmed in time. Check History later.",
-  ["rpc reply not understood"] = "The RPC node's answer was not understood. Check rpc_url.",
-  ["rpc reply has no result"] = "The RPC node did not have it. Try again.",
+  ["rpc reply not understood"] = "The Solana node's answer was not understood. Check rpc_url.",
+  ["rpc reply has no result"] = "The Solana node did not have it. Try again.",
   ["registry reply not understood"] = "The registry's answer was not understood. Check the dashboard.",
 }
 vk.reasons = REASONS
@@ -1216,7 +1216,7 @@ vk.reason_contexts = CONTEXTS
 
 local PATTERNS = {
   {"^(.+) not set$", "This badge is not set up: %s is not set. Provision it over USB."},
-  {"^rpc http (%d+)$", "The RPC node answered HTTP %s. Check rpc_url."},
+  {"^rpc http (%d+)$", "The Solana node answered HTTP %s. Check rpc_url."},
   {"^registry http (%d+)$", "The registry answered HTTP %s. Check the dashboard."},
   {"^listener http (%d+)$", "The listener answered HTTP %s. Check the dashboard."},
 }

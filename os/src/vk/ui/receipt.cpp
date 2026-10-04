@@ -12,7 +12,6 @@
 #include "../../hal/display.h"
 #include "../../hal/power.h"
 #include "../core/clock.h"
-#include "../core/utc_offset.h"
 #include "battery.h"
 
 // The QR encoder that LovyanGFX's own canvas.qrcode() uses. That function draws pure white and
@@ -237,9 +236,8 @@ void statusRight(char *out, size_t cap) {
   };
   char part[16];
   if (vk::clock::ok()) {
-    // UTC moved by the venue's offset (config key utc_offset), for display only: the clock itself
-    // and every check that reads it stay UTC.
-    vk_utc_offset_clock(vk::clock::now(), vk::clock::utcOffsetMin(), part, sizeof part);
+    const uint32_t t = vk::clock::now();              // unix seconds: the time shown is UTC
+    snprintf(part, sizeof part, "%02u:%02u", (unsigned)((t / 3600) % 24), (unsigned)((t / 60) % 60));
     add(part);
   }
   // The badge has no fuel gauge: the only real measurement is the cell voltage. On external power the

@@ -59,7 +59,6 @@ src/vk/
     service.h                      VK_SERVICE
     config.h  config.cpp           NVS config store, VK_CONFIG_KEY
     clock.h   clock.cpp            SNTP, time source, clock floor
-    utc_offset.h utc_offset.c      the display-only UTC offset (config key utc_offset): parse, format, step, apply; pure C, host-tested
     serial.h  serial.cpp           USB serial commands: VK_SERIAL_COMMAND, VK_INFO_FIELD, VKHELP, VKINFO (config commands are in config.cpp)
     fileio.h  fileio.cpp           the one file layer every store uses (stores.md); replaced by an in-memory one in host tests
     wifi_net.h wifi_net.cpp        vk::wifi: saved Wi-Fi networks (NVS `vkwifi`), the join state machine, auto-join (ui/shell.md, Wi-Fi); host-tested
@@ -106,11 +105,8 @@ src/vk/
     launcher.cpp                   the MENU screen
     settings_list.cpp              the Settings list, built from the page registry
     dialogs.cpp                    delete confirmation, app error, app-store offer, installing
-    edit.h edit.cpp                changing a non-secure config key from the buttons; screen `pick`; VK_KEY_CHOICES
-    setup.h                        the setup checklist for the launcher (implemented in pages/page_setup.cpp)
-    setup_core.h setup_core.c      the checklist and the number stepper; pure C, host-tested
     pages/page_<id>.cpp            one file per settings page: theme wifi bluetooth espnow push store identity
-                                   display leds wallet inbox info console about badge setup advanced restart
+                                   display leds wallet inbox info console about
   sdk/
     badge_sdk.hpp                  native app SDK, BADGE_APP
   features/

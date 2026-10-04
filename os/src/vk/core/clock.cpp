@@ -23,7 +23,6 @@
 #include "config.h"
 #include "serial.h"
 #include "service.h"
-#include "utc_offset.h"
 #endif
 
 namespace vk::clock {
@@ -76,11 +75,6 @@ namespace {
 
 VK_CONFIG_KEY(ntp_server, "ntp_server", vk::config::Type::STR, "pool.ntp.org", vk::config::F_NONE, 3, 64,
               "SNTP host");
-// For display only (utcOffsetMin() below). The rule makes VKSET and the settings pages refuse
-// anything but a quarter-hour offset from -12:00 to +14:00.
-VK_CONFIG_KEY(utc_offset, "utc_offset", vk::config::Type::STR, "", vk::config::F_NONE, 0, 6,
-              "local time shown: +HH:MM from UTC; empty = UTC");
-VK_CONFIG_RULE(utc_offset, "utc_offset", vk_utc_offset_valid);
 
 constexpr uint32_t TICK_MS = 1000;          // the sync-status poll and the rebase run once a second
 constexpr uint32_t REBASE_MS = 3600000UL;   // fold elapsed time into the base hourly, long before millis() wraps
@@ -196,16 +190,6 @@ String infoTime() {
   }
   return String("none");
 }
-
-}  // namespace
-
-int32_t utcOffsetMin() {
-  int32_t minutes = 0;
-  if (!vk_utc_offset_parse(vk::config::text("utc_offset").c_str(), &minutes)) return 0;
-  return minutes;
-}
-
-namespace {
 
 VK_SERVICE(clock, nullptr, serviceUpdate);
 VK_INFO_FIELD(time, "time", infoTime);

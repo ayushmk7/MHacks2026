@@ -2,7 +2,7 @@
 
 One screen on which a person types a short text with the six buttons: a Wi-Fi password, a network name. It is a part of the kit ([ui](ui.md#the-receipt-kit)): any shell page and any native app can open it. Files: `src/vk/ui/keyboard.{h,cpp}` (the screen), `src/vk/ui/keyboard_core.{h,c}` (the layout, the cursor and the text: pure C99, no drawing, host-tested).
 
-The first user is Settings → Wi-Fi ([shell](shell.md#wi-fi)), which asks for a password, and for the name of a network that hides it. The others are the badge's own settings: the display name on Settings → Badge and Setup, and any text or number key on Settings → Advanced, through `vk::shell::edit::type`, which takes the field's limits from the config key ([shell](shell.md#editing-a-config-key)).
+The first user is Settings → Wi-Fi ([shell](shell.md#wi-fi)), which asks for a password, and for the name of a network that hides it.
 
 **Status:** built and host-tested (`test_keyboard`). **Not yet seen on a badge**: the picture and the timings below were not checked on the glass; `t_wifi_setup.py` is written and has not been run ([what to check](#tests)).
 
