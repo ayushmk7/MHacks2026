@@ -2,7 +2,7 @@
 
 How to put BadgeOS on a Solana DEF CON badge that is not the development badge: a badge still running the stock firmware, or a teammate's badge. For the toolchain details, the build profiles and provisioning in depth, see [build, flash, provision](build-flash-provision.md); this page is the short path, start to finish.
 
-**Status of this procedure.** Every step here has been run on one badge (the development badge, a CH340 serial port, a software key). No second badge has been flashed yet, so anything that depends on what a stock badge already holds (its stored key, its installed apps) is described from the code, not from a run. Those places are marked "not yet verified on a second badge".
+**Status of this procedure.** Run on four badges on 2026-10-04 with `scripts/fleet.sh dev`: all four flashed in parallel, identical launchers, boot, the Tests app, sleep, Bluetooth, and the two-badge tests (requests and presence, contact swap, Duel) passed. Settings survive the flash: one badge kept a Wi-Fi network saved by its old firmware, which had to be forgotten (a joined badge moves its radio to that network's channel). Not yet run: the release profile on a badge, real provisioning, and a payment on devnet.
 
 ## What flashing changes and what it keeps
 
