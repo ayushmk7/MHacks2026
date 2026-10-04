@@ -7,7 +7,7 @@ blockhash, sends the transaction, and both badges confirm it on chain. So, unlik
 tests, this one does NOT provision the badges with the test values (those point rpc_url at
 127.0.0.1 and use the test issuer key). It needs this setup, which it checks but does not make:
 
-  - both badges provisioned for the demo (scripts/vkdev.py provision --env) and joined to the
+  - both badges provisioned for the demo (scripts/vkdev.py provision) and joined to the
     hotspot, so that listener_url and rpc_url answer and both are on one ESP-NOW channel;
   - the backend running, with a registry record for B's key;
   - A holding at least 10.00 of the default token (and SOL for the fee).
@@ -61,7 +61,7 @@ def pay_wait(badge, pattern, timeout=10):
 def check_setup(each, who):
     info = each.info()
     assert info.get("provisioned") == "1", (
-        "%s is not provisioned: run scripts/vkdev.py provision --env on it first" % who)
+        "%s is not provisioned: run scripts/vkdev.py provision on it first" % who)
     for key in ("rpc_url", "listener_url"):
         assert each.ok("VKGET %s" % key).strip(), "%s has no %s" % (who, key)
 

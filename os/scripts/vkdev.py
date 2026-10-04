@@ -15,8 +15,9 @@ Spec: docs/os/testing/testing.md ("The serial tool", "Dev hooks") and docs/os/pl
     vkdev.py --port P run pay                    RUN <id>          (stop: STOP)
     vkdev.py --port P monitor                    tail the log
     vkdev.py --port P [--port2 P2] test test/device/t_boot.py ... [--include-deferred]
-    vkdev.py --port P provision --env dashboard/.env --cap 100.00 --max 1000.00 ...
-    vkdev.py --selftest                          checks the codecs in this file; needs no badge
+    vkdev.py --port P provision --listener URL --wifi SSID PASSWORD [--badge-id N --label L]
+    vkdev.py provision --dry-run ...             what provision would send; opens no port
+    vkdev.py --selftest                          checks the codecs and the provisioning values; needs no badge
 
 The badge's protocol, in short: one command per line at 115200 baud. Every command is answered by
 exactly one line starting with OK or ERR, possibly after "+ ..." lines, and mixed in with "[tag]"
@@ -615,47 +616,381 @@ def run_tests(files, open_badge, port2, include_deferred):
 
 # --------------------------------------------------------------------------------------------
 # Provisioning (config.md, "With the tool")
+#
+# Where each value comes from; the first source that has it wins:
+#   1. a flag: --issuer --mint --decimals --symbol --cap --max --rpc
+#   2. os/provision.public.env, the committed file of public values (--public-env names another)
+#   3. the file named with --env, and only when it is named: no dashboard .env is read by default
+# The issuer is always given as a public key. Nothing in this file opens a keypair file: the
+# AUTHORITY_KEYPAIR line of an env file is dropped while the file is parsed, so the path of the
+# secret key is never known here, let alone opened. --selftest proves both.
 # --------------------------------------------------------------------------------------------
 
-def read_env(path):
-    """KEY=VALUE lines of an env file as a dict."""
+PUBLIC_ENV_DEFAULT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                                                   "provision.public.env"))
+
+# (field, flag, name in an env file). These seven names are all that is ever taken from an env file.
+PROVISION_FIELDS = (
+    ("issuer", "--issuer", "ISSUER_PUBKEY"),
+    ("mint", "--mint", "HACK_MINT"),
+    ("decimals", "--decimals", "HACK_DECIMALS"),
+    ("symbol", "--symbol", "HACK_SYMBOL"),
+    ("cap", "--cap", "HACK_CAP"),
+    ("max", "--max", "HACK_MAX"),
+    ("rpc", "--rpc", "RPC_URL"),
+)
+ENV_NAMES = tuple(name for _, _, name in PROVISION_FIELDS)
+
+TOKEN_ENTRY_MAX = 95              # the firmware's limit for one mint:decimals:symbol:cap:max entry
+PUBKEY_PLACEHOLDER = "<PUBKEY: printed by the real run>"
+KEY_PLACEHOLDER = "<se050|software: printed by the real run>"
+
+_URL_USERINFO = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]*@")
+
+
+def _show_path(path):
+    """A path as short as it can be written from the current directory."""
+    try:
+        relative = os.path.relpath(path)
+    except ValueError:
+        return path
+    return path if relative.startswith("..") else relative
+
+
+def _looks_secret(value):
+    """True for text shaped like key material: a JSON array (the content of a keypair file), a PEM
+    block, hex of 32 or 64 bytes, base58 of 64 bytes, or a URL that carries a user and password."""
+    text = value.strip()
+    if text.startswith("[") or "-----BEGIN" in text:
+        return True
+    if re.fullmatch(r"[0-9a-fA-F]{64}|[0-9a-fA-F]{128}", text):
+        return True
+    if _URL_USERINFO.match(text):
+        return True
+    try:
+        return len(text) >= 80 and len(b58dec(text)) == 64
+    except ValueError:
+        return False
+
+
+def read_env(path, public):
+    """The provisioning values of an env file: {name: value}, for the names in ENV_NAMES only.
+
+    Every other line is dropped while parsing and its value is not kept, so nothing later can use
+    it. public=True is for the committed file: it is refused if it holds any other name, or a
+    value shaped like key material, because that file must stay safe to commit."""
     values = {}
-    with open(path, "r", encoding="utf-8") as handle:
+    shown = _show_path(path)
+    try:
+        handle = open(path, "r", encoding="utf-8")
+    except OSError as exc:
+        raise BadgeError("cannot read %s: %s" % (shown, exc.strerror or exc))
+    with handle:
         for line in handle:
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
             if line.startswith("export "):
                 line = line[7:]
-            key, value = line.split("=", 1)
+            name, value = line.split("=", 1)
+            name = name.strip()
+            if name not in ENV_NAMES:
+                if public:
+                    raise BadgeError(
+                        "%s holds %s, which is not one of the public names (%s). That file is "
+                        "committed and may hold public values only; nothing was read from it. A "
+                        "dashboard .env is read only when it is named with --env"
+                        % (shown, name, ", ".join(ENV_NAMES)))
+                continue  # not ours: the value is never kept
             value = value.strip()
             if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
                 value = value[1:-1]
-            values[key.strip()] = value
+            if public and _looks_secret(value):
+                raise BadgeError("%s: the value of %s looks like a secret; that file is committed "
+                                 "and may hold public values only" % (shown, name))
+            values[name] = value
     return values
 
 
-def issuer_from_keypair(path):
-    """The public key (base58) of a 64-byte keypair file: its last 32 bytes. The file is a JSON
-    array of 64 numbers, as the dashboard and solana-keygen write it, or 64 raw bytes."""
-    with open(path, "rb") as handle:
-        raw = handle.read()
+def resolve_provision(args):
+    """({field: text}, {field: where it came from}) for PROVISION_FIELDS. Opens env files only."""
+    public, public_label = {}, None
+    if args.public_env is None:
+        if os.path.isfile(PUBLIC_ENV_DEFAULT):
+            public, public_label = read_env(PUBLIC_ENV_DEFAULT, True), _show_path(PUBLIC_ENV_DEFAULT)
+    elif args.public_env != "none":
+        public, public_label = read_env(args.public_env, True), _show_path(args.public_env)
+    extra = read_env(args.env, False) if args.env else {}
+
+    values, sources, missing, clashes = {}, {}, [], []
+    for field, flag, name in PROVISION_FIELDS:
+        given = getattr(args, field)
+        first, second = public.get(name) or "", extra.get(name) or ""
+        if given is not None:
+            values[field], sources[field] = given, flag
+        elif first and second and first != second:
+            clashes.append("%s (%s)" % (name, flag))
+        elif first:
+            values[field], sources[field] = first, "%s %s" % (public_label, name)
+        elif second:
+            values[field], sources[field] = second, "--env %s %s" % (_show_path(args.env), name)
+        else:
+            missing.append("%s (%s)" % (name, flag))
+    if clashes:
+        # The values are not printed: an env file given with --env is not a public file.
+        raise BadgeError("%s and --env %s disagree on %s. The badge and the backend must use the same "
+                         "values: fix the file that is wrong, or decide with the flag"
+                         % (public_label, _show_path(args.env), ", ".join(clashes)))
+    if missing:
+        raise BadgeError("no value for %s. Give the flag, or the name in %s. The issuer is given as a "
+                         "public key (base58); this tool never reads a keypair file"
+                         % (", ".join(missing), public_label or "a public env file (--public-env)"))
+    return values, sources
+
+
+def _is_key32(text):
+    """base58 of exactly 32 bytes, as the firmware's KEY32 type accepts."""
     try:
-        raw = bytes(json.loads(raw.decode("utf-8")))
-    except (ValueError, TypeError):
-        pass
-    if len(raw) != 64:
-        raise BadgeError("%s is not a 64-byte keypair; give the issuer with --issuer <base58>" % path)
-    return b58enc(raw[32:])
+        return 32 <= len(text) <= 44 and len(b58dec(text)) == 32
+    except ValueError:
+        return False
+
+
+def _amount_raw(text, decimals):
+    """Display units -> raw units by the rules of the firmware's sol_parse_amount; None if refused."""
+    if not re.fullmatch(r"[0-9]*\.?[0-9]*", text) or not re.search(r"[0-9]", text):
+        return None
+    whole, _, fraction = text.partition(".")
+    if len(fraction) > decimals:
+        return None
+    raw = int(whole + fraction.ljust(decimals, "0"))
+    return raw if raw < 1 << 64 else None
+
+
+def _url_problem(text, shortest, longest):
+    """Why the firmware's STR type, or common sense, refuses this URL; None if it is fine."""
+    if not all(" " < char <= "~" for char in text):
+        return "must be printable ASCII without blanks"
+    if not shortest <= len(text) <= longest:
+        return "must be %d to %d characters" % (shortest, longest)
+    if text and not re.match(r"^https?://[^/]+", text):
+        return "must start with http:// or https://"
+    return None
+
+
+def _step_line(step, show=False):
+    """The line one provisioning step sends. show=True: the same, with a Wi-Fi password left out."""
+    if step[0] == "VKSET":
+        return "VKSET %s %s" % (step[1], step[2])
+    if step[0] == "VKWIFI":
+        password = "<password, %d characters, not shown>" % len(step[2]) if show else step[2]
+        return "VKWIFI %s|%s" % (step[1], password)
+    if step[0] == "VKAUTOSTART":
+        return "VKAUTOSTART %s" % step[1]
+    return step[0]
+
+
+def provision_lines(steps, show=False):
+    """Every line a run sends to an unprovisioned badge, in order: VKINFO, the steps, a read-back
+    of every key that was set, VKINFO."""
+    read_back = ["VKGET " + step[1] for step in steps if step[0] == "VKSET"]
+    return ["VKINFO"] + [_step_line(step, show) for step in steps] + read_back + ["VKINFO"]
+
+
+def provision_plan(args):
+    """Resolves and validates everything `provision` needs, before any badge is touched. Reads
+    env files and nothing else. Returns {"values", "sources", "tokens", "steps"}."""
+    values, sources = resolve_provision(args)
+    problems = []
+
+    for field, what in (("issuer", "the issuer key"), ("mint", "the mint")):
+        if not _is_key32(values[field]):
+            problems.append("%s is not base58 of 32 bytes: %r" % (what, values[field]))
+    if values["issuer"] == values["mint"]:
+        problems.append("the issuer key and the mint are the same address")
+    if not re.fullmatch(r"[0-9]", values["decimals"]):
+        problems.append("decimals must be one digit, 0 to 9: %r" % values["decimals"])
+    else:
+        decimals = int(values["decimals"])
+        raw = {}
+        for field in ("cap", "max"):
+            raw[field] = _amount_raw(values[field], decimals)
+            if raw[field] is None:
+                problems.append("%s must be an amount with at most %d fraction digits: %r"
+                                % (field, decimals, values[field]))
+        if None not in raw.values() and raw["max"] != 0 and raw["cap"] > raw["max"]:
+            problems.append("cap %s is above max %s" % (values["cap"], values["max"]))
+    if not re.fullmatch(r"[A-Z0-9]{1,4}", values["symbol"]):
+        problems.append("the symbol must be 1 to 4 characters of A-Z and 0-9: %r" % values["symbol"])
+    tokens = "%s:%s:%s:%s:%s" % (values["mint"], values["decimals"], values["symbol"],
+                                 values["cap"], values["max"])
+    if len(tokens) > TOKEN_ENTRY_MAX:
+        problems.append("the token entry is %d characters; the firmware takes %d" % (len(tokens), TOKEN_ENTRY_MAX))
+
+    problem = _url_problem(values["rpc"], 8, 128)
+    if problem:
+        problems.append("the RPC URL %s" % problem)
+    elif sources["rpc"] != "--rpc" and (_URL_USERINFO.match(values["rpc"]) or "?" in values["rpc"]):
+        # Not printed. Every config value can be read from a badge with VKGET.
+        problems.append("the RPC URL from %s carries a login or a query string. Anyone holding the "
+                        "badge can read rpc_url: give a plain URL, or pass it with --rpc if this "
+                        "is intended" % sources["rpc"])
+    if args.listener is not None:
+        problem = _url_problem(args.listener, 0, 128)
+        if problem:
+            problems.append("the listener URL %s" % problem)
+    if args.wifi and (not args.wifi[0] or "|" in args.wifi[0]):
+        problems.append("VKWIFI cannot carry an empty SSID or one that contains '|'")
+    if args.badge_id is not None and not 1 <= args.badge_id <= 99:
+        problems.append("--badge-id must be 1 to 99")
+
+    steps = [("VKSET", "issuer_key", values["issuer"]), ("VKSET", "tokens", tokens),
+             ("VKSET", "rpc_url", values["rpc"])]
+    if args.listener is not None:
+        steps.append(("VKSET", "listener_url", args.listener))
+    if args.wifi:
+        steps.append(("VKWIFI", args.wifi[0], args.wifi[1]))
+    steps.append(("VKCOMMIT",))
+    if args.autostart is not None:
+        steps.append(("VKAUTOSTART", args.autostart))
+    for step in steps:
+        line = _step_line(step)
+        if "\n" in line or "\r" in line or len(line.encode("utf-8")) > MAX_LINE_CHARS:
+            problems.append("%s does not fit one line of %d bytes" % (_step_line(step, True)[:40], MAX_LINE_CHARS))
+    if problems:
+        raise BadgeError("these values would be refused; nothing was sent:\n  " + "\n  ".join(problems))
+    return {"values": values, "sources": sources, "tokens": tokens, "steps": steps}
+
+
+def _print_values(plan, args):
+    """What will be set and where each value came from. Never prints a Wi-Fi password."""
+    values, sources = plan["values"], plan["sources"]
+    rows = [("issuer_key", values["issuer"], sources["issuer"]), ("tokens", plan["tokens"], "composed from:")]
+    rows += [("  " + field, values[field], sources[field]) for field in ("mint", "decimals", "symbol", "cap", "max")]
+    rows.append(("rpc_url", values["rpc"], sources["rpc"]))
+    if args.listener is not None:
+        rows.append(("listener_url", args.listener, "--listener"))
+    else:
+        rows.append(("listener_url", "(not sent)", "per venue: --listener http://<backend laptop IP>:8788"))
+    if args.wifi:
+        rows.append(("wifi", args.wifi[0], "--wifi (password not shown)"))
+    else:
+        rows.append(("wifi", "(not sent)", 'per venue: --wifi "<SSID>" "<password>"'))
+    if args.autostart is not None:
+        rows.append(("autostart", args.autostart, "--autostart"))
+    print("values, and where each one comes from:")
+    for name, value, source in rows:
+        print("  %-12s = %s   [%s]" % (name, value, source))
+
+
+# -- the entry for dashboard/server/config/badges.json ----------------------------------------
+
+def _badges_load(path):
+    """A badges file ({"badges": [...]}, the shape of dashboard/server/config/badges.json) as a
+    dict. A file that does not exist yet is an empty one. Anything else is refused and left alone."""
+    if not os.path.exists(path):
+        return {"badges": []}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            document = json.load(handle)
+    except (OSError, ValueError) as exc:
+        raise BadgeError("%s is not readable JSON (%s); it was left as it is" % (_show_path(path), exc))
+    badges = document.get("badges") if isinstance(document, dict) else None
+    if not isinstance(badges, list) or not all(isinstance(badge, dict) for badge in badges):
+        raise BadgeError('%s is not {"badges": [...]}; it was left as it is' % _show_path(path))
+    return document
+
+
+def _badges_save(path, document):
+    temporary = path + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(document, indent=2) + "\n")
+    os.replace(temporary, path)
+
+
+def badge_entry(badges, pubkey, key_location, badge_id, label, allocate):
+    """Puts one badge into `badges` (a list of badges.json entries) and returns (entry, what was
+    done). An entry with the same public key is updated. Otherwise the entry with `badge_id` is
+    replaced. Otherwise a new entry is added, with `badge_id` or, if `allocate`, the lowest free id."""
+    by_key = next((badge for badge in badges if badge.get("pubkey") == pubkey), None)
+    by_id = None
+    if badge_id is not None:
+        by_id = next((badge for badge in badges if badge.get("id") == badge_id), None)
+    if by_key is not None:
+        if by_id is not None and by_id is not by_key:
+            raise BadgeError("badge id %d belongs to another public key in the badges file (%s); "
+                             "this badge is already there as id %s" % (badge_id, by_id.get("pubkey"), by_key.get("id")))
+        old, what = by_key, "updated"
+    elif by_id is not None:
+        old, what = by_id, "replaced (was %s)" % by_id.get("pubkey")
+        old["tokenAccount"] = None  # it belonged to the other key
+    else:
+        old, what = {}, "added"
+        badges.append(old)
+    if badge_id is None:
+        badge_id = old.get("id")
+    if badge_id is None and allocate:
+        taken = set(badge.get("id") for badge in badges)
+        badge_id = next(number for number in range(1, 101) if number not in taken)
+    if label is None:
+        label = old.get("label") or (None if badge_id is None else "Badge %d" % badge_id)
+    new = {"id": badge_id, "label": label, "pubkey": pubkey,
+           "keyLocation": key_location if key_location in ("se050", "software") else "unknown",
+           "tokenAccount": old.get("tokenAccount"), "standIn": False}
+    for name, value in old.items():
+        new.setdefault(name, value)  # a field this tool does not know stays
+    old.clear()
+    old.update(new)
+    badges.sort(key=lambda badge: badge["id"] if isinstance(badge.get("id"), int) else 1000)
+    return old, what
+
+
+def _badge_block(args, pubkey, key_location):
+    """(document or None, entry, note) for this badge: the badges file's content with the badge in
+    it (not yet written) when --badges-json is given, the entry, and one line saying what to do."""
+    if args.badges_json:
+        document = _badges_load(args.badges_json)
+        entry, what = badge_entry(document["badges"], pubkey, key_location, args.badge_id, args.label, True)
+        note = "%s: id %s %s; %d in the file" % (_show_path(args.badges_json), entry["id"], what, len(document["badges"]))
+        return document, entry, note
+    entry, _ = badge_entry([], pubkey, key_location, args.badge_id, args.label, False)
+    note = None if entry["id"] is not None else \
+        'no --badge-id: put the badge\'s number (1 to 99) in "id" before the entry goes into badges.json'
+    return None, entry, note
+
+
+def _print_badge_block(entry):
+    """The last thing a run prints: one blank line, one label, one line of JSON to copy."""
+    sys.stdout.flush()
+    print()
+    print("badges.json entry (copy the next line):")
+    print(json.dumps(entry))
+    sys.stdout.flush()
+
+
+def provision_dry_run(args, plan):
+    """Prints what a run would do. Opens no serial port and writes no file."""
+    print("dry run: nothing is sent, no serial port is opened, no file is written")
+    _print_values(plan, args)
+    print("lines a run sends to an unprovisioned badge, in order (with --force on a provisioned one,")
+    print("each secure VKSET answers OK pending and is followed by VKGET polls while SELECT is held):")
+    for line in provision_lines(plan["steps"], show=True):
+        print(line)
+    _, entry, note = _badge_block(args, PUBKEY_PLACEHOLDER, KEY_PLACEHOLDER)
+    entry["keyLocation"] = KEY_PLACEHOLDER
+    if note:
+        print(("would write " if args.badges_json else "") + note)
+    _print_badge_block(entry)
 
 
 def _provision_set(badge, key, value):
-    reply = badge.cmd("VKSET %s %s" % (key, value))[-1]
+    reply = badge.cmd(_step_line(("VKSET", key, value)))[-1]
     if reply == "OK":
         return
     if not reply.startswith("OK pending"):
         raise BadgeError("VKSET %s -> %s" % (key, reply))
     print("%s: hold SELECT on the badge to confirm the change" % key)
+    sys.stdout.flush()
     deadline = time.monotonic() + 130  # longer than the longest approval timeout
     while badge.ok("VKGET " + key) != value:
         if time.monotonic() >= deadline:
@@ -663,48 +998,394 @@ def _provision_set(badge, key, value):
         time.sleep(0.5)
 
 
-def provision(badge, args):
+def provision(badge, args, plan):
+    """Sends a plan made by provision_plan() to a badge, reads it back, and prints the badge's
+    entry for badges.json."""
     info = badge.info()
     if info.get("provisioned") == "1" and not args.force:
         raise BadgeError("this badge is already provisioned; --force changes it (each secure key "
                          "then needs a hold on the badge)")
-    env = read_env(args.env)
-    missing = [name for name in ("RPC_URL", "HACK_MINT", "HACK_SYMBOL", "HACK_DECIMALS") if not env.get(name)]
-    if missing:
-        raise BadgeError("%s has no value for %s (run `npm run devnet:setup` in dashboard/)"
-                         % (args.env, ", ".join(missing)))
-    if args.issuer:
-        issuer = args.issuer
-    else:
-        keypair = env.get("AUTHORITY_KEYPAIR") or "server/.keys/authority.json"
-        issuer = issuer_from_keypair(os.path.join(os.path.dirname(os.path.abspath(args.env)), keypair))
-    try:
-        valid = len(b58dec(issuer)) == 32
-    except ValueError:
-        valid = False
-    if not valid:
-        raise BadgeError("the issuer key is not base58 of 32 bytes: %s" % issuer)
-    if args.wifi and "|" in args.wifi[0]:
-        raise BadgeError("VKWIFI cannot carry an SSID that contains '|'")
+    pubkey = info.get("pubkey", "")
+    if pubkey:
+        _badge_block(args, pubkey, info.get("key", ""))  # a problem with the badges file stops the run here
+    _print_values(plan, args)
+    print("badge: pubkey=%s key=%s" % (pubkey or "(none)", info.get("key", "?")))
+    sys.stdout.flush()
 
-    tokens = "%s:%s:%s:%s:%s" % (env["HACK_MINT"], env["HACK_DECIMALS"], env["HACK_SYMBOL"], args.cap, args.max)
-    _provision_set(badge, "issuer_key", issuer)
-    _provision_set(badge, "tokens", tokens)
-    _provision_set(badge, "rpc_url", env["RPC_URL"])
-    if args.listener is not None:
-        _provision_set(badge, "listener_url", args.listener)
-    if args.wifi:
-        badge.ok("VKWIFI %s|%s" % (args.wifi[0], args.wifi[1]))
-    badge.ok("VKCOMMIT")
-    if args.autostart is not None:
-        badge.ok("VKAUTOSTART %s" % args.autostart)
+    for step in plan["steps"]:
+        if step[0] == "VKSET":
+            _provision_set(badge, step[1], step[2])
+        else:
+            badge.ok(_step_line(step))
+    for step in plan["steps"]:
+        if step[0] == "VKSET":
+            stored = badge.ok("VKGET " + step[1])
+            if stored != step[2]:
+                raise BadgeError("%s reads back as %r, not %r" % (step[1], stored, step[2]))
     info = badge.info()
-    print("provisioned: pubkey=%s key=%s" % (info.get("pubkey", "?"), info.get("key", "?")))
+    if info.get("provisioned") != "1":
+        raise BadgeError("VKCOMMIT answered OK but VKINFO says provisioned=%s" % info.get("provisioned"))
+    if not info.get("pubkey"):
+        raise BadgeError("the badge is provisioned but reports no public key (key=%s): there is no "
+                         "entry for badges.json" % info.get("key", "?"))
+
+    document, entry, note = _badge_block(args, info["pubkey"], info.get("key", ""))
+    print("provisioned; read back from the badge: %s"
+          % ", ".join(step[1] for step in plan["steps"] if step[0] == "VKSET"))
+    failure = None
+    if document is not None:
+        try:
+            _badges_save(args.badges_json, document)
+        except OSError as exc:
+            failure = "could not write %s: %s" % (_show_path(args.badges_json), exc.strerror or exc)
+            note = None
+    if note:
+        print(("wrote " if document is not None else "") + note)
+    _print_badge_block(entry)
+    if failure:
+        raise BadgeError(failure + " (the badge is provisioned; the entry above is complete)")
 
 
 # --------------------------------------------------------------------------------------------
 # Self-test
 # --------------------------------------------------------------------------------------------
+
+def _selftest_provision():
+    """The provisioning value resolution, the plan, a whole run against a badge made of Python,
+    and the proof that none of it touches the issuer's keypair file. No badge, no network."""
+    import builtins
+    import contextlib
+    import io
+    import tempfile
+
+    issuer = "2SXh6Xng9b1qQBCEn3pt2Ucwcb4ibBWwBKuuTwNgEzJy"
+    mint = "3VmWnzfWTfS5UGkwEjbMZnpjd1DPtKyMcwKeJc4QM9wP"
+    pinned_tokens = "3VmWnzfWTfS5UGkwEjbMZnpjd1DPtKyMcwKeJc4QM9wP:2:HACK:100.00:1000.00"
+    rpc = "https://api.devnet.solana.com"
+    other = b58enc(bytes(range(32)))
+    pinned_flags = ["--issuer", issuer, "--mint", mint, "--decimals", "2", "--symbol", "HACK",
+                    "--cap", "100.00", "--max", "1000.00", "--rpc", rpc]
+
+    def parse(*extra):
+        return build_parser().parse_args(["provision"] + list(extra))
+
+    def refused(*extra):
+        """The message of the BadgeError that provision_plan raises for these arguments."""
+        try:
+            provision_plan(parse(*extra))
+        except BadgeError as exc:
+            return str(exc)
+        raise AssertionError("accepted: %r" % (extra,))
+
+    def swap(flag, value):
+        changed = list(pinned_flags)
+        changed[changed.index(flag) + 1] = value
+        return ["--public-env", "none"] + changed
+
+    class FakeBadge:
+        """Answers the provisioning commands the way the firmware does; records every line."""
+        ok = Badge.ok
+        info = Badge.info
+
+        def __init__(self, provisioned=False, key="software"):
+            self.sent = []
+            self.store = {}
+            self.provisioned = provisioned
+            self.key = key
+
+        def cmd(self, line, timeout=5):
+            self.sent.append(line)
+            word, _, rest = line.partition(" ")
+            if word == "VKINFO":
+                return ["OK profile=dev api=2 provisioned=%d pubkey=%s key=%s"
+                        % (self.provisioned, other if self.key != "none" else "", self.key)]
+            if word == "VKSET":
+                name, _, value = rest.partition(" ")
+                self.store[name] = value
+                secure = name in ("issuer_key", "tokens")
+                return ["OK pending" if self.provisioned and secure else "OK"]
+            if word == "VKGET":
+                return ["OK " + self.store[rest] if self.store.get(rest) else "OK"]
+            if word == "VKCOMMIT":
+                self.provisioned = True
+                return ["OK provisioned"]
+            return ["OK joining" if word == "VKWIFI" else "OK"]
+
+    def run(badge, *extra):
+        """provision() on a FakeBadge; returns what it printed."""
+        args = parse(*extra)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            provision(badge, args, provision_plan(args))
+        return out.getvalue()
+
+    # -- the pinned values compose to the pinned token table, from flags alone ----------------
+    plan = provision_plan(parse("--public-env", "none", *pinned_flags))
+    assert plan["tokens"] == pinned_tokens
+    assert plan["values"]["issuer"] == issuer and plan["sources"]["issuer"] == "--issuer"
+    assert provision_lines(plan["steps"]) == [
+        "VKINFO", "VKSET issuer_key " + issuer, "VKSET tokens " + pinned_tokens, "VKSET rpc_url " + rpc,
+        "VKCOMMIT", "VKGET issuer_key", "VKGET tokens", "VKGET rpc_url", "VKINFO"]
+
+    # -- the committed file holds the pinned values and nothing else ---------------------------
+    # (A deployment with another issuer or mint changes os/provision.public.env and these lines.)
+    assert os.path.isfile(PUBLIC_ENV_DEFAULT), "os/provision.public.env is missing"
+    committed = read_env(PUBLIC_ENV_DEFAULT, True)  # raises on any name that is not public
+    assert sorted(committed) == sorted(ENV_NAMES)
+    plan = provision_plan(parse())
+    assert plan["tokens"] == pinned_tokens and plan["values"]["issuer"] == issuer
+    assert plan["values"]["rpc"] == rpc
+    assert all(source.endswith("provision.public.env " + name)
+               for (field, _, name) in PROVISION_FIELDS for source in [plan["sources"][field]])
+
+    # -- validation: what the firmware would refuse is refused before a badge is touched -------
+    assert _amount_raw("100.00", 2) == 10000 and _amount_raw("100", 2) == 10000
+    assert _amount_raw("0", 2) == 0 and _amount_raw(".5", 2) == 50 and _amount_raw("7.", 0) == 7
+    assert _amount_raw("1.001", 2) is None and _amount_raw("", 2) is None and _amount_raw(".", 2) is None
+    assert _amount_raw("1.0.0", 2) is None and _amount_raw("-1", 2) is None and _amount_raw("1e3", 2) is None
+    assert _amount_raw(str(1 << 64), 0) is None and _amount_raw(str((1 << 64) - 1), 0) == (1 << 64) - 1
+    assert _is_key32(issuer) and _is_key32(mint) and _is_key32("1" * 32)
+    assert not _is_key32(issuer[:-1]) and not _is_key32(issuer + "1") and not _is_key32("0" + issuer[1:])
+    assert not _is_key32(b58enc(bytes(range(31)))) and not _is_key32(b58enc(bytes(range(33))))
+    assert "issuer key is not base58 of 32 bytes" in refused(*swap("--issuer", issuer[:-1]))
+    assert "mint is not base58 of 32 bytes" in refused(*swap("--mint", "O0Il"))
+    assert "same address" in refused(*swap("--mint", issuer))
+    for bad in ("10", "a", "", "-1"):
+        assert "decimals must be one digit" in refused(*swap("--decimals", bad))
+    for bad in ("hack", "HACKS", "", "H-K"):
+        assert "symbol must be" in refused(*swap("--symbol", bad))
+    assert "cap 1000.01 is above max 1000.00" in refused(*swap("--cap", "1000.01"))
+    assert "cap must be an amount with at most 2 fraction digits" in refused(*swap("--cap", "100.001"))
+    assert "max must be an amount" in refused(*swap("--max", "1,000"))
+    assert provision_plan(parse(*swap("--max", "0")))["tokens"].endswith(":100.00:0")  # 0 = no max
+    assert "RPC URL must start with http" in refused(*swap("--rpc", "api.devnet.solana.com"))
+    assert "RPC URL must be printable ASCII" in refused(*swap("--rpc", "https://a b.example"))
+    assert "listener URL must start with http" in refused(*swap("--rpc", rpc), "--listener", "192.168.4.20:8788")
+    assert "SSID" in refused(*swap("--rpc", rpc), "--wifi", "a|b", "password")
+    assert "--badge-id must be 1 to 99" in refused(*swap("--rpc", rpc), "--badge-id", "100")
+    assert "does not fit one line" in refused(*swap("--rpc", rpc), "--wifi", "ssid", "p" * 250)
+    assert "no value for" in refused("--public-env", "none") and "ISSUER_PUBKEY (--issuer)" in refused("--public-env", "none")
+
+    assert _looks_secret("[12,34,56]") and _looks_secret(b58enc(bytes(range(64)))) and _looks_secret("ab" * 64)
+    assert _looks_secret("ab" * 32) and _looks_secret("postgres://user:pass@host/db")
+    assert _looks_secret("-----BEGIN PRIVATE KEY-----")
+    assert not _looks_secret(issuer) and not _looks_secret(rpc) and not _looks_secret("100.00")
+
+    with tempfile.TemporaryDirectory() as folder:
+        def write(name, text):
+            path = os.path.join(folder, name)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            return path
+
+        # A stand-in for the backend laptop: a .env that names a keypair file, and that file.
+        # (The 64 numbers are a counting pattern, not a key.)
+        trap_name = "authority-keypair-TRAP.json"
+        trap = write(trap_name, json.dumps(list(range(64))))
+        dashboard_lines = [
+            "DATABASE_URL=postgres://user:not-a-real-password@127.0.0.1:5433/db",
+            "RPC_URL=" + rpc, "HACK_MINT=" + mint, "HACK_SYMBOL=HACK", "HACK_DECIMALS=2",
+            "AUTHORITY_KEYPAIR=" + trap, "BADGE_LISTEN_PORT=8788"]
+        dashboard_env = write("dashboard.env", "\n".join(dashboard_lines) + "\n")
+        relative_env = write("relative.env", "\n".join(dashboard_lines).replace(trap, trap_name) + "\n")
+        public_env = write("public.env", "# public\nISSUER_PUBKEY=%s\nHACK_CAP=100.00\nexport HACK_MAX='1000.00'\n" % issuer)
+        badges_path = os.path.join(folder, "badges.json")
+
+        # -- an env file gives up its public names and nothing else ----------------------------
+        assert read_env(dashboard_env, False) == {
+            "RPC_URL": rpc, "HACK_MINT": mint, "HACK_SYMBOL": "HACK", "HACK_DECIMALS": "2"}
+        assert read_env(public_env, True) == {"ISSUER_PUBKEY": issuer, "HACK_CAP": "100.00", "HACK_MAX": "1000.00"}
+        assert "issuer_from_keypair" not in globals(), "the keypair reader is back"
+
+        # -- the committed kind of file is refused when it holds anything else -----------------
+        for text, expect in (
+                ("HACK_MINT=%s\nAUTHORITY_KEYPAIR=server/.keys/authority.json\n" % mint, "holds AUTHORITY_KEYPAIR"),
+                ("DATABASE_URL=postgres://x\n", "holds DATABASE_URL"),
+                ("ISSUER_PUBKEY=%s\n" % json.dumps(list(range(64))), "looks like a secret"),
+                ("ISSUER_PUBKEY=%s\n" % b58enc(bytes(range(64))), "looks like a secret"),
+                ("RPC_URL=https://user:pass@rpc.example\n", "looks like a secret")):
+            message = refused("--public-env", write("bad.env", text), *pinned_flags)
+            assert expect in message, message
+            assert "pass@" not in message and "[0, 1" not in message  # a refusal does not echo the value
+        assert "holds DATABASE_URL" in refused("--public-env", dashboard_env, *pinned_flags)
+        assert "cannot read" in refused("--public-env", os.path.join(folder, "absent.env"), *pinned_flags)
+
+        # -- precedence: a flag, then the public file, then --env; a disagreement stops the run --
+        plan = provision_plan(parse("--public-env", public_env, "--env", dashboard_env))
+        assert plan["tokens"] == pinned_tokens and plan["values"]["issuer"] == issuer
+        assert plan["sources"]["issuer"].endswith("public.env ISSUER_PUBKEY")
+        assert plan["sources"]["mint"].startswith("--env ") and plan["sources"]["mint"].endswith("HACK_MINT")
+        plan = provision_plan(parse("--public-env", public_env, "--env", dashboard_env, "--cap", "5", "--issuer", other))
+        assert plan["values"]["cap"] == "5" and plan["sources"]["cap"] == "--cap" and plan["values"]["issuer"] == other
+        clash_env = write("clash.env", "HACK_MINT=%s\nHACK_DECIMALS=2\nHACK_SYMBOL=HACK\nRPC_URL=%s\n" % (mint, rpc))
+        clash_public = write("clash.public.env", "ISSUER_PUBKEY=%s\nHACK_MINT=%s\nHACK_CAP=1\nHACK_MAX=2\n" % (issuer, other))
+        message = refused("--public-env", clash_public, "--env", clash_env)
+        assert "disagree on HACK_MINT (--mint)" in message and mint not in message and other not in message
+        assert provision_plan(parse("--public-env", clash_public, "--env", clash_env, "--mint", mint))["values"]["mint"] == mint
+        keyed = write("keyed.env", "RPC_URL=https://rpc.example/?api-key=not-a-real-key\n")
+        message = refused("--public-env", public_env, "--env", keyed, "--mint", mint, "--decimals", "2", "--symbol", "HACK")
+        assert "carries a login or a query string" in message and "not-a-real-key" not in message
+
+        # -- the keypair file: never opened, never looked at, its path never known --------------
+        # Every way Python opens or stats a path is replaced by one that refuses the trap file.
+        hits = []
+        patched = []
+
+        def guard(module, name):
+            real = getattr(module, name)
+
+            def guarded(path, *rest, **more):
+                text = os.fsdecode(path) if isinstance(path, (str, bytes, os.PathLike)) else ""
+                if "TRAP" in text:
+                    hits.append("%s(%s)" % (name, os.path.basename(text)))
+                    raise AssertionError("%s() reached the keypair file" % name)
+                return real(path, *rest, **more)
+
+            patched.append((module, name, real))
+            setattr(module, name, guarded)
+
+        def no_badge(*_args, **_more):
+            raise AssertionError("a serial port was about to be opened")
+
+        real_badge = globals()["Badge"]
+        outputs = []
+        try:
+            for module, name in ((builtins, "open"), (io, "open"), (os, "open"), (os, "stat"), (os, "lstat"),
+                                 (os, "access"), (os, "readlink"), (os, "listdir"), (os, "scandir"),
+                                 (os.path, "exists"), (os.path, "lexists"), (os.path, "isfile"),
+                                 (os.path, "isdir"), (os.path, "getsize")):
+                guard(module, name)
+
+            # The guard works: each of these reaches the file without it.
+            for attempt in (lambda: open(trap), lambda: os.stat(trap), lambda: os.path.exists(trap),
+                            lambda: os.path.isfile(trap), lambda: os.path.getsize(trap), lambda: os.access(trap, os.R_OK)):
+                try:
+                    attempt()
+                    raise BadgeError("the guard let an access through")
+                except BadgeError:
+                    raise
+                except AssertionError:
+                    pass
+            assert len(hits) == 6, hits
+            del hits[:]
+
+            cwd = os.getcwd()
+            os.chdir(folder)  # "relative.env" names the keypair by a relative path, as the dashboard's does
+            try:
+                for env_file in (dashboard_env, relative_env):
+                    # --issuer with a dashboard .env: the request's case
+                    plan = provision_plan(parse("--public-env", "none", "--env", env_file, "--issuer", issuer,
+                                                "--cap", "100.00", "--max", "1000.00"))
+                    assert plan["values"]["issuer"] == issuer and plan["tokens"] == pinned_tokens
+                    # ISSUER_PUBKEY from the public file, with the same .env
+                    plan = provision_plan(parse("--public-env", public_env, "--env", env_file))
+                    assert plan["values"]["issuer"] == issuer and plan["tokens"] == pinned_tokens
+                    # no issuer anywhere: an error, not a look at the keypair
+                    message = refused("--public-env", "none", "--env", env_file, "--cap", "100.00", "--max", "1000.00")
+                    assert "no value for ISSUER_PUBKEY (--issuer)" in message and "never reads a keypair file" in message
+                    assert "TRAP" not in message
+                    # the path is not in anything the tool resolved
+                    assert "TRAP" not in json.dumps(plan)
+
+                    # the whole command, twice: a dry run through main(), and a run against a badge
+                    globals()["Badge"] = no_badge
+                    out = io.StringIO()
+                    with contextlib.redirect_stdout(out):
+                        status = main(["provision", "--dry-run", "--public-env", public_env, "--env", env_file,
+                                       "--listener", "http://192.168.4.20:8788", "--wifi", "Hot spot", "hunter2hunter2",
+                                       "--autostart", "home", "--badge-id", "1", "--label", "Merchant"])
+                    globals()["Badge"] = real_badge
+                    assert status == 0
+                    outputs.append(out.getvalue())
+                    badge = FakeBadge()
+                    outputs.append(run(badge, "--public-env", public_env, "--env", env_file, "--issuer", issuer,
+                                       "--badges-json", badges_path, "--label", "Merchant"))
+                    assert badge.store["issuer_key"] == issuer and badge.store["tokens"] == pinned_tokens
+            finally:
+                os.chdir(cwd)
+                globals()["Badge"] = real_badge
+            assert hits == [], "the tool touched the keypair file: %s" % hits
+        finally:
+            for module, name, real in patched:
+                setattr(module, name, real)
+        assert all("TRAP" not in text and "not-a-real-password" not in text for text in outputs)
+
+        # -- the dry run: the lines of a real run, no password, the entry with placeholders -----
+        dry = outputs[0].splitlines()
+        args = parse("--public-env", public_env, "--env", dashboard_env, "--listener", "http://192.168.4.20:8788",
+                     "--wifi", "Hot spot", "hunter2hunter2", "--autostart", "home")
+        plan = provision_plan(args)
+        shown = provision_lines(plan["steps"], show=True)
+        start = dry.index("VKINFO")
+        assert dry[start:start + len(shown)] == shown
+        assert "hunter2hunter2" not in outputs[0] and "VKWIFI Hot spot|<password, 14 characters, not shown>" in dry
+        assert dry[-3] == "" and dry[-2] == "badges.json entry (copy the next line):"
+        assert json.loads(dry[-1]) == {"id": 1, "label": "Merchant", "pubkey": PUBKEY_PLACEHOLDER,
+                                       "keyLocation": KEY_PLACEHOLDER, "tokenAccount": None, "standIn": False}
+
+        # -- a run sends exactly the lines the dry run shows -----------------------------------
+        badge = FakeBadge()
+        text = run(badge, "--public-env", public_env, "--env", dashboard_env, "--listener", "http://192.168.4.20:8788",
+                   "--wifi", "Hot spot", "hunter2hunter2", "--autostart", "home", "--badge-id", "7")
+        assert badge.sent == provision_lines(plan["steps"])
+        assert "VKWIFI Hot spot|hunter2hunter2" in badge.sent and "hunter2hunter2" not in text
+        lines = text.splitlines()
+        assert lines[-3] == "" and lines[-2] == "badges.json entry (copy the next line):"
+        assert lines[-1] == ('{"id": 7, "label": "Badge 7", "pubkey": "%s", "keyLocation": "software", '
+                             '"tokenAccount": null, "standIn": false}' % other)
+
+        # -- a provisioned badge: refused without --force; with it, the secure keys wait for a hold --
+        try:
+            run(FakeBadge(provisioned=True), "--public-env", public_env, "--env", dashboard_env)
+            raise AssertionError("a provisioned badge was changed without --force")
+        except BadgeError as exc:
+            assert "already provisioned" in str(exc)
+        badge = FakeBadge(provisioned=True)
+        text = run(badge, "--public-env", public_env, "--env", dashboard_env, "--force")
+        assert badge.sent[:2] == ["VKINFO", "VKSET issuer_key " + issuer] and badge.sent[2] == "VKGET issuer_key"
+        assert "issuer_key: hold SELECT" in text and "tokens: hold SELECT" in text
+        assert text.splitlines()[-1].startswith('{"id": null, "label": null, "pubkey": "%s"' % other)
+        assert 'put the badge\'s number (1 to 99) in "id"' in text
+        try:
+            run(FakeBadge(key="none"), "--public-env", public_env, "--env", dashboard_env)
+            raise AssertionError("a badge with no key got a badges.json entry")
+        except BadgeError as exc:
+            assert "reports no public key" in str(exc)
+
+        # -- the badges file ---------------------------------------------------------------------
+        with open(badges_path, "r", encoding="utf-8") as handle:
+            document = json.load(handle)
+        assert document == {"badges": [{"id": 1, "label": "Merchant", "pubkey": other, "keyLocation": "software",
+                                        "tokenAccount": None, "standIn": False}]}
+        badges = [{"id": 1, "label": "Merchant (team)", "pubkey": "A", "keyLocation": "software",
+                   "tokenAccount": "T", "standIn": True, "note": "kept"}]
+        entry, what = badge_entry(badges, "A", "se050", None, None, True)       # the same key again
+        assert what == "updated" and entry == {"id": 1, "label": "Merchant (team)", "pubkey": "A", "keyLocation": "se050",
+                                               "tokenAccount": "T", "standIn": False, "note": "kept"}
+        entry, what = badge_entry(badges, "B", "software", None, "Judge A", True)  # a new badge: lowest free id
+        assert what == "added" and entry["id"] == 2 and entry["label"] == "Judge A" and len(badges) == 2
+        entry, what = badge_entry(badges, "C", "none", 1, None, True)           # a new key under an old id
+        assert what == "replaced (was A)" and entry["pubkey"] == "C" and entry["tokenAccount"] is None
+        assert entry["keyLocation"] == "unknown" and entry["label"] == "Merchant (team)" and len(badges) == 2
+        entry, what = badge_entry(badges, "D", "software", 9, None, True)
+        entry, what = badge_entry(badges, "E", "software", 4, None, True)
+        assert [badge["id"] for badge in badges] == [1, 2, 4, 9] and entry["label"] == "Badge 4"
+        try:
+            badge_entry(badges, "B", "software", 1, None, True)                 # id 1 is C's
+            raise AssertionError("two badges got one id")
+        except BadgeError:
+            pass
+        broken = write("broken.json", '["not", "a badges file"]')
+        badge = FakeBadge()
+        try:
+            run(badge, "--public-env", public_env, "--env", dashboard_env, "--badges-json", broken)
+            raise AssertionError("a file that is not a badges file was accepted")
+        except BadgeError as exc:
+            assert "left as it is" in str(exc)
+        assert badge.sent == ["VKINFO"], "the badge was changed before the refusal"
+        with open(broken, "r", encoding="utf-8") as handle:
+            assert handle.read() == '["not", "a badges file"]'
+
 
 def selftest():
     import random
@@ -789,6 +1470,8 @@ def selftest():
     # VKINFO
     assert parse_info("profile=dev api=2 pubkey=Gn2G key=software") == {
         "profile": "dev", "api": "2", "pubkey": "Gn2G", "key": "software"}
+
+    _selftest_provision()
     print("selftest ok")
 
 
@@ -802,7 +1485,8 @@ def build_parser():
     parser.add_argument("--port2", help="serial port of a second badge (two-badge tests)")
     parser.add_argument("--baud", type=int, default=BAUD)
     parser.add_argument("--code", help="push pairing code (default: read with VKPAIR on a dev build)")
-    parser.add_argument("--selftest", action="store_true", help="check this file's codecs; needs no badge")
+    parser.add_argument("--selftest", action="store_true",
+                        help="check this file's codecs and the provisioning values; needs no badge")
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("info", help="VKINFO, parsed")
@@ -831,15 +1515,35 @@ def build_parser():
     p = sub.add_parser("test", help="run scripted device tests")
     p.add_argument("files", nargs="+")
     p.add_argument("--include-deferred", action="store_true", help="also run tests that declare NEEDS")
-    p = sub.add_parser("provision", help="first-time setup of a badge (config.md)")
-    p.add_argument("--env", required=True, help="the dashboard's .env file")
-    p.add_argument("--cap", required=True, help="amount above which SELECT becomes a hold, e.g. 100.00")
-    p.add_argument("--max", required=True, help="amount above which a payment is blocked, e.g. 1000.00")
-    p.add_argument("--listener", help="backend listener URL, e.g. http://192.168.4.20:8788")
-    p.add_argument("--wifi", nargs=2, metavar=("SSID", "PASSWORD"))
+    p = sub.add_parser(
+        "provision", help="first-time setup of a badge (config.md)",
+        description="Sets a badge's issuer key, token table, RPC URL and, per venue, listener URL and "
+                    "Wi-Fi. Each pinned value comes from its flag, else from os/provision.public.env, "
+                    "else from the file named with --env. No keypair file is ever read.")
+    p.add_argument("--issuer", metavar="BASE58", help="issuer public key (env name ISSUER_PUBKEY)")
+    p.add_argument("--mint", metavar="BASE58", help="token mint address (HACK_MINT)")
+    p.add_argument("--decimals", metavar="0-9", help="the mint's decimals (HACK_DECIMALS)")
+    p.add_argument("--symbol", help="token symbol, 1 to 4 of A-Z 0-9 (HACK_SYMBOL)")
+    p.add_argument("--cap", metavar="AMOUNT", help="above this SELECT becomes a hold, e.g. 100.00; 0 = no cap (HACK_CAP)")
+    p.add_argument("--max", metavar="AMOUNT", help="above this a payment is blocked, e.g. 1000.00; 0 = no max (HACK_MAX)")
+    p.add_argument("--rpc", metavar="URL", help="JSON-RPC endpoint (RPC_URL)")
+    p.add_argument("--public-env", metavar="PATH",
+                   help="file of public values to use in place of os/provision.public.env; "
+                        "'none' reads no such file")
+    p.add_argument("--env", metavar="PATH",
+                   help="one more env file for values the public file lacks, e.g. the dashboard's .env on "
+                        "the backend laptop. Never read unless named here; only the public names are taken")
+    p.add_argument("--listener", metavar="URL", help="backend listener, per venue, e.g. http://192.168.4.20:8788")
+    p.add_argument("--wifi", nargs=2, metavar=("SSID", "PASSWORD"), help="network to join, per venue")
     p.add_argument("--autostart", metavar="APP_ID", help="app to start at boot")
-    p.add_argument("--issuer", help="issuer public key in base58 (default: from AUTHORITY_KEYPAIR)")
     p.add_argument("--force", action="store_true", help="change a badge that is already provisioned")
+    p.add_argument("--dry-run", action="store_true",
+                   help="validate everything and print the lines a run would send; opens no serial port")
+    p.add_argument("--badge-id", type=int, metavar="N", help="this badge's id in badges.json, 1 to 99")
+    p.add_argument("--label", help='this badge\'s label in badges.json, e.g. "Merchant"')
+    p.add_argument("--badges-json", metavar="FILE",
+                   help="also add or update this badge's entry in FILE (the shape of "
+                        "dashboard/server/config/badges.json; created if missing)")
     return parser
 
 
@@ -852,6 +1556,17 @@ def main(argv=None):
         return 0
     if not args.command:
         parser.error("give a command (or --selftest)")
+    plan = None
+    if args.command == "provision":
+        # Everything is resolved and checked before a port is opened. This reads env files only.
+        try:
+            plan = provision_plan(args)
+            if args.dry_run:
+                provision_dry_run(args, plan)
+                return 0
+        except BadgeError as exc:
+            print("error: %s" % exc, file=sys.stderr)
+            return 1
     if not args.port:
         parser.error("--port is required")
 
@@ -903,7 +1618,7 @@ def main(argv=None):
                     print(line)
                     sys.stdout.flush()
         elif args.command == "provision":
-            provision(badge, args)
+            provision(badge, args, plan)
         return 0
     except KeyboardInterrupt:
         return 130

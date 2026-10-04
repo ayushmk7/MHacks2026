@@ -190,15 +190,33 @@ A badge that stored its own hostname or hotspot password under upstream firmware
 
 ## Provisioning
 
-After flashing and after `npm run devnet:setup` in `dashboard/` ([backend](../integration/backend.md)):
+After flashing, from the repository root, on any laptop (the dashboard does not have to be set up on it):
 
 ```bash
+# 1. check: prints every value, its source and the lines that would be sent; opens no serial port
+python3 os/scripts/vkdev.py provision --dry-run \
+    --listener http://<backend laptop hotspot IP>:8788 --wifi "<hotspot SSID>" "<password>" \
+    --badge-id 1 --label "Merchant" --badges-json badges.provisioned.json
+
+# 2. the same command with the port and without --dry-run, once per badge
 python3 os/scripts/vkdev.py --port /dev/cu.usbserial-10 provision \
-    --env dashboard/.env --listener http://<laptop hotspot IP>:8788 \
-    --wifi "<hotspot SSID>" "<password>" --cap 100.00 --max 1000.00
+    --listener http://<backend laptop hotspot IP>:8788 --wifi "<hotspot SSID>" "<password>" \
+    --badge-id 1 --label "Merchant" --badges-json badges.provisioned.json
 ```
 
-Details and the by-hand commands: [../platform/config.md](../platform/config.md#provisioning). The command ends by printing the badge's public key and key location. `--autostart home` (upstream's autostart setting, `VKAUTOSTART`) still works: the Home app then starts at boot, and CANCEL in it returns to the launcher. Without it the badge boots to the launcher.
+Where the values come from:
+
+| Values | Kind | Source |
+|---|---|---|
+| issuer public key, mint, decimals, symbol, cap, max, RPC URL | pinned devnet values (final), the same for every badge | `os/provision.public.env`, committed, public values only. A flag (`--issuer --mint --decimals --symbol --cap --max --rpc`) overrides a line |
+| listener address, Wi-Fi SSID and password | per venue | `--listener` and `--wifi`, every run |
+| badge id and label | per badge | `--badge-id`, `--label` |
+
+The pinned values themselves are listed in [config](../platform/config.md#pinned-values). The tool no longer reads `dashboard/.env` by itself: it does only when the file is named with `--env dashboard/.env`, takes only the public names from it, and stops if it disagrees with `os/provision.public.env`. **The issuer's secret keypair (`dashboard/server/.keys/authority.json` on the backend laptop) never leaves that laptop and is never read by the tool**: the badge needs the issuer's public key, which is in `os/provision.public.env`, and `vkdev.py` has no code that opens a keypair file (`vkdev.py --selftest` checks this). Never copy that file, or the backend's `.env`, to the laptop that provisions.
+
+The run ends with one line of JSON, ready to copy: the badge's entry for `dashboard/server/config/badges.json`. With `--badges-json <file>` the entry is also written into that file, so after the last badge there is one file to send to the backend owner.
+
+Details, the checks made before a badge is touched, and the by-hand commands: [../platform/config.md](../platform/config.md#provisioning). `--autostart home` (upstream's autostart setting, `VKAUTOSTART`) still works: the Home app then starts at boot, and CANCEL in it returns to the launcher. Without it the badge boots to the launcher.
 
 ## Before a demo
 
@@ -208,10 +226,10 @@ Values nothing fills in automatically. Each must be set by hand before the demo,
 |---|---|---|
 | the shop's address: `REPLACE_WITH_SHOP_ADDRESS` | `os/apps/game/config.lua` **and** `os/apps/evilgame/config.lua`, field `shop.recipient` (the merchant badge's public key, base58) | every purchase in Game and Evil game ends with "the shop is not set up"; no approval opens |
 | the attacker's token account: `REPLACE_WITH_ATTACKER_TOKEN_ACCOUNT` | `os/apps/evilgame/config.lua`, field `evil_recipient` (a **token account**, not a wallet address: it is passed to `vk.pay` as `destination`) | the Evil game's WRONG RECIPIENT demo cannot run |
-| `dashboard/.env`: `HACK_MINT`, the RPC URL, `AUTHORITY_KEYPAIR` | written by `npm run devnet:setup` in `dashboard/`; `HACK_MINT` is empty until it has run | `vkdev.py provision --env dashboard/.env` has no mint and no issuer key to provision |
-| the hotspot's SSID and password | arguments of `vkdev.py provision --wifi "<SSID>" "<password>"` (or `VKWIFI`), per badge | the badge has no network: no clock (amber `CLOCK UNSYNCED`), no balance, no payment |
-| the listener address | `--listener http://<laptop hotspot IP>:8788` of the same command (config key `listener_url`) | no registry record: every payee is red `UNVERIFIED RECIPIENT` |
-| the public keys of the four badges | `dashboard/server/config/badges.json`, then `npm run devnet:setup` again to fund them | the badges hold no tokens |
+| the issuer public key, the mint, decimals, symbol, cap, max and the RPC URL | pinned devnet values (final) in `os/provision.public.env`; `vkdev.py provision` reads them from there. Nothing to set by hand, but they must equal what the backend uses: on the backend laptop, `HACK_MINT`, `HACK_SYMBOL`, `HACK_DECIMALS` and `RPC_URL` in `dashboard/.env`, and the public half of `AUTHORITY_KEYPAIR`. The keypair file itself stays on that laptop | a badge provisioned with other values rejects every registry record (`issuer_key`) or pays in a token the backend does not watch (`tokens`) |
+| the hotspot's SSID and password (per venue) | arguments of `vkdev.py provision --wifi "<SSID>" "<password>"` (or `VKWIFI`), per badge | the badge has no network: no clock (amber `CLOCK UNSYNCED`), no balance, no payment |
+| the listener address (per venue) | `--listener http://<backend laptop hotspot IP>:8788` of the same command (config key `listener_url`) | no registry record: every payee is red `UNVERIFIED RECIPIENT` |
+| the public keys of the four badges | the line of JSON each provisioning run ends with (or the file written with `--badges-json`) goes into `dashboard/server/config/badges.json` on the backend laptop, then `npm run devnet:setup` again to fund them | the badges hold no tokens |
 | the repository link: config key `repo_url` | `VKSET repo_url https://github.com/ayushmk7/MHacks2026` on each badge (a plain key: no confirmation, and it can be set after provisioning). `VKRESET` erases it with the rest of the config, and the provisioning tool does not set it | Settings → About says `no link set` and Home shows its barcode instead of the QR code ([shell](../ui/shell.md#about)) |
 
 After editing a `config.lua`, push the apps again (`scripts/push-apps.sh … release`). A badge provisioned by the device tests carries the **test** values (`rpc_url` `http://127.0.0.1:8899`, the test issuer key, `hold_ms` 1000, `approval_tmo_s` 10): reset it (`VKRESET`, hold SELECT) and provision it for real before a demo.
@@ -221,8 +239,8 @@ After editing a `config.lua`, push the apps again (`scripts/push-apps.sh … rel
 For each badge, with its own port:
 
 1. `scripts/build.sh release --upload <port>`
-2. `vkdev.py --port <port> provision ...`
-3. Put the printed public key and key location into `dashboard/server/config/badges.json` (`standIn: false`), restart the dashboard server.
+2. `vkdev.py --port <port> provision --listener ... --wifi ... --badge-id <n> --label "<label>" --badges-json badges.provisioned.json` ([Provisioning](#provisioning))
+3. Put the printed entry (public key, key location, `standIn: false`) into `dashboard/server/config/badges.json` on the backend laptop, in place of the stand-in entry with the same id, and restart the dashboard server. After the last badge, `badges.provisioned.json` holds all four entries.
 4. `npm run devnet:setup` in `dashboard/` (funds each badge: SOL, token account, tokens).
 5. `scripts/push-apps.sh --port <port> release`
 6. Issue the merchant's attestation on the dashboard's Registry page.

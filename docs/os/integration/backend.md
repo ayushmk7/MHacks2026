@@ -60,17 +60,21 @@ const sig = ed25519Sign(authorityKey, Buffer.concat([Buffer.from('registry:'), r
 
 ## Values that must match
 
-| Value | Badge side | Laptop side |
-|---|---|---|
-| Issuer public key | config `issuer_key` | the public half of `AUTHORITY_KEYPAIR` (`server/.keys/authority.json`). Back the file up: losing it means re-provisioning every badge |
-| Token mint | config `tokens` (first entry) | `HACK_MINT` in `.env`, written by `npm run devnet:setup` |
-| Decimals, symbol | config `tokens` | `HACK_DECIMALS`, `HACK_SYMBOL` |
-| RPC endpoint | config `rpc_url` | `RPC_URL` |
-| Listener address | config `listener_url` | `BADGE_LISTEN_HOST`, `BADGE_LISTEN_PORT` |
-| Badge public keys | `VKINFO` / `wallet.address()` | `server/config/badges.json` (`pubkey`, `keyLocation`: `"se050"` or `"software"`, `standIn: false`) |
-| Message version | legacy only | `ATTACK_TX_VERSION=legacy` |
+| Value | Badge side | Laptop side | Where provisioning takes it from |
+|---|---|---|---|
+| Issuer public key | config `issuer_key` | the public half of `AUTHORITY_KEYPAIR` (`server/.keys/authority.json`). Back the file up: losing it means re-provisioning every badge | `ISSUER_PUBKEY` in `os/provision.public.env`, or `--issuer`. Pinned devnet value (final): `2SXh6Xng9b1qQBCEn3pt2Ucwcb4ibBWwBKuuTwNgEzJy` |
+| Token mint | config `tokens` (first entry) | `HACK_MINT` in `.env` | `HACK_MINT`, or `--mint`. Pinned devnet value (final): `3VmWnzfWTfS5UGkwEjbMZnpjd1DPtKyMcwKeJc4QM9wP` |
+| Decimals, symbol | config `tokens` | `HACK_DECIMALS`, `HACK_SYMBOL` | the same names, or `--decimals`, `--symbol`. Pinned devnet values (final): `2`, `HACK` |
+| RPC endpoint | config `rpc_url` | `RPC_URL` | `RPC_URL`, or `--rpc`. Pinned devnet value (final): `https://api.devnet.solana.com` |
+| Listener address | config `listener_url` | `BADGE_LISTEN_HOST`, `BADGE_LISTEN_PORT` | `--listener`, per venue; not pinned |
+| Badge public keys | `VKINFO` / `wallet.address()` | `server/config/badges.json` (`id`, `label`, `pubkey`, `keyLocation`: `"se050"` or `"software"`, `tokenAccount: null`, `standIn: false`) | printed by the tool as one line of JSON in that shape; `--badges-json <file>` collects them |
+| Message version | legacy only | `ATTACK_TX_VERSION=legacy` | not provisioned |
 
-`scripts/vkdev.py provision` copies the first five from `dashboard/.env` into a badge and prints the sixth ([config](../platform/config.md#with-the-tool)).
+The payment limits in `tokens` (`cap` 100.00, `max` 1000.00) exist only on the badge: `HACK_CAP` and `HACK_MAX` in `os/provision.public.env`, or `--cap` and `--max`. The backend has no such setting.
+
+`scripts/vkdev.py provision` sets the first five on a badge and prints the sixth ([config](../platform/config.md#with-the-tool)). It takes the pinned values from the committed file `os/provision.public.env`, which holds public values only, so a badge can be provisioned on a laptop that has no dashboard set up. `dashboard/.env` is read only when it is named with `--env`, only its public names are taken, and the run stops if one of them differs from `os/provision.public.env`: when the backend's mint, issuer or RPC endpoint changes, change that file in the same commit.
+
+**The issuer's keypair never leaves the backend laptop.** `server/.keys/authority.json` is the secret that signs registry records. Provisioning needs only its public half, which is the issuer public key above. The tool is given that key as text and has no code that opens a keypair file; the `AUTHORITY_KEYPAIR` line of an env file is dropped unread. Do not copy the keypair file or `dashboard/.env` to another machine in order to provision.
 
 ## Funding
 

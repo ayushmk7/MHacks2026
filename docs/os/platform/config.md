@@ -1,6 +1,6 @@
 # Configuration, provisioning and serial commands
 
-Nothing that identifies a deployment is compiled into the firmware: no issuer key, no mint, no URL, no Wi-Fi name, no limit. Every such value is a **config key** stored in NVS and set by provisioning. Files: `src/vk/core/config.{h,cpp}`, `src/vk/core/serial.{h,cpp}`, `scripts/vkdev.py`.
+Nothing that identifies a deployment is compiled into the firmware: no issuer key, no mint, no URL, no Wi-Fi name, no limit. Every such value is a **config key** stored in NVS and set by provisioning. Files: `src/vk/core/config.{h,cpp}`, `src/vk/core/serial.{h,cpp}`, `scripts/vkdev.py`, `provision.public.env` (the pinned public values the tool provisions with).
 
 ## Config store
 
@@ -71,8 +71,10 @@ Type text forms:
 |---|---|---|
 | `STR` | UTF-8, printable ASCII only | `https://api.devnet.solana.com` |
 | `U32` | decimal | `45` |
-| `KEY32` | base58 of 32 bytes | `FZEA...ei3K` |
-| `TOKENS` | see [Token table](#token-table) | `9xQe...:2:HACK:100.00:1000.00` |
+| `KEY32` | base58 of 32 bytes | `2SXh6Xng9b1qQBCEn3pt2Ucwcb4ibBWwBKuuTwNgEzJy` |
+| `TOKENS` | see [Token table](#token-table) | `3VmWnzfWTfS5UGkwEjbMZnpjd1DPtKyMcwKeJc4QM9wP:2:HACK:100.00:1000.00` |
+
+The `KEY32` and `TOKENS` examples are the pinned devnet values (final): the issuer key and the token table every badge is provisioned with ([Pinned values](#pinned-values)).
 
 ## Keys
 
@@ -83,7 +85,7 @@ Each key is registered by the code that uses it. This table is the complete list
 | `issuer_key` | KEY32 | — | secure, required | | `solana_pay` | public key that signs registry records |
 | `tokens` | TOKENS | — | secure, required | 1–3 entries | `solana_pay` | payment tokens with caps |
 | `rpc_url` | STR | — | required | 8–128 | `core` | Solana JSON-RPC endpoint (used by the balance feature and by `vk.rpc` in apps) |
-| `listener_url` | STR | (empty) | | 0–128 | `core` | base URL of the backend's badge listener, e.g. `http://192.168.4.20:8788` |
+| `listener_url` | STR | (empty) | | 0–128 | `core` | base URL of the backend's badge listener, e.g. `http://192.168.4.20:8788` (placeholder: the address changes with the venue) |
 | `display_name` | STR | (empty) | | 0–32 | `core` | name this badge claims in requests and contact cards; empty means upstream's device name |
 | `ntp_server` | STR | `pool.ntp.org` | | 3–64 | `core` (clock) | SNTP host. Read once, when Wi-Fi first connects: a change takes effect at the next boot |
 | `approval_tmo_s` | U32 | 45 | secure | 10–120 | approval | approval timeout; keep below the ~60 s blockhash lifetime |
@@ -113,7 +115,7 @@ Text form: entries separated by `,`; each entry is `mint:decimals:symbol:cap:max
 | `cap` | display units (`100.00`); above this SELECT becomes a hold; `0` = no cap |
 | `max` | display units; above this the payment is blocked; `0` = no max |
 
-Example for one token: `9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin:2:HACK:100.00:1000.00`. The first entry is the default token (balance on the launcher, default in apps). The parser does not check for a mint or a symbol listed twice.
+The pinned devnet value (final), one token: `3VmWnzfWTfS5UGkwEjbMZnpjd1DPtKyMcwKeJc4QM9wP:2:HACK:100.00:1000.00`. The first entry is the default token (balance on the launcher, default in apps). The parser does not check for a mint or a symbol listed twice.
 
 ## Provisioning
 
@@ -128,29 +130,97 @@ Why first provisioning needs no confirmation: it is possible only over the USB c
 
 The confirmation for a secure change is an approval ([approval](../wallet/approval.md)): title `Change setting`, headline `SECURITY SETTING`, big = the key name, lines `Old` and `New`, amber, hold. Values are shortened for the screen: a `KEY32` value (the type is looked up in the config registry) to first 4 + `..` + last 4, any other value longer than 35 characters to its first 33 + `..`, and an empty old value is shown as `(none)`. `VKRESET` raises the same kind of confirmation: title `Change setting`, headline `ERASE WALLET CONFIG`, big `RESET` (one word, so the screen does not split it into an amount and a unit), lines `Erases` = `all wallet settings` and `Keeps` = `key, history, contacts`, amber, hold; on approval it erases `vkconf` and calls every `VK_ON_RESET` listener (the consent store registers one and erases itself). It does not touch the device key, the history or the contacts.
 
+### Pinned values
+
+Pinned devnet values (final), given by the backend owner on 2026-10-04. They are public, they are the same for every badge, and they are committed in `os/provision.public.env`, which the tool reads by default.
+
+| Config key | Pinned devnet value (final) | Name in `os/provision.public.env` | Flag that overrides it |
+|---|---|---|---|
+| `issuer_key` | `2SXh6Xng9b1qQBCEn3pt2Ucwcb4ibBWwBKuuTwNgEzJy` | `ISSUER_PUBKEY` | `--issuer` |
+| `tokens`, field `mint` | `3VmWnzfWTfS5UGkwEjbMZnpjd1DPtKyMcwKeJc4QM9wP` | `HACK_MINT` | `--mint` |
+| `tokens`, field `decimals` | `2` | `HACK_DECIMALS` | `--decimals` |
+| `tokens`, field `symbol` | `HACK` | `HACK_SYMBOL` | `--symbol` |
+| `tokens`, field `cap` | `100.00` | `HACK_CAP` | `--cap` |
+| `tokens`, field `max` | `1000.00` | `HACK_MAX` | `--max` |
+| `rpc_url` | `https://api.devnet.solana.com` | `RPC_URL` | `--rpc` |
+
+The composed `tokens` value is `3VmWnzfWTfS5UGkwEjbMZnpjd1DPtKyMcwKeJc4QM9wP:2:HACK:100.00:1000.00`. The mint is a classic SPL Token mint (program `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`) with 2 decimals, the issuer as mint authority and no freeze authority; this was read back from devnet on 2026-10-04. `HACK_CAP` and `HACK_MAX` are badge-side limits: the dashboard's `.env` has no such names.
+
+Not pinned, because they change with the venue, and so given per run:
+
+| Value | Flag | Without it |
+|---|---|---|
+| `listener_url` | `--listener http://<backend laptop IP>:8788` | not sent: the key keeps its value (empty on a new badge), and every payee is `UNVERIFIED RECIPIENT` |
+| Wi-Fi network | `--wifi "<SSID>" "<password>"` | not sent: the badge keeps the network it has, if any |
+
+**The issuer's secret keypair never leaves the backend laptop.** The badge needs only the public half, and so does the tool: `vkdev.py` has no code that reads a keypair file. An env file's `AUTHORITY_KEYPAIR` line is dropped while the file is parsed, so the tool never learns the path of the secret key. `vkdev.py --selftest` proves it: it runs the value resolution, a dry run and a whole provisioning run (against a badge made of Python) with every way of opening or stat-ing a file replaced by one that fails on the keypair file.
+
 ### With the tool
 
 ```bash
-# from the repository root, badge on USB, dashboard already set up (`npm run devnet:setup` in dashboard/)
+# from the repository root, badge on USB. The pinned values come from os/provision.public.env.
 python3 os/scripts/vkdev.py --port /dev/cu.usbserial-10 provision \
-    --env dashboard/.env \
     --listener http://192.168.4.20:8788 \
     --wifi "<hotspot SSID>" "<password>" \
-    --cap 100.00 --max 1000.00 --autostart home
+    --badge-id 1 --label "Merchant" --badges-json badges.provisioned.json
 ```
 
-What it does, in order: `VKINFO` (refuses if already provisioned unless `--force`); reads `RPC_URL`, `HACK_MINT`, `HACK_SYMBOL`, `HACK_DECIMALS` and `AUTHORITY_KEYPAIR` from the env file; takes the issuer public key as the last 32 bytes of the 64-byte keypair file [UNVERIFIED format; override with `--issuer <base58>`]; sends `VKSET` for `issuer_key`, `tokens`, `rpc_url`, `listener_url`; sends `VKWIFI <ssid>|<password>`; sends `VKCOMMIT`; with `--autostart <id>`, sets upstream's autostart app with `VKAUTOSTART <id>`; prints the badge's public key and key location for `dashboard/server/config/badges.json`.
+In that command the port, the listener address, the SSID, the password, the id and the label are placeholders: they differ per laptop, venue and badge. Nothing in it is pinned; the pinned values are read from the file.
 
-Details of the tool (WP03): `--cap` and `--max` are required. `listener_url` is sent only when `--listener` is given. The keypair file is the JSON array of 64 numbers that the dashboard writes; a raw 64-byte file is also accepted. With `--force` on a provisioned badge each secure key answers `OK pending`, and the tool waits up to 130 s, polling `VKGET`, while a person holds SELECT on the badge. With an empty `HACK_MINT` in the env file the tool stops with a message (run `npm run devnet:setup` first).
+**Where a value comes from.** For each of the seven pinned values the first source that has it wins:
 
-Four badges are four runs of that one command with different `--port` values.
+1. its flag (`--issuer --mint --decimals --symbol --cap --max --rpc`);
+2. `os/provision.public.env` (`--public-env <path>` names another file of the same kind; `--public-env none` reads none);
+3. the file named with `--env <path>`, for example `dashboard/.env` on the backend laptop. No such file is read unless it is named: the tool does not look for a dashboard `.env` by itself.
 
-### By hand
+Rules for these files:
+
+- The public file may hold only the seven names of the table above. A file with any other name in it (`AUTHORITY_KEYPAIR`, `DATABASE_URL`, ...) or with a value shaped like key material (a JSON array, hex or base58 of 64 bytes, a URL with a login) is refused whole, so a dashboard `.env` cannot be used as the public file by mistake.
+- From the `--env` file only those seven names are taken; every other line is dropped unread.
+- If the public file and the `--env` file both have a value and the two differ, the tool stops and names the value (it does not print either one). The badge and the backend must use the same values; decide with the flag, or fix the file that is wrong.
+- The issuer is always a public key in base58. If no source has it, the tool stops and asks for `--issuer`.
+
+**Checks before a badge is touched.** Issuer and mint are base58 of exactly 32 bytes and differ from each other; decimals is one digit; the symbol is 1 to 4 characters of `[A-Z0-9]`; `cap` and `max` are amounts with at most `decimals` fraction digits; `cap` is not above `max` (unless `max` is `0`, which means no maximum); the RPC and listener URLs start with `http://` or `https://`, are printable ASCII without blanks and fit the key's length range; an RPC URL taken from a file carries no login and no query string (anyone holding the badge can read `rpc_url`; pass such a URL with `--rpc` if it is intended); the SSID has no `|`; every line fits the badge's 250-byte line. These are the firmware's own rules ([Token table](#token-table)), so a value that passes here is not answered with `ERR invalid`.
+
+**`--dry-run`** does all of the above, prints each value with its source and the lines a run would send, and opens no serial port (no `--port` is needed) and writes no file. A Wi-Fi password is not printed. With the pinned values and the placeholder listener and network of the command above:
 
 ```
 VKINFO
-VKSET issuer_key FZEA...ei3K
-VKSET tokens 9xQe...VFin:2:HACK:100.00:1000.00
+VKSET issuer_key 2SXh6Xng9b1qQBCEn3pt2Ucwcb4ibBWwBKuuTwNgEzJy
+VKSET tokens 3VmWnzfWTfS5UGkwEjbMZnpjd1DPtKyMcwKeJc4QM9wP:2:HACK:100.00:1000.00
+VKSET rpc_url https://api.devnet.solana.com
+VKSET listener_url http://192.168.4.20:8788
+VKWIFI <hotspot SSID>|<password, 10 characters, not shown>
+VKCOMMIT
+VKGET issuer_key
+VKGET tokens
+VKGET rpc_url
+VKGET listener_url
+VKINFO
+```
+
+**What a run does, in order:** resolves and checks the values (above); `VKINFO` (refuses if the badge is already provisioned unless `--force`; reads the badge's public key); `VKSET` for `issuer_key`, `tokens`, `rpc_url` and, with `--listener`, `listener_url`; with `--wifi`, `VKWIFI <ssid>|<password>`; `VKCOMMIT`; with `--autostart <id>`, `VKAUTOSTART <id>` (upstream's autostart app); `VKGET` of every key it set, compared with what it sent; `VKINFO` again. With `--force` on a provisioned badge each secure key answers `OK pending`, and the tool waits up to 130 s, polling `VKGET`, while a person holds SELECT on the badge.
+
+**The entry for `badges.json`.** The last thing a run prints is one blank line, one label, and one line of JSON in the shape of an entry of `dashboard/server/config/badges.json`, ready to copy:
+
+```
+
+badges.json entry (copy the next line):
+{"id": 1, "label": "Merchant", "pubkey": "<the badge's public key>", "keyLocation": "software", "tokenAccount": null, "standIn": false}
+```
+
+`id` comes from `--badge-id` (1 to 99) and `label` from `--label` (default `Badge <id>`); `keyLocation` is `se050` or `software`, as `VKINFO` reports it; `tokenAccount` is `null` (the backend derives it). Without `--badge-id` the entry has `"id": null` and a line above the block says to fill it in. With `--badges-json <file>` the same entry is also written into that file, which has the shape of `badges.json` (`{"badges": [...]}`) and is created if missing: an entry with the same public key is updated, otherwise the entry with the same id is replaced, otherwise the entry is added (with the lowest free id when `--badge-id` is not given). So several badges provisioned on one laptop end up in one file to send to the backend owner. A dry run prints the block with placeholders in place of the public key and key location.
+
+Four badges are four runs of that one command with different `--port`, `--badge-id` and `--label` values.
+
+### By hand
+
+The `issuer_key`, `tokens` and `rpc_url` values are the pinned devnet values (final). The listener address, the SSID and the password are placeholders.
+
+```
+VKINFO
+VKSET issuer_key 2SXh6Xng9b1qQBCEn3pt2Ucwcb4ibBWwBKuuTwNgEzJy
+VKSET tokens 3VmWnzfWTfS5UGkwEjbMZnpjd1DPtKyMcwKeJc4QM9wP:2:HACK:100.00:1000.00
 VKSET rpc_url https://api.devnet.solana.com
 VKSET listener_url http://192.168.4.20:8788
 VKWIFI My Hotspot|hunter2hunter2

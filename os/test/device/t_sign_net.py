@@ -4,7 +4,7 @@ Acceptance tests; apps/apps.md, "Sign test"; integration/backend.md, "Existing r
 NEEDS a network, and this setup, which the test checks but does not make:
 
   - The badge is provisioned for the real deployment, not with the test values:
-        scripts/vkdev.py --port P provision --env ../dashboard/.env --cap 100.00 --max 1000.00 \\
+        scripts/vkdev.py --port P provision \\
             --listener http://<laptop address on the hotspot>:8788 --wifi <ssid> <password>
     and has joined the hotspot (VKINFO wifi=1).
   - dashboard/.env has HACK_MINT (npm run devnet:setup), ATTACK_TX_VERSION=legacy and

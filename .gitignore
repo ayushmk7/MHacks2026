@@ -3,3 +3,4 @@ __pycache__/
 .DS_Store
 os/src/vk/vk_profile.h
 os/build/
+.claude/worktrees/
