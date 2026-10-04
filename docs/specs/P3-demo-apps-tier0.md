@@ -1,6 +1,8 @@
 # P3 — Demo Apps (Tier 0): Verified Payments and the Relay Mesh, App Level Only
 
-Owner: **A (OS/app agent)** · Status: **active, this file wins over older app plans** · Decided by U, 2026-10-04
+> **CANCELLED 2026-10-04 — not being built.** Routing was dropped for time. The final demo scope is [`U6-app-decisions.md`](U6-app-decisions.md); this file is kept for history only.
+
+Owner: **A (OS/app agent)** · Status: **cancelled** (see banner) · Decided by U, 2026-10-04
 Reads: [`00-Interfaces.md`](00-Interfaces.md) §3–§5, §7, §8.1 · Supersedes for the demo: the routing items in [P2-A](P2-a-payer-flow.md) (PA11–PA19) and [P2-R](P2-r-payee-presence-attacks.md) (PR8–PR13), and 00-Interfaces §9 (that design is "Tier 2", not being built)
 
 ---
