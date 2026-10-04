@@ -10,6 +10,17 @@
 #include "cert_store.h"
 #include "espnow_mgr.h"
 
+namespace {
+// WIFI_OFF takes down the interface ESP-NOW runs on, and a joined network had moved the radio to   // VK: H29
+// its access point's channel: restart ESP-NOW on its own channel, or a badge that left Wi-Fi       // VK: H29
+// cannot hear the badges that are offline until it reboots.                                        // VK: H29
+void espnowBackToOwnChannel() {                                                                     // VK: H29
+  if (!espnow_mgr::enabled()) return;                                                               // VK: H29
+  espnow_mgr::end();                                                                                // VK: H29
+  espnow_mgr::begin(settings::espnowChannel());                                                     // VK: H29
+}                                                                                                   // VK: H29
+}  // namespace
+
 namespace wifi_mgr {
 namespace {
 
@@ -257,6 +268,7 @@ void disconnect() {
   sMode = Mode::Off;
   WiFi.mode(WIFI_OFF);
   badge_log::tagf("wifi", "disconnected");
+  espnowBackToOwnChannel();  // VK: H29
 }
 
 bool startAccessPoint(const String &password) {
@@ -284,6 +296,7 @@ void stop() {
   WiFi.softAPdisconnect(true);
   WiFi.mode(WIFI_OFF);
   sMode = Mode::Off;
+  espnowBackToOwnChannel();  // VK: H29
 }
 
 void update() {
