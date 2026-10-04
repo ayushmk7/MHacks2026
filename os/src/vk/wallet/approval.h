@@ -41,6 +41,8 @@ struct ApprovalRequest {
   uint64_t amount;
   uint8_t decimals;
   char symbol[9];
+  bool has_req_id;           // the payment answers a request (its REQ verified): req_id is its id
+  uint8_t req_id[8];
   // --- filled by the engine ---
   char app_id[33];           // upstream app ids are up to 32 characters
   char domain[12];

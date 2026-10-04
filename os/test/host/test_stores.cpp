@@ -1,8 +1,9 @@
 // LINK: src/vk/features/history/history.cpp
 // test_stores - the history ring file (docs/os/wallet/stores.md, "History") on the in-memory file
-// layer of the shim: layout, round trip, newest-first order, wrap at 128, bad-file recovery, failing
-// writes, the approval listener. Also the balance feature's reply scanner (ui/ui.md, "Balance"),
-// which is a pure function in balance.h and needs no further source.
+// layer of the shim: layout (version 2), round trip, newest-first order, wrap at 128, bad-file
+// recovery, failing writes, the approval listener, a version 1 file, the auto-signature queue,
+// received rows, the daily total and the reset listener. Also the balance feature's reply scanner
+// (ui/ui.md, "Balance"), which is a pure function in balance.h and needs no further source.
 #include <Arduino.h>
 
 #include <stdio.h>
@@ -12,6 +13,7 @@
 #include <vector>
 
 #include "../../src/vk/features/balance/balance.h"
+#include "../../src/vk/core/config.h"
 #include "../../src/vk/features/history/history.h"
 #include "vk_host_fileio.h"
 
@@ -19,6 +21,7 @@ using namespace vk::history;
 using vk::wallet::ApprovalListener;
 using vk::wallet::ApprovalOutcome;
 using vk::wallet::ApprovalRequest;
+using vk::wallet::Reason;
 
 static int fails = 0;
 #define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d %s\n", __FILE__, __LINE__, #c); fails++; } } while (0)
@@ -30,7 +33,9 @@ static const vk::fileio::Ops *io() { return vk::fileio::ops; }
 static void fresh() {
   vk_host_fileio_install();
   vk_host_fileio_reset();
+  eraseAll();                  // the queue, the unlogged list
   unixTime = nullptr;
+  millisNow = nullptr;
 }
 
 static std::vector<uint8_t> fileBytes(const char *path) {
@@ -61,7 +66,8 @@ static bool sameEntry(const Entry &a, const Entry &b) {
          a.severity == b.severity && a.dev == b.dev && a.amount == b.amount && a.decimals == b.decimals &&
          strcmp(a.symbol, b.symbol) == 0 && memcmp(a.recipient, b.recipient, 32) == 0 &&
          strcmp(a.recipient_name, b.recipient_name) == 0 && strcmp(a.app_id, b.app_id) == 0 &&
-         memcmp(a.sig, b.sig, 64) == 0;
+         memcmp(a.sig, b.sig, 64) == 0 && a.automatic == b.automatic && a.has_req_id == b.has_req_id &&
+         memcmp(a.req_id, b.req_id, 8) == 0;
 }
 
 // The registered approval listeners, called as the engine calls them on entering RESULT.
@@ -155,9 +161,11 @@ static void test_round_trip_every_field() {
   strlcpy(e.symbol, "ABCDEFGH", sizeof e.symbol);                            // 8: fills the field
   for (int i = 0; i < 32; ++i) e.recipient[i] = (uint8_t)(i + 1);
   strlcpy(e.recipient_name, "A name of thirty-two characters!", sizeof e.recipient_name);   // 32
-  strlcpy(e.app_id, "twenty-three-char-app-i", sizeof e.app_id);             // 23
+  strlcpy(e.app_id, "fifteen-chars-a", sizeof e.app_id);                     // 15
+  e.has_req_id = true;
+  for (int i = 0; i < 8; ++i) e.req_id[i] = (uint8_t)(0x10 + i);
   for (int i = 0; i < 64; ++i) e.sig[i] = (uint8_t)(0xC0 ^ i);
-  CHECK(strlen(e.domain) == 11 && strlen(e.symbol) == 8 && strlen(e.recipient_name) == 32 && strlen(e.app_id) == 23);
+  CHECK(strlen(e.domain) == 11 && strlen(e.symbol) == 8 && strlen(e.recipient_name) == 32 && strlen(e.app_id) == 15);
 
   CHECK(append(e));
   CHECK(count() == 1);
@@ -169,7 +177,9 @@ static void test_round_trip_every_field() {
   CHECK(back.severity == 2 && back.dev && back.amount == 0x0102030405060708ull && back.decimals == 9);
   CHECK(strcmp(back.domain, "elevenchars") == 0 && strcmp(back.symbol, "ABCDEFGH") == 0);
   CHECK(strcmp(back.recipient_name, "A name of thirty-two characters!") == 0);
-  CHECK(strcmp(back.app_id, "twenty-three-char-app-i") == 0);
+  CHECK(strcmp(back.app_id, "fifteen-chars-a") == 0);
+  CHECK(back.has_req_id && back.req_id[0] == 0x10 && back.req_id[7] == 0x17 && !back.automatic && back.auto_count == 0);
+  CHECK(kindOf(back) == Kind::APPROVAL);
   CHECK(!at(1, back));
 
   // The layout of stores.md, byte for byte.
@@ -177,7 +187,7 @@ static void test_round_trip_every_field() {
   CHECK(f.size() == 12 + 192);
   if (f.size() == 12 + 192) {
     CHECK(memcmp(f.data(), "VKH1", 4) == 0);
-    CHECK(f[4] == 1 && f[5] == 0);                       // version u16
+    CHECK(f[4] == 2 && f[5] == 0);                       // version u16
     CHECK(f[6] == 1 && f[7] == 0);                       // count u16
     CHECK(f[8] == 1 && f[9] == 0);                       // head u16
     CHECK(f[10] == 0 && f[11] == 0);                     // padding
@@ -187,14 +197,16 @@ static void test_round_trip_every_field() {
     CHECK(r[16] == 4);                                   // outcome: blocked
     CHECK(r[17] == 7);                                   // reason: mismatch
     CHECK(r[18] == 2);                                   // severity: red
-    CHECK(r[19] == 1);                                   // flags: dev
+    CHECK(r[19] == 5);                                   // flags: dev, req_id
     const uint8_t amountLe[8] = {8, 7, 6, 5, 4, 3, 2, 1};
     CHECK(memcmp(r + 20, amountLe, 8) == 0);
     CHECK(r[28] == 9);
     CHECK(memcmp(r + 29, "ABCDEFGH\0", 9) == 0);
     CHECK(memcmp(r + 38, e.recipient, 32) == 0);
     CHECK(memcmp(r + 70, "A name of thirty-two characters!\0", 33) == 0);
-    CHECK(memcmp(r + 103, "twenty-three-char-app-i\0", 24) == 0);
+    CHECK(memcmp(r + 103, "fifteen-chars-a\0", 16) == 0);
+    const uint8_t reqId[8] = {0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17};
+    CHECK(memcmp(r + 119, reqId, 8) == 0);
     CHECK(memcmp(r + 127, e.sig, 64) == 0);
     CHECK(r[191] == 0);
   }
@@ -227,8 +239,11 @@ static void test_outcome_names() {
   CHECK(strcmp(outcomeName(5), "failed") == 0);
   CHECK(strcmp(outcomeName(6), "approved") == 0);
   CHECK(strcmp(outcomeName(0), "?") == 0);
-  CHECK(strcmp(outcomeName(7), "?") == 0);
-  CHECK(RING_CAPACITY == 128 && HEADER_SIZE == 12 && RECORD_SIZE == 192);
+  CHECK(strcmp(outcomeName(7), "received") == 0);
+  CHECK(strcmp(outcomeName(8), "?") == 0);
+  CHECK(RING_CAPACITY == 128 && HEADER_SIZE == 12 && RECORD_SIZE == 192 && FORMAT_VERSION == 2);
+  CHECK(strcmp(kindName(Kind::APPROVAL), "approval") == 0 && strcmp(kindName(Kind::AUTO), "auto") == 0 &&
+        strcmp(kindName(Kind::RECEIVED), "received") == 0);
 }
 
 // ---- history: order and the ring ----------------------------------------------------------------
@@ -310,9 +325,12 @@ static void test_bad_magic_recovery() {
   CHECK(io()->size(FILE_PATH) == 12 + 192);
   CHECK(at(0, e) && e.amount == 1);
 
-  // A wrong version is treated the same, and replaces the earlier .bad file.
+  // A wrong version (a later one, or 0) is treated the same, and replaces the earlier .bad file.
   std::vector<uint8_t> v2 = fileBytes(FILE_PATH);
-  v2[4] = 2;
+  v2[4] = 0;
+  CHECK(io()->writeAll(FILE_PATH, v2.data(), v2.size()));
+  CHECK(count() == 0);
+  v2[4] = 3;
   CHECK(io()->writeAll(FILE_PATH, v2.data(), v2.size()));
   CHECK(count() == 0);
   CHECK(append(numbered(2)));
@@ -528,13 +546,13 @@ static void test_listener() {
   CHECK(at(0, e) && e.outcome == OUTCOME_CANCELLED && strcmp(e.domain, "confirm") == 0);
   CHECK(count() == 10);
 
-  // An app id of 32 characters is cut to 23.
+  // An app id of 32 characters is cut to 15.
   ApprovalRequest longId = paymentRequest();
   strlcpy(longId.app_id, "abcdefghijklmnopqrstuvwxyz012345", sizeof longId.app_id);
   CHECK(strlen(longId.app_id) == 32);
   outcome = {&longId, true, VK_OK, sig};
   notifyListeners(outcome);
-  CHECK(at(0, e) && strcmp(e.app_id, "abcdefghijklmnopqrstuvw") == 0);
+  CHECK(at(0, e) && strcmp(e.app_id, "abcdefghijklmno") == 0 && !e.has_req_id);
   CHECK(count() == 11);
 
   // An outcome with no request writes nothing.
@@ -562,6 +580,384 @@ static void test_listener() {
   // entryFor on its own.
   const Entry direct = entryFor(outcome, 42);
   CHECK(direct.time == 42 && direct.outcome == OUTCOME_SIGNED && direct.dev);
+
+  // A payment that answered a request keeps its id.
+  ApprovalRequest answered = paymentRequest();
+  answered.has_req_id = true;
+  for (int i = 0; i < 8; ++i) answered.req_id[i] = (uint8_t)(0xA0 + i);
+  outcome = {&answered, true, VK_OK, sig};
+  notifyListeners(outcome);
+  CHECK(at(0, e) && e.has_req_id && memcmp(e.req_id, answered.req_id, 8) == 0 && kindOf(e) == Kind::APPROVAL);
+}
+
+
+// ---- history: a version 1 file (stores.md, "Version 2") ---------------------------------------------
+
+// A record exactly as version 1 wrote it: app_id of up to 23 characters in 24 bytes at 103.
+static void v1Record(uint8_t *r, uint32_t n, const char *appId, bool dev) {
+  memset(r, 0, 192);
+  r[0] = (uint8_t)n;                                     // time
+  memcpy(r + 4, "solana", 6);
+  r[16] = OUTCOME_SIGNED;
+  r[19] = dev ? 1 : 0;
+  r[20] = (uint8_t)n;                                    // amount
+  r[28] = 2;
+  memcpy(r + 29, "HACK", 4);
+  memcpy(r + 103, appId, strlen(appId));
+  for (int i = 0; i < 64; ++i) r[127 + i] = (uint8_t)(n + i);
+}
+
+static void test_version1_file() {
+  fresh();
+  CHECK(io()->makeDir(DIR_PATH));
+  std::vector<uint8_t> f(12 + 3 * 192, 0);
+  memcpy(f.data(), "VKH1", 4);
+  f[4] = 1; f[6] = 3; f[8] = 3;
+  v1Record(f.data() + 12, 1, "twenty-three-char-app-i", true);
+  v1Record(f.data() + 12 + 192, 2, "pay", false);
+  v1Record(f.data() + 12 + 384, 3, "abcdefghijklmnopqr", false);
+  CHECK(io()->writeAll(FILE_PATH, f.data(), f.size()));
+
+  // Read as it is: three approval rows; a long app id is its first 15 characters; no req_id even
+  // though the bytes where version 2 keeps it hold the tail of the id.
+  Cursor c;
+  CHECK(open(c) && c.count == 3 && c.version == 1);
+  Entry e;
+  CHECK(at(2, e) && e.amount == 1 && e.dev && strcmp(e.app_id, "twenty-three-ch") == 0 && !e.has_req_id && !e.automatic);
+  CHECK(kindOf(e) == Kind::APPROVAL && e.outcome == OUTCOME_SIGNED && e.sig[0] == 1);
+  CHECK(at(1, e) && e.amount == 2 && strcmp(e.app_id, "pay") == 0 && !e.dev);
+  CHECK(at(0, e) && e.amount == 3 && strcmp(e.app_id, "abcdefghijklmno") == 0 && !e.has_req_id);
+
+  // The next append makes it a version 2 file; no old record is rewritten.
+  CHECK(append(numbered(4)));
+  const std::vector<uint8_t> g = fileBytes(FILE_PATH);
+  CHECK(g.size() == 12 + 4 * 192 && g[4] == 2 && g[6] == 4 && g[8] == 4);
+  CHECK(memcmp(g.data() + 12, f.data() + 12, 3 * 192) == 0);
+  CHECK(!io()->exists(BAD_FILE_PATH));
+  CHECK(open(c) && c.version == 2 && c.count == 4);
+  CHECK(at(0, e) && e.amount == 4);
+  CHECK(at(3, e) && e.amount == 1 && strcmp(e.app_id, "twenty-three-ch") == 0);
+}
+
+// ---- history: auto signatures ----------------------------------------------------------------------
+
+static Reason decodeAny(const uint8_t *, size_t, const vk::wallet::Ctx &, ApprovalRequest &) { return VK_OK; }
+static bool validateAny(const uint8_t *, size_t) { return true; }
+static vk::wallet::SignDomain dPayReq{"pay-req", "pay-req:", false, nullptr, 94, nullptr, validateAny};
+static vk::wallet::SignDomain dProof{"pay-proof", "pay-proof:", false, nullptr, 56, nullptr, validateAny};
+static vk::wallet::SignDomain dContact{"contact", "contact:", false, nullptr, 113, nullptr, validateAny};
+static vk::wallet::SignDomain dSolana{"solana", "", true, "sign", 1232, decodeAny, nullptr};
+
+static uint32_t sFakeMs = 0;
+static uint32_t fakeMs() { return sFakeMs; }
+static uint32_t sFakeUnix = 0;
+static uint32_t fakeUnix() { return sFakeUnix; }
+
+// The registered sign listeners, called as signRaw() calls them.
+static int signed_(const vk::wallet::SignDomain &domain, uint8_t tag, bool ok = true) {
+  static uint8_t bytes[64];
+  static uint8_t sig[64];
+  const size_t prefix = strlen(domain.prefix);
+  memcpy(bytes, domain.prefix, prefix);
+  memset(bytes + prefix, tag, 20);
+  memset(sig, tag, sizeof sig);
+  const vk::wallet::SignEvent event{&domain, bytes, prefix + 20, ok ? sig : nullptr, ok ? VK_OK : VK_SIGN_FAILED};
+  int called = 0;
+  for (vk::wallet::SignListener *l = vk::Registered<vk::wallet::SignListener>::first(); l;
+       l = l->vk::Registered<vk::wallet::SignListener>::next()) {
+    if (l->fn) { l->fn(event); called++; }
+  }
+  return called;
+}
+
+static void digestOf(const vk::wallet::SignDomain &domain, uint8_t tag, uint8_t out[16]) {
+  uint8_t bytes[64], full[32];
+  const size_t prefix = strlen(domain.prefix);
+  memcpy(bytes, domain.prefix, prefix);
+  memset(bytes + prefix, tag, 20);
+  const sol_slice_t part = {bytes, prefix + 20};
+  sol_sha256(&part, 1, full);
+  memcpy(out, full, 16);
+}
+
+static void test_auto_rows() {
+  fresh();
+  millisNow = fakeMs;
+  unixTime = fakeUnix;
+  sFakeMs = 1000;
+  sFakeUnix = 1790000000u;
+
+  // One listener (history's); a button domain is left to its approval row.
+  CHECK(signed_(dSolana, 1) == 1);
+  CHECK(pendingCount() == 0);
+
+  // A request opened, nine proofs, a contact card the key refused. Nothing is written yet.
+  CHECK(signed_(dPayReq, 0x10) == 1);
+  for (uint8_t i = 0; i < 9; ++i) { sFakeUnix++; signed_(dProof, (uint8_t)(0x20 + i)); }
+  signed_(dContact, 0x30, false);
+  CHECK(pendingCount() == 11);
+  CHECK(!io()->exists(FILE_PATH));
+
+  // Written: consecutive entries of one domain and outcome share a row, 8 to a row.
+  CHECK(flushPending());
+  CHECK(pendingCount() == 0);
+  CHECK(count() == 4);
+  Entry e;
+  CHECK(at(3, e) && e.automatic && kindOf(e) == Kind::AUTO && strcmp(e.domain, "pay-req") == 0 && e.auto_count == 1);
+  CHECK(e.outcome == OUTCOME_SIGNED && e.reason == VK_OK && e.time == 1790000000u && e.items[0].time == 1790000000u);
+  uint8_t d[16];
+  digestOf(dPayReq, 0x10, d);
+  CHECK(memcmp(e.items[0].digest, d, 16) == 0);
+  CHECK(e.amount == 0 && e.symbol[0] == 0 && !e.has_req_id);
+  CHECK(at(2, e) && strcmp(e.domain, "pay-proof") == 0 && e.auto_count == 8 && e.time == 1790000008u);
+  bool items = true;
+  for (uint8_t i = 0; i < 8; ++i) {
+    digestOf(dProof, (uint8_t)(0x20 + i), d);
+    items = items && e.items[i].time == 1790000001u + i && memcmp(e.items[i].digest, d, 16) == 0;
+  }
+  CHECK(items);
+  CHECK(at(1, e) && strcmp(e.domain, "pay-proof") == 0 && e.auto_count == 1 && e.time == 1790000009u);
+  CHECK(at(0, e) && strcmp(e.domain, "contact") == 0 && e.auto_count == 1 && e.outcome == OUTCOME_FAILED &&
+        e.reason == VK_SIGN_FAILED);
+
+  // The bytes of an auto row (stores.md).
+  {
+    const std::vector<uint8_t> f = fileBytes(FILE_PATH);
+    const uint8_t *r = f.data() + 12 + 1 * 192;          // the 8-proof row
+    CHECK(r[16] == OUTCOME_SIGNED && r[19] == 2 && r[20] == 8 && r[21] == 0 && r[22] == 0 && r[23] == 0);
+    CHECK(r[24] == (uint8_t)(1790000001u & 0xFF));
+    digestOf(dProof, 0x20, d);
+    CHECK(memcmp(r + 28, d, 16) == 0);
+    bool tail = true;
+    for (size_t i = 24 + 160; i < 192; ++i) tail = tail && r[i] == 0;
+    CHECK(tail);
+  }
+
+  // The flush policy: quiet for 2 s, or the oldest 10 s old, or 24 queued.
+  fresh();
+  millisNow = fakeMs;
+  sFakeMs = 1000;
+  CHECK(!flushDue(1000));                                // nothing queued
+  signed_(dProof, 1);
+  CHECK(!flushDue(1000) && !flushDue(2999) && flushDue(3000));
+  for (uint32_t t = 1500; t <= 10500; t += 1000) { sFakeMs = t; signed_(dProof, 2); }   // never quiet
+  CHECK(!flushDue(10999) && flushDue(11000));
+  CHECK(flushPending() && count() == 2);                 // 11 proofs: 8 + 3
+  sFakeMs = 20000;
+  for (int i = 0; i < 23; ++i) signed_(dProof, 3);
+  CHECK(!flushDue(20000));
+  signed_(dProof, 3);
+  CHECK(flushDue(20000));                                // 24 queued
+  CHECK(flushPending() && count() == 5);
+
+  // A failed write keeps the queue and waits before the next try.
+  sFakeMs = 30000;
+  signed_(dContact, 1);
+  vk_host_fileio_fail_writes = -1;
+  CHECK(!flushPending());
+  CHECK(pendingCount() == 1 && count() == 5);
+  CHECK(!flushDue(30000 + FLUSH_QUIET_MS));              // quiet, but the retry is not due
+  CHECK(flushDue(30000 + FLUSH_RETRY_MS));
+  vk_host_fileio_fail_writes = 0;
+  CHECK(flushPending() && pendingCount() == 0 && count() == 6);
+
+  // A full queue that cannot be written: the oldest entry is lost and counted, never a crash.
+  vk_host_fileio_fail_writes = -1;
+  for (size_t i = 0; i < QUEUE_CAPACITY; ++i) signed_(dProof, 4);
+  CHECK(pendingCount() == QUEUE_CAPACITY && droppedCount() == 0);
+  signed_(dProof, 5);
+  CHECK(pendingCount() == QUEUE_CAPACITY && droppedCount() == 1);
+  vk_host_fileio_fail_writes = 0;
+  // A full queue that can be written is written at once, inside the listener.
+  signed_(dProof, 6);
+  CHECK(pendingCount() == 1 && droppedCount() == 1 && count() == 6 + 4);   // 32 entries: 4 rows of 8
+  CHECK(flushPending());
+
+  // Order: an approval row is written after the auto signatures queued before it.
+  fresh();
+  millisNow = fakeMs;
+  signed_(dProof, 7);
+  signed_(dProof, 8);
+  ApprovalRequest request = paymentRequest();
+  uint8_t sig[64];
+  memset(sig, 9, sizeof sig);
+  ApprovalOutcome outcome = {&request, true, VK_OK, sig};
+  notifyListeners(outcome);
+  CHECK(pendingCount() == 0 && count() == 2);
+  CHECK(at(0, e) && kindOf(e) == Kind::APPROVAL && e.amount == 1000);
+  CHECK(at(1, e) && kindOf(e) == Kind::AUTO && e.auto_count == 2);
+}
+
+// ---- history: received payments ---------------------------------------------------------------------
+
+static Received receivedPayment(uint8_t n) {
+  Received r;
+  memset(&r, 0, sizeof r);
+  memset(r.payer, 0x50 + n, 32);
+  r.amount = 1000 + n;
+  r.decimals = 2;
+  strlcpy(r.symbol, "HACK", sizeof r.symbol);
+  memset(r.req_id, 0x60 + n, 8);
+  memset(r.sig, 0x70 + n, 64);
+  strlcpy(r.app_id, "request", sizeof r.app_id);
+  return r;
+}
+
+static void test_received() {
+  fresh();
+  millisNow = fakeMs;
+  CHECK(recordReceived(receivedPayment(1), 1790000123u) == ReceiveResult::WRITTEN);
+  Entry e;
+  CHECK(count() == 1 && at(0, e));
+  CHECK(kindOf(e) == Kind::RECEIVED && e.outcome == OUTCOME_RECEIVED && strcmp(e.domain, "solana") == 0);
+  CHECK(e.time == 1790000123u && e.amount == 1001 && e.decimals == 2 && strcmp(e.symbol, "HACK") == 0);
+  CHECK(e.recipient[0] == 0x51 && e.has_req_id && e.req_id[0] == 0x61 && e.sig[0] == 0x71 && e.sig[63] == 0x71);
+  CHECK(strcmp(e.app_id, "request") == 0 && !e.automatic && !e.dev && e.reason == VK_OK);
+  {
+    const std::vector<uint8_t> f = fileBytes(FILE_PATH);
+    CHECK(f[12 + 16] == 7 && f[12 + 19] == 4);           // outcome received; flags: req_id
+  }
+
+  // The same transaction again: nothing written. Another one: written.
+  CHECK(recordReceived(receivedPayment(1), 1790000200u) == ReceiveResult::ALREADY);
+  CHECK(count() == 1);
+  CHECK(recordReceived(receivedPayment(2), 1790000300u) == ReceiveResult::WRITTEN);
+  CHECK(count() == 2);
+  // A signed approval row with the same signature bytes is not a received one.
+  ApprovalRequest request = paymentRequest();
+  uint8_t sig[64];
+  memset(sig, 0x73, sizeof sig);
+  ApprovalOutcome outcome = {&request, true, VK_OK, sig};
+  notifyListeners(outcome);
+  CHECK(recordReceived(receivedPayment(3), 1790000400u) == ReceiveResult::WRITTEN);
+
+  // Queued auto signatures are written first.
+  signed_(dProof, 1);
+  CHECK(recordReceived(receivedPayment(4), 0) == ReceiveResult::WRITTEN);
+  CHECK(pendingCount() == 0);
+  CHECK(at(0, e) && kindOf(e) == Kind::RECEIVED && e.time == 0);
+  CHECK(at(1, e) && kindOf(e) == Kind::AUTO);
+
+  // The file cannot be written.
+  vk_host_fileio_fail_writes = -1;
+  CHECK(recordReceived(receivedPayment(5), 1) == ReceiveResult::FAILED);
+  vk_host_fileio_fail_writes = 0;
+}
+
+// ---- history: the daily total ------------------------------------------------------------------------
+
+static Entry payment(const char *domain, uint8_t outcome, uint64_t amount, const char *symbol, uint8_t decimals, uint32_t time) {
+  Entry e;
+  memset(&e, 0, sizeof e);
+  strlcpy(e.domain, domain, sizeof e.domain);
+  e.outcome = outcome;
+  e.amount = amount;
+  strlcpy(e.symbol, symbol, sizeof e.symbol);
+  e.decimals = decimals;
+  e.time = time;
+  return e;
+}
+
+static void test_spent_within() {
+  vk_token_t tokens[2];
+  memset(tokens, 0, sizeof tokens);
+  strlcpy(tokens[0].symbol, "HACK", sizeof tokens[0].symbol); tokens[0].decimals = 2;
+  strlcpy(tokens[1].symbol, "ALT", sizeof tokens[1].symbol);  tokens[1].decimals = 2;
+  const uint32_t now = 1790000000u;
+  uint64_t out[VK_MAX_TOKENS];
+
+  // No file: nothing spent.
+  fresh();
+  memset(out, 0xEE, sizeof out);
+  CHECK(spentWithin(tokens, 2, now, out) && out[0] == 0 && out[1] == 0 && out[2] == 0);
+
+  CHECK(append(payment("solana", OUTCOME_SIGNED, 1000, "HACK", 2, now - 100)));
+  CHECK(append(payment("solana", OUTCOME_SIGNED, 500, "HACK", 2, now - 86400)));     // a day ago: out
+  CHECK(append(payment("solana", OUTCOME_SIGNED, 200, "HACK", 2, 0)));               // no clock then: in
+  CHECK(append(payment("solana", OUTCOME_SIGNED, 50, "HACK", 2, now + 3600)));       // clock went back: in
+  CHECK(append(payment("solana", OUTCOME_CANCELLED, 999, "HACK", 2, now)));          // not signed
+  CHECK(append(payment("solana", OUTCOME_BLOCKED, 999, "HACK", 2, now)));
+  CHECK(append(payment("solana", OUTCOME_SIGNED, 300, "ALT", 2, now - 10)));
+  CHECK(append(payment("solana", OUTCOME_SIGNED, 7, "HACK", 6, now)));                // other decimals
+  CHECK(append(payment("bank", OUTCOME_SIGNED, 4000, "USD", 2, now)));                // not a token
+  CHECK(append(payment("confirm", OUTCOME_APPROVED, 0, "", 0, now)));
+  CHECK(recordReceived(receivedPayment(1), now) == ReceiveResult::WRITTEN);          // money in, not out
+  millisNow = fakeMs;
+  signed_(dProof, 1);
+  CHECK(flushPending());                                                            // an auto row
+  CHECK(spentWithin(tokens, 2, now, out) && out[0] == 1250 && out[1] == 300);
+  // No clock now: every signed payment counts.
+  CHECK(spentWithin(tokens, 2, 0, out) && out[0] == 1750 && out[1] == 300);
+  // One token only; no tokens.
+  CHECK(spentWithin(tokens, 1, now, out) && out[0] == 1250 && out[1] == 0);
+  CHECK(spentWithin(tokens, 0, now, out) && out[0] == 0);
+
+  // More rows than one read chunk, and a wrapped ring: only the 128 kept rows count.
+  fresh();
+  for (uint32_t n = 1; n <= 140; ++n) CHECK(append(payment("solana", OUTCOME_SIGNED, n, "HACK", 2, now - n)));
+  uint64_t expected = 0;
+  for (uint32_t n = 13; n <= 140; ++n) expected += n;
+  CHECK(spentWithin(tokens, 2, now, out) && out[0] == expected);
+
+  // A file that is not a history file: the total is unknown.
+  fresh();
+  CHECK(io()->makeDir(DIR_PATH));
+  CHECK(io()->writeAll(FILE_PATH, (const uint8_t *)"NOPE", 4));
+  CHECK(!spentWithin(tokens, 2, now, out));
+
+  // A signed payment whose row could not be written still counts, until a reset.
+  fresh();
+  unixTime = fakeUnix;
+  sFakeUnix = now - 5;
+  ApprovalRequest request = paymentRequest();
+  uint8_t sig[64];
+  memset(sig, 1, sizeof sig);
+  ApprovalOutcome outcome = {&request, true, VK_OK, sig};
+  vk_host_fileio_fail_writes = -1;
+  notifyListeners(outcome);
+  CHECK(spentWithin(tokens, 2, now, out) && out[0] == 1000);
+  for (int i = 0; i < 3; ++i) notifyListeners(outcome);
+  CHECK(spentWithin(tokens, 2, now, out) && out[0] == 4000);
+  notifyListeners(outcome);                                                         // a fifth: the list is full
+  CHECK(!spentWithin(tokens, 2, now, out));
+  vk_host_fileio_fail_writes = 0;
+  eraseAll();
+  CHECK(spentWithin(tokens, 2, now, out) && out[0] == 0);
+  // A cancelled payment that could not be logged is not counted.
+  vk_host_fileio_fail_writes = -1;
+  outcome = {&request, false, VK_CANCELLED, nullptr};
+  notifyListeners(outcome);
+  vk_host_fileio_fail_writes = 0;
+  CHECK(spentWithin(tokens, 2, now, out) && out[0] == 0);
+}
+
+// ---- history: the reset listener -------------------------------------------------------------------
+
+static void test_erase_all() {
+  fresh();
+  millisNow = fakeMs;
+  for (uint32_t n = 1; n <= 3; ++n) CHECK(append(numbered(n)));
+  CHECK(io()->writeAll(BAD_FILE_PATH, (const uint8_t *)"x", 1));
+  signed_(dProof, 1);
+  CHECK(pendingCount() == 1);
+
+  // Registered with VK_ON_RESET: exactly one listener is linked in this suite, history's.
+  int listeners = 0;
+  for (vk::config::ResetListener *l = vk::Registered<vk::config::ResetListener>::first(); l;
+       l = l->vk::Registered<vk::config::ResetListener>::next()) {
+    if (l->fn) { l->fn(); listeners++; }
+  }
+  CHECK(listeners == 1);
+  CHECK(!io()->exists(FILE_PATH) && !io()->exists(BAD_FILE_PATH));
+  CHECK(count() == 0 && pendingCount() == 0);
+  Entry e;
+  CHECK(!at(0, e));
+  // The log starts again on the next write.
+  CHECK(append(numbered(9)) && count() == 1);
+  // No file to erase: nothing breaks.
+  fresh();
+  eraseAll();
+  CHECK(count() == 0);
 }
 
 // ---- balance: the reply scanner -------------------------------------------------------------------
@@ -663,6 +1059,11 @@ int main() {
   test_bad_magic_recovery();
   test_failed_write();
   test_listener();
+  test_version1_file();
+  test_auto_rows();
+  test_received();
+  test_spent_within();
+  test_erase_all();
   test_balance_scan();
 
   if (fails) {

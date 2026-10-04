@@ -209,8 +209,9 @@ def replay(run):
     review focus 1: both signatures are verified inside one Lua callback and the app survives."""
     keys = run.keys
     record, sig = run.record()
-    req = keys.req(1000, int(time.time()) + 600)
-    state = run.open("replay", keys.transfer(run.own), record, sig, req)
+    req_id = os.urandom(8)
+    req = keys.req(1000, int(time.time()) + 600, req_id=req_id)
+    state = run.open("replay", keys.transfer(run.own, memo=req_id.hex()), record, sig, req)
     expect(state, "replay", "amber", "VERIFIED - NOT PRESENT", "hold", "10.00 HACK", "to " + keys.merchant_name)
     expect_line(state, "replay", "Kind", "merchant")
     before = ct_ticks(run.badge)

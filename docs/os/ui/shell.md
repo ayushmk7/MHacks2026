@@ -239,6 +239,7 @@ Rules for every screen and page:
 | 120 | `info` | Device info | page | `SOLANA_OS_VERSION` (`0.1.0`) | `pages/page_info.cpp` | 5G |
 | 130 | `console` | Console | page | — | `pages/page_console.cpp` | 5G |
 | 140 | `about` | About | page | the host of config key `repo_url` (`github.com`), or `not set` | `pages/page_about.cpp` | added after the close-out |
+| 150 | `restart` | Restart | page | — | `pages/page_restart.cpp` | added with screen sleep |
 
 When SELECT is pressed on a page row, the list copies the page's `id`, `enter`, `update`, `draw` and `refresh_ms` into one static `Screen` and pushes it (only one page is open at a time). On an action row it calls `action()` and repaints.
 
@@ -246,7 +247,7 @@ When SELECT is pressed on a page row, the list copies the page's `id`, `enter`, 
 
 `shell::screenName()` returns one of these; device tests read it as the `screen` field of `VKSTATE` ([testing](../testing/testing.md#dev-hooks)).
 
-`launcher` · `app_delete` · `settings` · `wifi` · `bluetooth` · `espnow` · `push` · `store` · `identity` · `identity_new` · `display` · `leds` · `info` · `console` · `about` · `app_error` · `offer` · `installing`
+`launcher` · `app_delete` · `settings` · `wifi` · `bluetooth` · `espnow` · `push` · `store` · `identity` · `identity_new` · `display` · `leds` · `info` · `console` · `about` · `restart` · `app_error` · `offer` · `installing`
 
 It is empty while an app runs. While an approval is open over the shell it keeps the name of the screen underneath (`VKSTATE.modal` tells). The boot screen has no name: nothing can ask during `setup()`.
 
@@ -345,7 +346,7 @@ Layout: `frame("DELETE APP", "SELECT delete", "CANCEL keep")`; rows from y = 48:
 
 | Button | Action |
 |---|---|
-| SELECT | `removed = !app_store::exists(id) \|\| app_store::removeApp(id)`; `app_store::refresh()`. Removed (already gone counts as removed): `badge_log::tagf("os", "deleted app '%s'", id)`, `pulseLedBad(500)`, `home()`. Not removed: `badge_log::tagf("os", "could not delete app '%s'", id)`, then `shell::showError("Could not delete " + name)` |
+| SELECT | `removed = !app_store::exists(id) \|\| app_store::removeApp(id)`; `app_store::refresh()`. Removed (already gone counts as removed): `badge_log::tagf("os", "deleted app '%s'", id)`, `pulseLed(500)` (the theme's pulse: it was done as asked; it was the red `pulseLedBad` until the gap audit), `home()`. Not removed: `badge_log::tagf("os", "could not delete app '%s'", id)`, then `shell::showError("Could not delete " + name)`, after which the error screen offers no retry ([App error](#app-error)) |
 | CANCEL | forget the app, `pop()` |
 
 Refresh: input only.
@@ -372,22 +373,197 @@ Action row, `page_theme.cpp`. Value: `vk::ui::theme::activeName()` with a leadin
 
 ### Wi-Fi
 
-Screen `wifi`, `page_wifi.cpp`. The badge has no keyboard: an open network is joined from here; a secured one is set up from a phone through the hotspot and the web page, then re-joined from here.
+Screens `wifi`, `wifi_scan`, `wifi_saved` and `wifi_join`, all in `page_wifi.cpp`; the page also opens screen `keyboard` ([text entry](text-entry.md)). The whole way onto a network is on the badge: nothing needs a laptop or a phone, except a network that asks for a user name (WPA2-Enterprise), which is still set up from the web page.
 
-Layout: `frame("WI-FI", <left>)`. Status: `receipt::row(X0, X1, 48, "STATUS", wifi_mgr::statusText(), false, connected ? STAMP_OK : 0)`; `receipt::subline(X0, X1, 61, …)` with `<wifi_mgr::ssid()>  <wifi_mgr::ip().toString()>  <wifi_mgr::rssi()> dBm` when `wifi_mgr::connected()`, else `not connected`. `receipt::rule(78)`. A list of 7 visible rows from y = 88 (`listDraw(list, rows, count, 88, 7)`): five actions, then the scan results (none while `wifi_mgr::scanning()`; otherwise `wifi_mgr::scanResultCount()`).
+**Status:** built; the logic under the screens is host-tested (`test_wifi_net`, `test_keyboard`). **Not yet run on a badge:** no screen below was seen on the glass and no network was joined with it. `t_wifi_setup.py` is written and has not been run. What the first run must settle is listed under [To check on a badge](#to-check-on-a-badge).
+
+```
+wifi (status, switches, saved networks)
+ ├─ Scan for networks ─> wifi_scan ─┬─ an open network, or a saved one ────────────────> wifi_join
+ │                                  ├─ a network with a password ─> keyboard (PASSWORD) ─> wifi_join
+ │                                  ├─ a network with a login ──────────────────────────> wifi_join (notice)
+ │                                  └─ OTHER... ─> keyboard (NETWORK NAME) ─> keyboard (PASSWORD) ─> wifi_join
+ └─ a saved network ─> wifi_saved ──── Join ────────────────────────────────────────────> wifi_join
+                                  └─── Forget
+
+wifi_join: CONNECTING ─> joined · wrong password · not found · no answer      (each says what to do next)
+```
+
+CANCEL goes back one screen everywhere (on the keyboard: [one character, then out](text-entry.md#buttons)). The stack is at most five deep (`launcher`, `settings`, `wifi`, `wifi_scan`, then `keyboard` or `wifi_join`).
+
+The files, and who does what:
+
+| File | Does |
+|---|---|
+| `src/vk/shell/pages/page_wifi.cpp` | the four screens. Holds a typed password only between the keyboard and the join, and for "type it again"; wipes it when the flow ends |
+| `src/vk/core/wifi_net.{h,cpp}` | `vk::wifi`: the saved networks, the join state machine with its timeout, auto-join. Host-tested |
+| `src/vk/ui/keyboard.{h,cpp}`, `keyboard_core.{h,c}` | the keyboard |
+| `src/net/wifi_mgr`, `src/settings` | upstream, untouched: the radio, the scan, one saved network |
+
+#### wifi: status
+
+`frame("WI-FI", <left>)`; footer left `SELECT join or forget` on a saved network's row, otherwise `SELECT choose`.
+
+Status block: `receipt::row(X0, X1, 48, "STATUS", wifi_mgr::statusText(), false, connected ? STAMP_OK : 0)`; `receipt::subline(X0, X1 - 24, 61, …)`; `receipt::rule(78)`. The subline:
+
+| State | Text |
+|---|---|
+| on a network | `<ssid, 16 characters>  <ip>  <rssi> dBm`, with the signal bars at its right end |
+| hotspot | `<the badge's name>  <ip>` |
+| joining, or scanning for a saved network | `looking for a saved network`; with none saved `not connected yet` |
+| off | `not connected` |
+
+A list of 7 visible rows from y = 88 (`listDraw(list, rows, count, 88, 7)`):
 
 | Row | Value | SELECT |
 |---|---|---|
-| `Scan for networks` | `scanning..` while `wifi_mgr::scanning()` | `wifi_mgr::startScan()` |
-| `Connect saved network` | `settings::wifiSsid()`, with ` (EAP)` appended when `settings::wifiIsEnterprise()`; `-` when none | no saved network: `badge_log::tagf("ui", "no saved network - set one up from the web UI")`. Enterprise: `wifi_mgr::connectEnterprise(saved, settings::enterpriseConfig(), false)`; on false `badge_log::tagf("ui", "enterprise connect refused - see Console")`. Otherwise `wifi_mgr::connect(saved, settings::wifiPassword(), false)` |
-| `Start hotspot` | `on` when `wifi_mgr::mode() == wifi_mgr::Mode::AccessPoint` | `wifi_mgr::startAccessPoint(); push_server::begin();` |
-| `Disconnect` | | `wifi_mgr::disconnect(); push_server::stop();` |
-| `Forget saved network` | the saved SSID or `-` | `settings::forgetWifi()` |
-| a scan result | label `wifi_mgr::scanSsid(i)`, prefixed `* ` when `wifi_mgr::scanEncrypted(i)`; value `<wifi_mgr::scanRssi(i)> dBm` | open network: `wifi_mgr::connect(wifi_mgr::scanSsid(i), "", true)`. Secured: `badge_log::tagf("ui", "'%s' is secured - set it up from the web UI", ssid)` |
+| `Scan for networks` | | `push(&kScan)` |
+| `Wi-Fi` | `on` in station mode, else `off` | on: `vk::wifi::joinCancel(); wifi_mgr::disconnect(); push_server::stop();`. Off, with a saved network: `vk::wifi::joinBest()` (the strongest saved network in range; no result screen: the status block shows it). Off, with only upstream's enterprise profile: `wifi_mgr::connectEnterprise(…, false)`. Off, with nothing saved: `push(&kScan)` |
+| `Hotspot` | `on` / `off` | on: `wifi_mgr::disconnect(); push_server::stop();`. Off: `wifi_mgr::startAccessPoint(); push_server::begin();` |
+| each saved network, newest first | `joined` (`STAMP_OK`) when the badge is on it, else `saved` (`SUB`) | opens `wifi_saved` for it |
+| upstream's enterprise profile, if it has one | `joined`, else `saved login` | opens `wifi_saved` for it |
 
-Footer left: `* needs a password: use the hotspot` when the cursor is on a secured result, otherwise `SELECT choose`. Buttons: UP/DOWN `listMove(list, count, 7)`; SELECT as above, then `repaint()`; CANCEL back. Refresh: 250 ms (the scan and the join finish on their own).
+Refresh: 250 ms. The row count changes without input, so the page clamps the cursor and the scroll position at the start of both `update()` and `draw()`.
 
-As built: only the STATUS value and the hotspot's `on` are coloured (`STAMP_OK`); every other value is ink (upstream's purple for an enterprise network is gone). The list shows at most 59 scan results (64 rows with the five actions). The number of rows changes without input when a scan ends, so the page clamps the cursor and the scroll position at the start of both `update()` and `draw()`.
+#### wifi_scan: the networks in range
+
+Entering the screen starts a scan (`wifi_mgr::startScan()`, asynchronous: the loop keeps running). A radio that is busy joining refuses to scan; then the stalled join is stopped (`wifi_mgr::disconnect()`) and the scan started again. A network the badge is on, and the hotspot, are never dropped for a scan.
+
+While it runs: `frame("NETWORKS", "")`, `Looking for networks..` centred at y = 104 and `a few seconds` at y = 122 in `SUB`. A scan that has not ended after 12 s (`SCAN_TIMEOUT_MS`) counts as failed.
+
+When it ends the results are read once into a list: one row per name (of several access points with one name, the strongest), no nameless network, **strongest first**, at most 24 (`MAX_LISTED`). Then `frame("NETWORKS", <left>)` and 9 visible rows from y = 48, with `n/N` beside the title when there are more:
+
+| Row | Drawn | SELECT |
+|---|---|---|
+| a network | `receipt::row`: label = the name, two columns in from the left; in those columns a padlock (7 × 8 px) when the network is not open; value `joined`, `saved`, `login` or nothing, then the **signal bars**: four rising bars, 3 px wide, in the last 18 px of the row. A bar the signal does not reach is `FAINT`; the others are ink (paper on the selected row). One bar from −85 dBm, two from −75, three from −65, four from −55 (`BAR_LEVELS`) | the network the badge is on: back to `wifi`. Open, or saved: the join starts (`vk::wifi::join(ssid, "")`, `vk::wifi::joinSaved(ssid)`). With a password: the keyboard, title `PASSWORD`, hint `8 to 63 characters, for <ssid>`, secret, 8 to 63. With a login (any enterprise mode): `wifi_join` with a notice |
+| `OTHER...` (always the last row) | value `type a name` | the keyboard, title `NETWORK NAME`, 1 to 32 characters, not secret. Then, unless that name is saved, the keyboard for the password with hint `none if it is open, or 8 to 63, for <ssid>`: an empty password is accepted and means an open network |
+
+Footer left, by the row under the cursor: `SELECT join  RIGHT rescan` · `SELECT password  RIGHT rescan` · `needs a login  RIGHT rescan` · `SELECT type the name  RIGHT rescan`. With no network in range: `No network in range.` at y = 104. After a failed scan: `The scan did not finish.` (`STAMP_WARN`) and `RIGHT tries again`.
+
+| Button | Action |
+|---|---|
+| UP / DOWN | `listMove` (wraps: UP from the first row is `OTHER...`) |
+| SELECT | as above |
+| RIGHT | scan again |
+| CANCEL | back to `wifi`. If the scan had to stop a join that was under way, the badge goes back to its saved networks (`vk::wifi::joinBest()`) |
+
+Leaving the keyboard without a text returns here with nothing changed.
+
+#### wifi_join: connecting, then the result
+
+`vk::wifi::join()` or `joinSaved()` has started the attempt; the screen polls `vk::wifi::joinState()` and repaints every 250 ms. When the result arrives the LEDs pulse once: the theme's colour for joined, red otherwise.
+
+| State | Screen | SELECT | CANCEL |
+|---|---|---|---|
+| connecting | `frame("CONNECTING", "", "CANCEL stop")`; rows `NETWORK` / the name and `STATE` / `wifi_mgr::statusText()`; `bar(41, 96, 30, elapsed, limit)`; `<n> s of <limit> s at most` centred at y = 114 | | `vk::wifi::joinCancel()` (Wi-Fi off), back |
+| joined | `frame("CONNECTED", "SELECT or CANCEL: done", "")`; rows `NETWORK`, `RESULT` / `joined` (`STAMP_OK`), `ADDRESS` / the IP address, `SIGNAL` / `<rssi> dBm` and the bars, `SAVED` / `yes (<n> of 4)`; `The badge joins it by itself from now on.` If NVS is full: `SAVED` / `no: storage is full` (`STAMP_WARN`) | back to `wifi` | the same |
+| wrong password | title `NOT CONNECTED`; `RESULT` / `wrong password` (`STAMP_BAD`); `The network refused the password.` / `Capitals and small letters are different. The` / `show key lets you read what you type.` Footer `SELECT type it again` | the keyboard again, **with the password that was typed** (for a saved network whose stored password failed: empty) | back |
+| (the same, when no password was given) | `RESULT` / `needs a password`; `This network is not open.` / `SELECT to type its password.` | the keyboard | back |
+| not found | `RESULT` / `not found` (`STAMP_BAD`); `No network with this name answered.` / `Move closer, or check the name: capitals and` / `small letters are different.` Footer `SELECT try again` | the same join again, with the same password | back |
+| no answer (the hard timeout) | `RESULT` / `no answer` (`STAMP_WARN`); `The network did not let the badge in within <limit> s.` / `It may be busy or far away. The password was` / `not refused.` Footer `SELECT try again` | the same join again | back |
+| notice: needs a login | `RESULT` / `needs a login` (`STAMP_WARN`); `This network asks for a user name.` / `The badge cannot type one in. Set the network up` / `from the web page (Settings > App push).` | back | back |
+| notice: cannot join | `RESULT` / `cannot join`: a name or a password of a length no network accepts (not reachable through the keyboard, whose fields have these limits) | back | back |
+
+Every result screen has rows `NETWORK` and `RESULT` at y = 48 and 66, `receipt::rule(82)`, and its three lines at y = 94 (`INK`), 108 and 122 (`SUB`).
+
+"Back" from a result that is not a success wipes the typed password and, if Wi-Fi was on or trying before the flow began, sends the badge back to its saved networks (`vk::wifi::joinBest()`): a failed attempt on a new network must not leave a badge that was online offline.
+
+#### wifi_saved: one saved network
+
+`frame("SAVED NETWORK", "SELECT choose")`; rows `NETWORK` / the name, `KEPT` / `its password`, `open: no password` or `a login, set on the web page`, `STATE` / `joined` or `not joined`; `receipt::rule(100)`; two rows from y = 110:
+
+| Row | SELECT |
+|---|---|
+| `Join` | `wifi_join` takes this screen's place, joining with the stored password. Upstream's enterprise profile: `wifi_mgr::connectEnterprise(ssid, settings::enterpriseConfig(), false)` and back (on false, `badge_log::tagf("ui", "enterprise connect refused - see Console")`) |
+| `Forget this network` | `vk::wifi::forget(ssid)` (the enterprise profile: `settings::forgetWifi()`). If the badge is on that network, or the radio is still trying to reach one: `wifi_mgr::disconnect(); push_server::stop(); vk::wifi::joinBest();` (what is left of the list is tried). Back |
+
+No screen shows a stored password, and "type it again" after a stored password failed starts from an empty field: a borrowed badge does not give its owner's passwords away.
+
+#### Saved networks
+
+Upstream remembers **one** network (`sysconf`: what `VKWIFI`, `JOINWIFI` and the web page write, and what it joins at boot). `vk::wifi` keeps **four** (`MAX_SAVED`), newest first, in its own NVS namespace `vkwifi` (keys `s0`..`s3` for the names, `p0`..`p3` for the passwords), and keeps the two in step with no edit to upstream:
+
+- A network that lands in upstream's slot is copied to the front of the list: at boot, and within 2 s (`SYNC_MS`) while running. So `VKWIFI <ssid>|<password>` over USB, `JOINWIFI` and the web page all end in the same list as a network typed on the badge.
+- The front of the list is written to upstream's slot (`settings::setWifiCredentials`), so upstream's join at boot is the network joined last. Forgetting the front moves the slot to the next network, or empties it.
+- A network joined **from the badge** is saved when, and only when, the join succeeded: a wrong password is never stored. (`VKWIFI` saves before it joins, as before.)
+- A fifth network pushes the oldest out. A name is 1 to 32 bytes; a password is empty, or 8 to 63 characters (or the 64 hex digits of a raw key, which upstream's slot may hold).
+- An enterprise profile stays upstream's alone: it is not copied into the list, and the status page shows it as its own row. Joining a network from the badge takes upstream's slot, as `JOINWIFI` always did, so the enterprise profile then has to be set again from the web page.
+- A stored password never leaves `wifi_net.cpp`: no function returns it, nothing logs it, and it is not a config key (`VKGET` prints config values). It is stored as upstream stores its one password: as plain text in NVS.
+
+#### Joining
+
+```cpp
+// src/vk/core/wifi_net.h (the part the screens use)
+namespace vk::wifi {
+constexpr size_t MAX_SAVED = 4;
+size_t savedCount();
+const char *savedSsid(size_t index);                      // newest first; "" past the end
+bool isSaved(const char *ssid);
+bool savedIsOpen(const char *ssid);
+bool remember(const char *ssid, const char *password);    // to the front, and into upstream's slot
+bool forget(const char *ssid);
+
+enum class Join : uint8_t { IDLE, CONNECTING, JOINED, WRONG_PASSWORD, NOT_FOUND, TIMEOUT };
+bool join(const char *ssid, const char *password);        // typed credentials; "" = an open network
+bool joinSaved(const char *ssid);                         // with the stored password
+void joinBest();                                          // quiet: the strongest saved network in range, else the newest
+Join joinState();
+const char *joinStateName();                              // "idle", "connecting", "joined", "wrong_password", "not_found", "timeout"
+const char *joinSsid();
+uint32_t joinElapsedMs();
+uint32_t joinTimeoutMs();                                 // config key wifi_join_s
+void joinCancel();                                        // stop; Wi-Fi off; IDLE
+void joinDismiss();                                       // the result was read: IDLE
+void hold();                                              // the user is choosing: no automatic join for 5 s
+}
+```
+
+One attempt: `wifi_mgr::connect(ssid, password, false)` from a clean radio (a link that is up, or another join that is under way, is stopped first), then a service watches it on every loop pass:
+
+| Seen | Result |
+|---|---|
+| station mode, connected, and the network's name is the one asked for | `JOINED`; `remember()` |
+| two disconnect events that mean the password (4-way handshake timeout 15, handshake timeout 204, MIC failure 14), or one the driver does not retry (authentication failed 202; no access point with compatible security 210 or in the allowed modes 211: a password for an open network, or none for a secured one) | `WRONG_PASSWORD` |
+| two events "no access point found" (201), or one "none strong enough" (212) | `NOT_FOUND` |
+| `wifi_join_s` seconds (default 15) with neither | what a single event said, if there was one; otherwise `TIMEOUT` |
+
+Every result but `JOINED` turns the radio off (`wifi_mgr::disconnect()`), or the driver would retry a join that failed for ever. The reason codes come from the Wi-Fi driver's disconnect event (`WiFi.onEvent`, registered once at boot); upstream's `statusText()` is too coarse to tell a wrong password from a slow network. `classify()` is the table above as a pure function.
+
+`joinBest()` is for "Wi-Fi on" and for auto-join. With one saved network it joins it. With more it scans, then joins the strongest saved network in range, or the newest when none is (which the driver then keeps retrying, as upstream does with its one network). It reports nothing and does not reorder the list.
+
+**Auto-join.** At boot upstream joins the newest network, as before. With **two or more** saved networks, when the badge is in station mode and has had no network for 15 s (`AUTOJOIN_AFTER_MS`), the service does what `joinBest()` does, and again every 60 s (`AUTOJOIN_RETRY_MS`) while that lasts: that covers a boot where the newest network is out of range, and a drop. It does so only while no app runs and no approval is open (a scan takes the radio off the ESP-NOW channel for a few seconds, and a join can move it for good: [the shared radio](../protocol/espnow.md)), not while a Wi-Fi screen is open, and never when Wi-Fi is off or the hotspot is on. With one saved network there is nothing to choose and nothing changes: the driver retries that network by itself. `VKSET wifi_autojoin 0` turns it off.
+
+Config keys registered in `wifi_net.cpp` ([config](../platform/config.md#keys)): `wifi_join_s` (U32, default 15, 5 to 60) and `wifi_autojoin` (U32, default 1, 0 or 1).
+
+#### Secrets
+
+A password typed on the badge goes: keyboard buffer → the page's buffer → `vk::wifi::join` → the radio, and on success into NVS. Each buffer is overwritten with zeros when its part is over. None of it is logged: the `[wifi]` log lines name the network and the result (`connecting to '<ssid>'`, `join '<ssid>': not_found`, `joined '<ssid>'`), never the password. Nothing prints it over serial, `VKSTATE` has no field for it, and the two dev commands below give names and states only.
+
+#### Dev hooks
+
+Dev profile only, registered in the files they describe:
+
+- `VKWIFIUI` (`page_wifi.cpp`): `{"scanning":false,"scan_failed":false,"networks":3,"rows":4,"cursor":3,"row":"OTHER...","join":"not_found","ssid":"zz T9~x","saved":1,"mode":"off"}`. `row` is the name under the scan list's cursor, `join` is `joinStateName()` (or `needs_login`, `refused` for the two notices), `mode` is `wifi_mgr::statusText()`.
+- `VKKBD` (`keyboard.cpp`): [text entry](text-entry.md#dev-hook).
+
+#### Tests
+
+- Host: `test_wifi_net` (the list: order, four at most, forget, a reboot, a failed NVS write; the slot in both directions; every join result, the timeout, cancel; `joinBest`; every auto-join condition) and `test_keyboard`.
+- Device: `t_wifi_setup.py`, one badge, no hands, **never joins a real network**: `wifi` → `wifi_scan` (a scan runs and ends) → `OTHER...` → the name `zz T9~x` typed through all four layers, with a held SELECT and a backspace → the password field (secret: no text in any reply; DONE refused under 8; show and hide) → `wifi_join`: `connecting`, then `not_found` → SELECT tries again → CANCEL. It checks that nothing was saved and that the password is in no `VKSTATE` reply and no log line, and saves `shots/wifi_setup_<status|scan|name|password|connecting|not_found>_<theme>.png` in both themes. The join to nothing turns the radio off, so a badge that was on a network leaves it and comes back through `joinBest()`; the test waits for that.
+- `t_pages1.py` still opens `wifi` and leaves it with CANCEL.
+
+#### To check on a badge
+
+In this order; none of it has been seen:
+
+1. The image builds in both profiles and the boot line counts one more service and two more config keys; `VKHELP` in the release build lists neither `VKKBD` nor `VKWIFIUI`.
+2. `t_pages1.py` and `t_wifi_setup.py` pass; look at the twelve pictures in both themes (the lock and the bars on the selected row, the keyboard's cells).
+3. By hand, an open network and a WPA2 network: joined, the address shown, `SAVED yes`; after a reboot the badge is back on it.
+4. A wrong password: which disconnect reason the driver really gives (`[wifi] join '<ssid>': wrong_password` within a few seconds, not `timeout` at 15 s). If it is `timeout`, the reason is missing from `classify()`: read it from the driver's log at debug level and add it.
+5. A name that does not exist: `not_found` within about 6 s.
+6. `VKWIFI a|b` over USB appears on the status page within 2 s; Forget removes it and it does not come back after a reboot.
+7. Two saved networks, the newer one switched off: within 15 s of boot the badge scans and joins the other. Then check that ESP-NOW still works afterwards on the new channel.
+8. The hotspot row, and Wi-Fi off and on.
 
 ### Bluetooth
 
@@ -417,7 +593,7 @@ Refresh: 250 ms. Only badges running BadgeOS appear: the frame magic is `BDOS` (
 
 Screen `push`, `page_push.cpp`. `up = push_server::running() && wifi_mgr::connected()`.
 
-Layout: `frame("APP PUSH", "SELECT choose")`; `receipt::row(X0, X1, 48, "WEB UI", up ? "ready" : "wi-fi is off", false, onOffColor(up))`; `receipt::subline(X0, X1, 61, …)`: `http://<wifi_mgr::ip().toString()>/` when up, else `Settings > Wi-Fi to connect`; `text(22, 76, …, SUB)`: `http://<settings::deviceName()>.local/` when up, else `or start the hotspot`; `receipt::amount(160, 92, label, settings::pairingCode(), "")` with label `PAIRING CODE`, or `PAIRING CODE (NOT REQUIRED)` when `!settings::pushRequiresPairing()`; `receipt::rule(148)`; three rows from y = 158 (`listDraw(list, rows, 3, 158, 3)`).
+Layout: `frame("APP PUSH", "SELECT choose")`; `receipt::row(X0, X1, 48, "WEB UI", up ? "ready" : "wi-fi is off", false, onOffColor(up))`; `receipt::subline(X0, X1, 61, …)`: `http://<wifi_mgr::ip().toString()>/` when up, else `Settings > Wi-Fi to connect`; `text(22, 76, …, SUB)`: on the badge's own hotspot (`wifi_mgr::mode() == AccessPoint`) `hotspot <ssid>  password <password>` as the radio has them (`esp_wifi_get_config`: a Lua app may start the hotspot with another password), otherwise when up `http://<settings::deviceName()>.local/`, else `or start the hotspot: password <DEFAULT_AP_PASSWORD>` (the password Settings → Wi-Fi's `Start hotspot` uses, `badgeos-setup`, hook H23). A phone must join the hotspot before it can open the web page, and the password was in the source only; `receipt::amount(160, 92, label, settings::pairingCode(), "")` with label `PAIRING CODE`, or `PAIRING CODE (NOT REQUIRED)` when `!settings::pushRequiresPairing()`; `receipt::rule(148)`; three rows from y = 158 (`listDraw(list, rows, 3, 158, 3)`).
 
 | Row | Value | SELECT |
 |---|---|---|
@@ -472,15 +648,15 @@ Upstream regenerated on a single press. BadgeOS holds the wallet key in the same
 
 ### Display
 
-Screen `display`, `page_display.cpp`. `frame("DISPLAY", "LEFT/RIGHT adjust")`; `receipt::row(X0, X1, 48, "BACKLIGHT", "<settings::brightness() * 100 / 255>%")`; `bar(41, 70, 30, settings::brightness(), 255)`.
+Screen `display`, `page_display.cpp`. `frame("DISPLAY", "UP/DOWN choose  LEFT/RIGHT adjust")`; two rows through `listDraw(list, rows, 2, 48, 2)`: `Backlight` / `<settings::brightness() * 100 / 255>%` and `Sleep after` / config key `sleep_s` as `30 s`, `2 min` or `never`; `bar(41, 90, 30, settings::brightness(), 255)`; at y = 112 in `SUB` what the timers do (`Idle: dims after 30 s, off after 2 min.`, or `… never turns off.`, `Idle: turns off after …`, `Idle: stays on.`); at y = 126 `Any key wakes it; that key does nothing else.`; at y = 140, only when `awake_usb` is 1, `Stays on while on USB power.` ([screen dim and sleep](ui.md#screen-dim-and-sleep)).
 
-LEFT / RIGHT (`buttons::repeated`): value ∓ 8, limited to 8..255 (a floor of 8: a dark screen looks like a crash). On a change: `settings::setBrightness(v); display::setBrightness(v);` and repaint, so the value chosen is the value seen. A press at either limit changes nothing and writes nothing. CANCEL back. Refresh: input only.
+UP / DOWN: `listMove`; the cursor starts on `Backlight` each time the page opens. On `Backlight`, LEFT / RIGHT (`buttons::repeated`): value ∓ 8, limited to 8..255 (a floor of 8: a dark screen looks like a crash). On a change: `settings::setBrightness(v); display::setBrightness(v);` and repaint, so the value chosen is the value seen. A press at either limit changes nothing and writes nothing. On `Sleep after`, LEFT / RIGHT (`buttons::pressed`) step through 30 s, 1 min, 2 min, 5 min, 10 min, never (shorter / longer; no wrap) and write `sleep_s` with `vk::config::set`; a value set over USB that is not a choice steps to its neighbour. The dim time (`dim_s`), the dim level (`dim_pct`) and `awake_usb` are set over USB only. CANCEL back. Refresh: input only.
 
 ### LEDs
 
 Screen `leds`, `page_leds.cpp`. `frame("LEDS", "LEFT/RIGHT adjust  SELECT preview")`; row `RGB BRIGHTNESS` / `<settings::ledBrightness() * 100 / 255>%`; `bar(41, 70, 30, settings::ledBrightness(), 255)`.
 
-LEFT / RIGHT: value ∓ 8 within 0..255: `settings::setLedBrightness(v); leds::setBrightness(v);`. SELECT: `pulseLed(700)` (upstream previewed with its brand boot animation, which BadgeOS does not play). CANCEL: `leds::stopAnimation(); leds::off();` then back. Refresh: input only.
+LEFT / RIGHT: value ∓ 8 within 0..255: `settings::setLedBrightness(v); leds::setBrightness(v);`. SELECT: `pulseLed(700)` (upstream previewed with its brand boot animation, which BadgeOS does not play). CANCEL: back, leaving the LEDs alone. (Upstream stopped its preview animation here with `leds::stopAnimation(); leds::off();`, as this page first did; the preview is now a pulse that hands back to the idle animation by itself, and stopping it on the way out also killed the idle animation until an app was opened and closed.) Refresh: input only.
 
 ### Wallet and Inbox
 
@@ -537,6 +713,19 @@ Row value in the Settings list: the host of the link (the text between `://` and
 
 Buttons: CANCEL back. Refresh: on change only. The page reads `repo_url` twice a second and repaints when it differs from what it last drew, so a `VKSET repo_url …` shows while the page is open. For this project: `VKSET repo_url https://github.com/ayushmk7/MHacks2026` (38 characters: QR version 3, 29 modules, 4 px each).
 
+### Restart
+
+Screen `restart`, `page_restart.cpp`: restarts the badge, with the page as the confirmation (the row opens it; a second press restarts). It erases nothing; it is neither Identity's New identity nor the wallet reset.
+
+Layout: `frame("RESTART", "SELECT restart", "CANCEL back")`; `text(10, 48, "Restart the badge now?")`; in `SUB` at y = 70, 84, 98: `Kept: the key, wallet settings, apps and their` / `data, history, contacts, Wi-Fi.` / `Lost: waiting notifications, an open request.`
+
+| Button | Action |
+|---|---|
+| SELECT | `badge_log::tagf("os", "restart from Settings")`; draws `RESTART` with `Restarting...` centred at y = 112 and flushes it; waits 150 ms (the log line and the frame leave); `ESP.restart()` |
+| CANCEL | back |
+
+Refresh: input only. The shell never runs while an approval is open, so a restart can never cut one short. The web page's reboot (`push_server`) is unchanged.
+
 ## App-store offer
 
 Screen `offer`, in `dialogs.cpp`. The one screen that appears without being asked for, and the only thing between "anyone who knows a badge ID" and code on this badge's flash. It is raised by the framework ([step 1](#framework)) and is reachable from no menu. It exists as long as the store client is compiled in, whatever the App store page says.
@@ -556,7 +745,7 @@ Refresh: input only. The LEDs pulse in the theme's LED colour for 900 ms when it
 
 Screen `installing`, in `dialogs.cpp`.
 
-While `broker::lastResult()` is empty: `frame("INSTALLING", …)`; `receipt::amount(160, 48, "", "<broker::installProgress()>%", "")`; `bar(41, 112, 30, broker::installProgress(), 100)`; rows y = 136 `OK` / `broker::installedCount()` and y = 154 `FAILED` / `broker::failedCount()`. Footer left: `verifying sha256 before each write`; after 20 s on this screen (`INSTALL_ESCAPE_MS = 20000`): `stuck? CANCEL to give up`; footer right empty.
+While `broker::lastResult()` is empty: `frame("INSTALLING", …)`; `receipt::amount(160, 48, "", "<broker::installProgress()>%", "")`; `bar(41, 112, 30, broker::installProgress(), 100)`; rows y = 136 `OK` / `broker::installedCount()` and y = 154 `FAILED` / `broker::failedCount()`. Footer left: `verifying sha256 before each write`, with the footer right counting down to the moment CANCEL works (`CANCEL in 20s` … `CANCEL in 1s`; a screen that ignores CANCEL and says nothing looks hung); after 20 s on this screen (`INSTALL_ESCAPE_MS = 20000`): left `stuck? CANCEL to give up`, right empty.
 
 When it is set: title `INSTALLED` when `broker::failedCount() == 0`, else `FINISHED WITH ERRORS`; `textCentered(160, 70, result)`; `textCentered(160, 90, "The launcher has them now.", SUB)`; footer `SELECT or CANCEL: launcher`.
 
@@ -571,11 +760,11 @@ Refresh: 250 ms.
 
 Screen `app_error`, in `dialogs.cpp`: where an app lands when it dies, or when a delete fails.
 
-Layout: `frame("APP STOPPED", "SELECT retry", "CANCEL launcher")`; the message wrapped by hand at 50 characters and at every `\n`, lines at x = 10, y = 48 + 12 × i, at most 13 lines; the first line `STAMP_BAD`, the rest `INK`. Tabs in the message (a Lua traceback indents with them) become two spaces; the kit would draw a tab as `?`.
+Layout: `frame("APP STOPPED", "SELECT retry", "CANCEL launcher")`, with the footer's left empty when there is nothing to retry (below); the message wrapped by hand at 50 characters and at every `\n`, lines at x = 10, y = 48 + 12 × i, at most 13 lines; the first line `STAMP_BAD`, the rest `INK`. Tabs in the message (a Lua traceback indents with them) become two spaces; the kit would draw a tab as `?`.
 
 | Button | Action |
 |---|---|
-| SELECT | `retry = runtime::lastApp()` (the current app is already empty). If it is not empty and `app_store::exists(retry)`: `runtime::clearError(); runtime::requestLaunch(retry);` |
+| SELECT | Only when the screen shows an app that stopped: `retry = runtime::lastApp()` (the current app is already empty). If it is not empty and `app_store::exists(retry)`: `runtime::clearError(); runtime::requestLaunch(retry);`. After a failed delete SELECT does nothing: `runtime::lastApp()` is then whatever app ran last, not the one that could not be deleted, and retrying it launched an unrelated app. `appErrorSet()` marks the screen retryable; the delete path clears the mark after `showError` |
 | CANCEL | `runtime::clearError(); home();` |
 
 Refresh: input only. `shell::showError` pulses the LEDs red for 700 ms.
@@ -585,6 +774,7 @@ Refresh: input only. `shell::showError` pulses the LEDs red for 700 ms.
 - **Approval.** While `vk::modalActive()`, the main loop calls neither the shell nor an app (hook H4): the shell is paused, its timers simply lapse, and no button reaches it. When the approval closes it calls `vk::ui::requestShellRepaint()`, and the shell repaints its top screen on the next pass. The shell raises approvals itself in one place only (New identity). An offer that arrives during an approval is raised on the first pass after it.
 - **Notifications.** The launcher shows the waiting count on the `inbox` cell and the Settings list on the `Inbox` row. Nothing is drawn in the header. The `notify` LED pattern is unchanged.
 - **Idle.** `vk::host::idle()` is `!runtime::running()`: the shell is showing. The balance poll, the `notify` pattern and the idle LED animation ask it.
+- **Screen sleep.** The shell keeps drawing and flushing as usual while the backlight is dimmed or off ([screen dim and sleep](ui.md#screen-dim-and-sleep)), so the picture is current the moment it wakes. The key that wakes the screen never reaches a screen (hook H25).
 - **Themes.** Every colour comes from `vk::ui::theme::color()`; a theme change repaints within 500 ms. Upstream's compile-time palette (`src/ui/theme.h`) is set to the Receipt-light values for whatever upstream code still draws with it; no shell screen uses it.
 - **Autostart.** Upstream's autostart app (`settings::autostartApp()`, set by `VKAUTOSTART`) still launches after boot; CANCEL or the force-quit hold returns to the launcher.
 

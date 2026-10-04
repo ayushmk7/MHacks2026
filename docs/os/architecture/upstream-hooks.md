@@ -17,7 +17,7 @@ BadgeOS is a fork: the runtime, the radios, app push, the store client and the d
    - it compares the hook ids found by `grep -rn "// VK: H" os.ino src | grep -v "^src/vk/"` with the hook table. The exclusion is anchored to the start of the line, which is the file path: the H1 line itself contains the text `src/vk/` and an unanchored exclusion would drop it. A table row whose purpose names a range of sites (H8: "H8a–H8f") stands for those ids; a row whose purpose starts with `optional:` (H18) may be absent from the source;
    - it reads the replaced-files table: every path whose kind is `deleted` must not exist, and every path whose kind is `rewritten` or `edited` must exist.
 5. A new hook needs a new id here first; a new replaced file needs a row here first. Prefer a registry ([overview](overview.md#6-self-registration)) over either: most additions need none. Ids are never reused: H14, H15 and H20 are retired ([Retired hooks](#retired-hooks)), and H22 is reserved for the loop-task stack size (execution plan, Risk 5).
-6. Hooks leave upstream's behaviour unchanged unless this file says otherwise. Two WP01 stubs are not empty: `router::install()` must install a handler that forwards to `runtime::dispatchEspnow`, and `signStoreRegistration()` must forward to the signer. Four hooks change behaviour on purpose: H9 (fixes finding F1), H12 (a larger SE050 limit), H16 (API version 2) and H23 (BadgeOS's names, network identifiers and LED colour). H24 only counts: it calls the same `display::flush()`.
+6. Hooks leave upstream's behaviour unchanged unless this file says otherwise. Two WP01 stubs are not empty: `router::install()` must install a handler that forwards to `runtime::dispatchEspnow`, and `signStoreRegistration()` must forward to the signer. Five hooks change behaviour on purpose: H9 (fixes finding F1), H12 (a larger SE050 limit), H16 (API version 2), H23 (BadgeOS's names, network identifiers and LED colour) and H25 (the key that wakes the screen is swallowed). H24 only counts: it calls the same `display::flush()`.
 
 Line numbers are for upstream commit `812b8c7`. Upstream's `solana-os.ino` is `os.ino` in the fork; that rename is the one change that is neither a tagged line nor a row in the replaced-files table.
 
@@ -45,6 +45,8 @@ Line numbers are for upstream commit `812b8c7`. Upstream's `solana-os.ino` is `o
 | H21 | `src/hal/se050.cpp` `test()`, `src/hal/se050_t1.cpp` `begin()`, `src/hal/badge_i2c.cpp` `scan()` | provisional: nothing addresses the SE050 on the I²C bus; the badge behaves as if it had no secure element (button fix, finding F17) |
 | H23 | `src/config.h`, `src/net/espnow_mgr.cpp`, `src/lua_sdk/lib_gfx.cpp`, `src/net/push_server.cpp`, `src/net/push_protocol.cpp` | BadgeOS names: OS name, hostname, hotspot password, broker URL, ESP-NOW magic; upstream's `SOLANA_*` Lua colour constants removed; the LED pulse when a push lands uses the theme's LED colour, not upstream's brand colours |
 | H24 | `os.ino` `loop()` | the canvas is sent to the panel through `vk::flush()`, which counts the transfers |
+| H25 | `src/hal/buttons.cpp` `update()` | a key that wakes the dimmed or sleeping screen does nothing else: its edges are dropped until it is up (`vk_screen_filter_buttons`, `src/vk/ui/screen_power.h`) |
+| H26 | `src/hal/buttons.cpp` `update()` | upstream's one log line per key press is not written while the on-screen keyboard is open: a log of the presses would let a reader replay the cursor and recover a typed password (`vk::ui::keyboard::state()`) |
 
 ## The edits
 
@@ -417,6 +419,22 @@ In `loop()` in `os.ino`, the one statement that sends the canvas to the panel:
 
 Why it exists: a screenshot (`VKSHOT`) reads the canvas, not the glass, so a canvas that is drawn but never sent, or sent on every pass (34 ms each, which caps the loop at about 20 passes a second), passes every screenshot test. The device tests assert that the count grows when the picture changes, and the responsiveness figures in [testing](../testing/testing.md#measurements) are read from it. The boot screen and the approval's "Signing..." frame call `display::flush()` directly and are not counted.
 
+### H25 — the wake key
+
+In `src/hal/buttons.cpp`, after the H17 include:
+
+```cpp
+#include "../vk/ui/screen_power.h"             // VK: H25
+```
+
+In `buttons::update()`, directly before the H17 block that applies injected buttons (so after the debounce has computed the pass's edges, and before the loop that starts key repeat and hold timing):
+
+```cpp
+  vk_screen_filter_buttons(sDownMask, &sPressedMask, &sReleasedMask);       // VK: H25
+```
+
+`vk_screen_filter_buttons` (`src/vk/ui/screen_power.cpp`, logic in `power_core.c`) counts a held or pressed key as activity and, when a press arrives while the screen is dimmed or asleep, wakes the screen and clears the pressed and released bits of every key that was down at that moment until that key is up again ([ui](../ui/ui.md#screen-dim-and-sleep)). The down mask is left as it is, so the debounce's next comparison is unchanged and `buttons::down()` still tells the truth; because the press edge is gone, the repeat and hold timers of that key never start (`heldMs` is 0, so a CANCEL that wakes the screen cannot count towards the force-quit hold). With an approval open nothing is swallowed: the approval lit the screen itself. In both profiles. The hook runs before H17, so buttons injected by the dev profile's `VKBTN` are never swallowed; the service counts them as activity instead, and device tests that tap a dimmed badge keep working.
+
 ## Retired hooks
 
 Three hooks of the first design are gone. Their ids are not reused, and no line in the source carries them.
@@ -512,7 +530,7 @@ grep -rn "// VK: H" os.ino src | grep -v "^src/vk/" | sed -E 's/.*VK: (H[0-9]+[a
   | sort -u | sort -t H -k 2n | tr '\n' ' '
 ```
 
-Expected output: `H1 H2 H3 H4 H5 H6 H7 H8a H8b H8c H8d H8e H8f H9 H10 H11 H12 H13 H16 H17 H19 H21 H23 H24`, plus `H18` if used (and `H22` if Risk 5's fallback was applied).
+Expected output: `H1 H2 H3 H4 H5 H6 H7 H8a H8b H8c H8d H8e H8f H9 H10 H11 H12 H13 H16 H17 H19 H21 H23 H24 H25 H26`, plus `H18` if used (and `H22` if Risk 5's fallback was applied).
 
 The replaced files (pre-flash check 1, second half):
 

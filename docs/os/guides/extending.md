@@ -22,6 +22,7 @@ It works because every extensible list is a self-registering registry ([overview
 | a USB serial command | one `VK_SERIAL_COMMAND(...)` line | the feature's file | yes |
 | an LED animation | one `VK_LED_PATTERN(...)` line | any file | yes |
 | a settings page | one `pages/page_<id>.cpp` with `VK_SETTINGS_PAGE(...)` | only the new file | yes |
+| a text the user types (a name, a password) | one `vk::ui::keyboard::open(options, done)` call ([text entry](../ui/text-entry.md#api)) | your page or native app | yes |
 | a reaction to every approval | one `VK_ON_APPROVAL(...)` line | the feature's file | yes |
 | a reaction to an app stopping, or to a wallet reset | one `VK_ON_APP_STOP(...)` or `VK_ON_RESET(...)` line | the feature's file | yes |
 | a field in `VKINFO` | one `VK_INFO_FIELD(...)` line | the feature's file | yes |

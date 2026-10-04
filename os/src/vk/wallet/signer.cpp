@@ -28,6 +28,8 @@ namespace vk::wallet {
 
 vk_presence_t (*presenceLookup)(const uint8_t req_id[8], uint8_t payee_pubkey_out[32], uint8_t nonce_out[16]) = nullptr;
 bool (*tokenInfoLookup)(const uint8_t mint[32], TokenInfo &out) = nullptr;
+bool (*batteryCritical)() = nullptr;
+bool (*spentLookup)(const vk_token_t *tokens, size_t count, uint32_t now, uint64_t out[VK_MAX_TOKENS]) = nullptr;
 
 #ifdef VK_HOST_TEST
 HostHooks hostHooks;
@@ -255,11 +257,15 @@ static Reason signRaw(const SignDomain *domain, const uint8_t *bytes, size_t len
   const bool ok = hostHooks.sign != nullptr && hostHooks.sign(sSignBuffer, total, sig);
 #endif
 
-  if (!ok) {
-    memset(sig, 0, 64);
-    return VK_SIGN_FAILED;
+  if (!ok) memset(sig, 0, 64);
+
+  // Every attempt reaches the signature log from here, the one place every signature passes, so no
+  // domain (today's or a future one) can sign without leaving a record. The listeners only queue.
+  const SignEvent event{domain, sSignBuffer, total, ok ? sig : nullptr, ok ? VK_OK : VK_SIGN_FAILED};
+  for (const SignListener *listener = SignListener::first(); listener; listener = listener->next()) {
+    if (listener->fn) listener->fn(event);
   }
-  return VK_OK;
+  return event.result;
 }
 
 Reason signAuto(const char *domain, const uint8_t *bytes, size_t len, uint8_t sig[64]) {
@@ -305,6 +311,9 @@ Reason begin(const char *domain, const uint8_t *bytes, size_t len, const Ctx &ct
 #else
   if (hostHooks.busy) return VK_BUSY;
 #endif
+
+  // A signature that browns out half-way is worse than one refused: nothing new starts on a critical battery.
+  if (batteryCritical != nullptr && batteryCritical()) return VK_LOW_BATTERY;
 
   if (len == 0 || len > d->max_len) return VK_TOO_LONG;
   if (strlen(d->prefix) + len > maxSignBytes()) return VK_TOO_LONG;

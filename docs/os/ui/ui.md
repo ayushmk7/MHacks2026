@@ -37,10 +37,11 @@ A service calls the current pattern's `frame` and then `::leds::show()`, at most
 | `signed` | approval result: signed or approved | three quick green flashes (100 ms on, 100 ms off) | after 600 ms |
 | `refused` | approval result: cancelled, timeout, blocked, failed | one red blink (on for 250 ms) | after 400 ms |
 | `notify` | a notification is waiting and the badge is idle (`vk::host::idle()`) | dim breathe in the active theme's `LED` colour, 3 s period | when the inbox is empty or an app starts |
+| `low_battery` | the battery enters the low or the critical level ([Low battery](#low-battery)), when no approval is open and no pattern is playing | two short red blinks at half strength (150 ms on, 150 ms off) | after 600 ms |
 
 `leds.h` has no way to ask which pattern is playing, so `notify` ends itself: its frame returns false when no note waits, the badge is not idle, or an approval is open, and its service (in `host/notify.cpp`) starts it only when nothing is playing. It never calls `leds::stop()`, so it cannot stop an approval's pattern. "When an app starts" is therefore one LED frame after the app's `on_start`: an app that sets its LEDs once in `on_start` while a note is waiting loses them on that frame (accepted; apps set LEDs from `on_update` or `on_draw`).
 
-Colours are the approval's fixed severity colours ([approval](../wallet/approval.md#screen)) and the active theme's `LED` token. No pattern uses upstream's brand purple or green.
+Colours are the approval's fixed severity colours ([approval](../wallet/approval.md#screen)) and the active theme's `LED` token. No pattern uses upstream's brand purple or green. `low_battery` is defined in `src/vk/ui/leds.cpp` next to `refused`, with the same red.
 
 ### Boot bar
 
@@ -105,7 +106,13 @@ The one piece that stays is the repaint request, now in `src/vk/ui/repaint.{h,cp
  "params":["<this badge's address>",{"mint":"<default token mint>"},{"encoding":"jsonParsed"}]}
 ```
 
-From the first account in the reply it keeps the account's address (`pubkey`) and `tokenAmount.amount`. The reply is scanned for those two fields with a small string search, not a JSON library, and any reply that does not contain both is ignored. Timeout 3 s; the launcher stalls for that long at worst. While an app runs the service does not poll: an app that needs the balance or the token account calls `wallet.refresh_balance()` (Home does so on start and every `balance_poll_s`; `vk.pay` does so when `wallet.token_account()` is nil). Only the default (first) token is tracked; `wallet.balance(symbol)` and `wallet.token_account(symbol)` return nil for any other symbol. The token account address is what `wallet.token_account()` returns and what `build_transfer` uses as the default source; this is how the badge learns its own token account without deriving it.
+From the first account in the reply it keeps the account's address (`pubkey`) and `tokenAmount.amount`. The reply is scanned for those two fields with a small string search, not a JSON library, and any reply that does not contain both is ignored. Timeout 3 s.
+
+**The poll does not block the loop.** The service builds the request in the loop and hands it to a background task (`vk_balance`, 12 KB stack, priority 1, on core 0, the radios' core; created at the first poll), which makes the one HTTP request the way `net_route`'s Wi-Fi route does (HTTPClient; for `https`, TLS without a pinned certificate, as before) and touches nothing else. The loop picks the answer up on its next pass and does everything else itself: the log line, storing the balance, the repaint request. A pass costs the same whether the node answers in 200 ms or never; before this the launcher froze for up to 3 s on every poll while the node was unreachable (gap audit B7). It is the one task BadgeOS starts, and the exception to "one task" in [overview §5](../architecture/overview.md#5-main-loop): the request is the one long thing that cannot be cut into loop-sized steps (a TLS handshake). The task never uses the phone bridge, whose pump belongs to the loop; the service polls only while joined to Wi-Fi anyway. If the task cannot be created, the service polls in the loop as before, with the back-off below.
+
+**Back-off.** After a failed poll (no answer, an HTTP error, a reply without the two fields) the next one waits twice as long, then four times, and so on, up to `balance_max_s` (default 600 s, never below `balance_poll_s`); `retryDelayMs` in `balance.h`. A successful fetch, by the service or by an app's `wallet.refresh_balance()`, resets it. From the second failure in a row the log says `[bal] <n> polls failed in a row: next in <s> s`.
+
+**Freshness.** The last balance stays known while it is stale (`tokenInfoLookup` is unchanged, so the launcher keeps showing the last measured figure); `vk::balance::status()` tells a screen how far to trust it: `freshness` is `offline` (not joined to Wi-Fi), `none` (no balance yet), `stale` (the last poll failed, or the balance is older than three poll periods) or `fresh`, with the balance's age, the number of failed polls, the time to the next poll and whether one is in flight. The rule is `freshness()` in `balance.h`, covered by the host suite `test_balance`. The launcher does not show it yet (its owner may add, for example, the value in `SUB` with `(stale)` or `(offline)` after it). While an app runs the service does not poll: an app that needs the balance or the token account calls `wallet.refresh_balance()` (Home does so on start and every `balance_poll_s`; `vk.pay` does so when `wallet.token_account()` is nil). Only the default (first) token is tracked; `wallet.balance(symbol)` and `wallet.token_account(symbol)` return nil for any other symbol. The token account address is what `wallet.token_account()` returns and what `build_transfer` uses as the default source; this is how the badge learns its own token account without deriving it.
 
 ```cpp
 // src/vk/features/balance/balance.h
@@ -114,6 +121,7 @@ bool known();
 uint64_t raw();
 bool tokenAccount(uint8_t out[32]);
 bool refresh(uint32_t timeoutMs);      // one blocking fetch
+Status status();                       // freshness, age, failures, next poll (below)
 }
 ```
 
@@ -121,11 +129,68 @@ As built, the header also has `Reason fetch(uint32_t timeoutMs)` (what `refresh`
 
 - The balance and the token account are always known together: a reply must hold both.
 - A stored balance belongs to the mint it was fetched for. If provisioning makes another mint the default token, the balance counts as unknown until the next fetch.
-- A fetch logs `[bal] fetch <ms> ms` (measurement M5), or `[bal] fetch failed after <ms> ms: …`. With Wi-Fi down the poll is skipped silently. `balance_poll_s 0` turns the poll off.
+- A fetch logs `[bal] fetch <ms> ms` (measurement M5), or `[bal] fetch failed after <ms> ms: …`; for the service's background poll `<ms>` is the request's own time, measured on the task. With Wi-Fi down the poll is skipped silently. `balance_poll_s 0` turns the poll off.
 - The balance is shown on the launcher's `BALANCE` row ([shell](shell.md#launcher)); the feature calls `vk::ui::requestShellRepaint()` when the value changes.
-- Device tests run with Wi-Fi off, so the poll never fires under the test provisioning. On a badge that is joined to a network, the test `rpc_url` (`http://127.0.0.1:8899`) makes every idle poll fail after up to 3 s; add `balance_poll_s 0` to `test_config()` in `test/device/common.py` if that disturbs a run.
+- Device tests run with Wi-Fi off, so the poll never fires under the test provisioning. On a badge that is joined to a network, the test `rpc_url` (`http://127.0.0.1:8899`) makes every idle poll fail, now in the background and less and less often.
+- `wallet.refresh_balance()` (an app asking) still makes one blocking fetch in the loop: the app is waiting for the answer anyway.
 
 The feature publishes these to the rest of the firmware through `vk::wallet::tokenInfoLookup` ([signing](../wallet/signing.md#cross-feature-interfaces)), so `solana_pay` and the Wallet app never include a `balance` header.
+
+## Screen dim and sleep
+
+`src/vk/ui/screen_power.{h,cpp}` (service `screen_power`), logic in `src/vk/ui/power_core.c` (host suite `test_power`), hook H25. After `dim_s` seconds with no activity the backlight dims to `dim_pct` percent of its level; after `sleep_s` seconds it goes off. Any key wakes it, at the level it had, and **the key that woke it does nothing else**: its press and its release are dropped, and so is every key that was down at that moment, until each is up again. A key pressed after the wake, while the first is still held, is delivered.
+
+| Counts as activity (restarts the timer, wakes the screen) | Holds the screen awake (no dim, no sleep) |
+|---|---|
+| a key pressed or held (a held key never lets the screen dim) | an approval is open (`vk::modalActive()`) |
+| a new notification (the count grew) | an app called `badge.screen.keep_awake(true)` (Lua) or `vk::ui::screen::keepAwake(true)` (native); cleared when the app stops |
+| an app starting or stopping | external power (`power::charging()`) when `awake_usb` is 1 |
+| the app-store offer appearing | |
+| a button injected by the dev profile's `VKBTN` | |
+| firmware calling `vk::ui::screen::wake()` | |
+
+- **The approval is never dimmed or slept through.** It holds the screen awake for as long as it is open; one that opens over a dimmed or dark screen is lit by the approval engine itself (it sets the user's level on open), and a key pressed on it is not swallowed. When it closes, the engine puts back the level it found, which was the dim or dark level: the service then restores the awake level.
+- **A notification is not slept through:** a new one wakes the screen and restarts the timer. A note that has been waiting does not keep the screen on; the `notify` LED pattern keeps breathing while the screen is off.
+- **What is changed:** the backlight only, and only on a transition. The service remembers the level it replaced and restores it on waking only if nobody changed it meanwhile (an app's `badge.gfx.brightness`). Asleep in the shell, the full-colour idle LED animation is stopped too and comes back on waking; a registered pattern (`notify`, an approval's) and an app's own LEDs are left alone.
+- **Backlight only, by decision.** The panel is not put to sleep and the CPU does not light-sleep. In light sleep the loop stops: ESP-NOW frames (payment requests, presence proofs) and the USB console would be lost, and the expander's interrupt line is only a hint to a button poll that would stop with the loop. The backlight is the load worth removing. The shell and apps keep drawing as usual.
+- **Wake key, exactly:** hook H25 calls `vk_screen_filter_buttons(down, &pressed, &released)` in `buttons::update()` after the debounce and before key repeat, hold timing and the dev profile's injected buttons ([hook](../architecture/upstream-hooks.md#h25--the-wake-key)). `buttons::down()` still reports a swallowed key that is held (a Lua app polling `badge.input.down` sees it); its press edge is gone, so its repeat and `heldMs` never start, and a CANCEL held to wake the screen is not counted towards the 1.5 s force-quit. Buttons injected with `VKBTN` are added after the hook and are never swallowed; they count as activity, so a device test that taps a dimmed badge behaves as before.
+- **Critical battery:** at the critical level the screen sleeps after `crit_sleep_s` seconds when that is sooner than `sleep_s` ([Low battery](#low-battery)).
+- **Seen from outside:** `VKINFO` has `display=awake|dim|sleep`; `VKSTATE`'s `backlight` is the level the panel is driven at, so it reads the dim level, and `0` while asleep. The log has `[vk] screen awake|dim|sleep` at each change. Settings → Display shows and sets `Sleep after` ([shell](shell.md#display)).
+
+```cpp
+// src/vk/ui/screen_power.h
+namespace vk::ui::screen {
+enum class State : uint8_t { AWAKE, DIM, SLEEP };
+State state();  const char *stateName();
+void keepAwake(bool on);  bool keepingAwake();   // for apps; cleared when the app stops
+void wake();                                     // firmware with something to show
+}
+```
+
+## Low battery
+
+`src/vk/ui/battery.{h,cpp}` (service `battery`), thresholds in `power_core.c` (host suite `test_power`). Once a second it takes the same measured figure the header shows (`power::percent()`, rounded) and puts the battery in one of three levels: ok, low (at or below `batt_low_pct`, default 20 %) or critical (at or below `batt_crit_pct`, default 8 %). A level is left only `batt_hyst_pct` (default 3) above its threshold, because the cell sags under the radio's load and would otherwise cross the line again and again. On external power there is no cell reading and no level (the header says `USB`).
+
+When the battery **enters** the low or the critical level, and only then:
+
+- one notification through the notification inbox: `Battery low` / `17% left: charge it soon`, or `Battery critical` / `6% left: charge it now` (no app: SELECT in the Inbox dismisses it). It counts the way every note does: the launcher's inbox cell, the `notify` LED breath, and it wakes the screen;
+- the LED pattern `low_battery` once, unless an approval is open or another pattern is playing;
+- `[vk] battery low (17%)` in the log.
+
+While the level lasts, the header's battery figure reads `LOW 17%` or `CRIT 6%`. Nothing is repeated while the level lasts, and nothing is said when it gets better.
+
+At the **critical** level, beyond the warning: the screen sleeps after `crit_sleep_s` seconds (default 30) of no activity when that is sooner than `sleep_s`. Refusing to start a new signing approval at critical level (a new reason code, `low_battery`) is specified but not built: the check belongs in `vk::wallet::begin()` (`src/vk/wallet/signer.cpp`), which is the wallet core's file. `vk::ui::battery::critical()` is what it would ask.
+
+`VKINFO` has `battery=ok|low|critical`.
+
+```cpp
+// src/vk/ui/battery.h
+namespace vk::ui::battery {
+uint8_t level();            // VK_BATT_OK, VK_BATT_LOW, VK_BATT_CRITICAL (power_core.h)
+bool critical();
+const char *levelName();    // "ok", "low", "critical"
+}
+```
 
 ## Theme
 
@@ -216,7 +281,7 @@ Conventions every kit function follows (also in the comment at the top of `recei
 - A `y` is the top of the capital letters. A row at `y` owns y-5 to y+12; a selected row fills x0-10 to x1+10. A subline goes at y+13 and owns the 13 px below it.
 - Text that does not fit its space is cut and ends in `..`.
 - Body text is `Font0`. Three characters outside ASCII are drawn by hand, one column wide, when written as UTF-8: the middle dot `·` (U+00B7) and the triangles `◂` (U+25C2) and `▸` (U+25B8); LovyanGFX's own string drawing cannot reach them. Any other byte outside `0x20`–`0x7E` is drawn as `?`. `display::text` does not do this: text with a middle dot must go through the kit.
-- `statusRight` separates its parts with that middle dot (`14:32 · 87%`, or `14:32 · USB` on external power). The time is UTC (there is no timezone key) and is left out when the clock has no source, leaving `87%` or `USB` alone. Seen on the badge: `03:00 · USB` and `USB` (`os/test/device/shots/header_clock_usb.png`, `header_noclock_usb.png`).
+- `statusRight` separates its parts with that middle dot (`14:32 · 87%`, or `14:32 · USB` on external power). Below a battery threshold the battery part carries one word before the figure: `14:32 · LOW 17%`, `14:32 · CRIT 6%` ([Low battery](#low-battery)). The time is UTC (there is no timezone key) and is left out when the clock has no source, leaving `87%` or `USB` alone. Seen on the badge: `03:00 · USB` and `USB` (`os/test/device/shots/header_clock_usb.png`, `header_noclock_usb.png`).
 - Upstream never sets a font on the canvas, so every kit function leaves it on `Font0`, size 1, top-left datum. Code that sets a font on the canvas must put it back.
 - The footer clears its strip to `PAPER` first and its rule runs edge to edge (x 0..319), as in the simulation. The hold bar is 240 px wide (x 40..279) over a half-tone `FAINT` track. Sublines and `sub` are not bold (`Font0` has no bold).
 
@@ -224,11 +289,13 @@ Conventions every kit function follows (also in the comment at the top of `recei
 
 Layout constants (pixels): margins 10; list row pitch 18; subline 13 below its row; two-column split at x = 146 (left stub 0..145, body 147..319); content starts at y = 24 under the header. The barcode's bars come from the badge's public key, so each badge prints its own.
 
+**Text entry.** The kit has one input component, the on-screen keyboard (`src/vk/ui/keyboard.{h,cpp}`): a whole screen on which a text is typed with the six buttons, opened by a shell page (`keyboard::open`) or driven by a native app (`begin`, `update`, `draw`). Its layout, its buttons and its API are in [text-entry.md](text-entry.md).
+
 ### Header
 
 The left side of every header is `BADGEOS`. The right side of every header is `receipt::statusRight`: the time and the battery, and nothing else. No notification count, no setup or dev marker (waiting notifications show on the launcher's Inbox row; an unprovisioned badge says so on the launcher's balance row; the dev build is marked on the approval screen, where it matters).
 
-The battery figure is the measured one. The badge has no fuel gauge, so the only real measurement is the cell voltage, which upstream's `power::percent()` maps to a percentage. When the badge is on external power (`power::charging()`, cell line above 4.25 V) the ADC is reading the charger, not the cell, and any percentage would be invented: the header shows `USB` instead.
+The battery figure is the measured one. The badge has no fuel gauge, so the only real measurement is the cell voltage, which upstream's `power::percent()` maps to a percentage. When the badge is on external power (`power::charging()`, cell line above 4.25 V) the ADC is reading the charger, not the cell, and any percentage would be invented: the header shows `USB` instead. Nothing is predicted (no "time left"). While the battery is at the low or critical level the figure is marked `LOW` or `CRIT` ([Low battery](#low-battery)); the mark is part of the battery figure, and the right side still holds only the time and the battery.
 
 ### Screens
 

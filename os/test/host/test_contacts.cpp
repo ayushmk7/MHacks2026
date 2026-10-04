@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "../../src/vk/core/config.h"
 #include "../../src/vk/features/contacts/contacts.h"
 #include "host_ed25519.h"
 #include "vectors.h"
@@ -910,6 +911,38 @@ static void test_swap_both_ways() {
   CHECK(acceptCard(cardForB) == VK_EXPIRED);       // replayed after the swap
 }
 
+// ---- reset (stores.md: VKRESET erases the contacts) --------------------------------------------
+
+static void test_erase_all() {
+  fresh();
+  uint8_t key[32];
+  for (unsigned n = 1; n <= 3; n++) { numberedKey(n, key); CHECK(contacts::upsert(key, "Somebody")); }
+  CHECK(contacts::count() == 3);
+  CHECK(io()->writeAll(contacts::TMP_FILE_PATH, (const uint8_t *)"t", 1));
+  CHECK(io()->writeAll(contacts::BAD_FILE_PATH, (const uint8_t *)"b", 1));
+  uint8_t frame[VK_HELLO_MAX_LEN];
+  size_t len = 0;
+  CHECK(contacts::hello("Alice", frame, len) == VK_OK && random_calls == 1);
+
+  // Registered with VK_ON_RESET: exactly one listener is linked in this suite, the contacts'.
+  int listeners = 0;
+  for (vk::config::ResetListener *l = vk::Registered<vk::config::ResetListener>::first(); l;
+       l = l->vk::Registered<vk::config::ResetListener>::next()) {
+    if (l->fn) { l->fn(); listeners++; }
+  }
+  CHECK(listeners == 1);
+  CHECK(contacts::count() == 0);
+  CHECK(!io()->exists(contacts::FILE_PATH) && !io()->exists(contacts::TMP_FILE_PATH) && !io()->exists(contacts::BAD_FILE_PATH));
+  // The swap nonce is forgotten too: the next HELLO draws a new one.
+  CHECK(contacts::hello("Alice", frame, len) == VK_OK && random_calls == 2);
+  // The store works again, and erasing nothing is harmless.
+  numberedKey(9, key);
+  CHECK(contacts::upsert(key, "Again") && contacts::count() == 1);
+  fresh();
+  contacts::eraseAll();
+  CHECK(contacts::count() == 0);
+}
+
 int main() {
   host_ed25519_keypair(V_DEVICE_SEED, PUB_A);
   host_ed25519_keypair(SEED_B, PUB_B);
@@ -938,6 +971,7 @@ int main() {
   test_accept_order();
   test_accept_store_failure();
   test_swap_both_ways();
+  test_erase_all();
 
   if (fails) {
     printf("%d contacts checks FAILED\n", fails);

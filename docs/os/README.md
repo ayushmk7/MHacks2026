@@ -72,7 +72,8 @@ As of 2026-10-04, on one development badge (software key, no network, no second 
 | [platform/native-apps.md](platform/native-apps.md) | writing a C++ app |
 | [platform/config.md](platform/config.md) | config keys, provisioning, USB serial commands |
 | [ui/ui.md](ui/ui.md) | LED patterns, boot bar, balance, the Receipt theme (light and dark), the receipt kit (with the QR code), the header rule |
-| [ui/shell.md](ui/shell.md) | the BadgeOS shell: boot, launcher, every settings page, dialogs; the settings-page registry |
+| [ui/shell.md](ui/shell.md) | the BadgeOS shell: boot, launcher, every settings page (Wi-Fi set-up on the badge among them), dialogs; the settings-page registry |
+| [ui/text-entry.md](ui/text-entry.md) | the on-screen keyboard: layout, buttons, what CANCEL does, the API for pages and native apps |
 | [apps/apps.md](apps/apps.md) | every shipped app |
 | [integration/backend.md](integration/backend.md) | what the badge needs from the laptop |
 | [guides/build-flash-provision.md](guides/build-flash-provision.md) | toolchain, build profiles, flashing, four badges |

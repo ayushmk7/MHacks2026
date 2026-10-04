@@ -91,13 +91,23 @@ Each key is registered by the code that uses it. This table is the complete list
 | `approval_tmo_s` | U32 | 45 | secure | 10–120 | approval | approval timeout; keep below the ~60 s blockhash lifetime |
 | `hold_ms` | U32 | 3000 | secure | 1000–10000 | approval | hold-SELECT duration |
 | `record_ttl_s` | U32 | 30 | secure | 5–3600 | `solana_pay` | maximum age of a registry record under SNTP |
+| `day_limit` | STR | — | secure | 0–96 | `solana_pay` | rolling 24-hour spending limit per token: `SYMBOL:amount[,SYMBOL:amount…]` in display units, e.g. `HACK:50.00`. Unset or empty: no daily limit (there is no compiled-in amount); a token not named, or named with `0`: no limit for it. A value that does not parse blocks every payment. Over the limit the approval is red DAILY LIMIT (`over_daily`); the total is read from the signature log ([checks](../wallet/checks.md#daily-limit)). Not provisioned by default; set with `VKSET day_limit HACK:50.00` |
 | `presence_ms` | U32 | 1500 | secure | 50–5000 | `requests` | CHAL→PROOF deadline |
 | `req_ttl_s` | U32 | 60 | | 10–600 | `requests` | lifetime of a payment request |
 | `req_period_ms` | U32 | 1000 | | 250–5000 | `requests` | REQ rebroadcast period |
 | `req_max_proofs` | U32 | 8 | | 1–64 | `requests` | proofs answered per request |
 | `req_gap_ms` | U32 | 200 | | 0–5000 | `requests` | minimum time between proofs |
 | `balance_poll_s` | U32 | 15 | | 0–3600 | `balance` | balance poll period; 0 disables |
+| `balance_max_s` | U32 | 600 | | 15–3600 | `balance` | longest wait between polls after failed ones: each failure doubles the wait up to this, never below `balance_poll_s` ([ui](../ui/ui.md#balance)) |
 | `pay_app` | STR | `pay` | | 1–24 | `requests` | app opened from a payment-request notification |
+| `dim_s` | U32 | 30 | | 0–3600 | `ui` (`screen_power.cpp`) | seconds with no activity before the backlight dims; 0 never; no dim phase when not below a non-zero `sleep_s` ([ui](../ui/ui.md#screen-dim-and-sleep)) |
+| `sleep_s` | U32 | 120 | | 0–3600 | `ui` (`screen_power.cpp`) | seconds with no activity before the backlight goes off; 0 never. Settings → Display → `Sleep after` writes it |
+| `dim_pct` | U32 | 25 | | 1–100 | `ui` (`screen_power.cpp`) | the dimmed backlight, percent of the awake level (never 0 from a lit screen) |
+| `awake_usb` | U32 | 0 | | 0–1 | `ui` (`screen_power.cpp`) | 1: never dim or sleep while on external power |
+| `crit_sleep_s` | U32 | 30 | | 0–3600 | `ui` (`screen_power.cpp`) | at critical battery, sleep after this many seconds with no activity when that is sooner than `sleep_s`; 0 off ([ui](../ui/ui.md#low-battery)) |
+| `batt_low_pct` | U32 | 20 | | 0–90 | `ui` (`battery.cpp`) | measured battery percent at or below which the badge warns once (notification, LED blink, `LOW` in the header); 0 off |
+| `batt_crit_pct` | U32 | 8 | | 0–50 | `ui` (`battery.cpp`) | measured battery percent at or below which the battery is critical (warning, `CRIT` in the header, shorter sleep); 0 off |
+| `batt_hyst_pct` | U32 | 3 | | 0–20 | `ui` (`battery.cpp`) | a battery level is left only this many percent above its threshold |
 | `theme` | STR | (empty) | | 0–24 | `ui` | active theme: `receipt-light` (also when empty) or `receipt-dark` ([ui](../ui/ui.md#theme)); Settings → Theme writes it |
 | `repo_url` | STR | (empty) | | 0–120 | shell (`pages/page_about.cpp`) | the link shown as a QR code on Settings → About and in Home's stub: the project's repository ([shell](../ui/shell.md#about)). Empty: About says `no link set` and Home shows its barcode. A public value; set it with `VKSET repo_url <url>` |
 
@@ -253,7 +263,7 @@ struct InfoField : Registered<InfoField> { const char *name; String (*fn)(); Inf
 | Command | Reply | Notes |
 |---|---|---|
 | `VKHELP` | one `+ <name> <help>` line per command, then `OK <count>` | |
-| `VKINFO` | `OK` followed by one `name=value` pair per registered info field, space-separated. With everything built: `profile=<dev\|release> api=2 provisioned=<0\|1> pubkey=<base58> key=<se050\|software\|none> selfcheck=<0\|1> time=<none\|floor\|sntp> wifi=<0\|1>` | each module adds its own fields with `VK_INFO_FIELD(ident, "name", fn)` where `fn` returns a `String`; order is not guaranteed, so parse by name. `pubkey=` is empty when the badge has no identity. `wifi=1` means station mode and connected |
+| `VKINFO` | `OK` followed by one `name=value` pair per registered info field, space-separated. With everything built: `profile=<dev\|release> api=2 provisioned=<0\|1> pubkey=<base58> key=<se050\|software\|none> selfcheck=<0\|1> time=<none\|floor\|sntp> wifi=<0\|1> display=<awake\|dim\|sleep> battery=<ok\|low\|critical>` | each module adds its own fields with `VK_INFO_FIELD(ident, "name", fn)` where `fn` returns a `String`; order is not guaranteed, so parse by name. `pubkey=` is empty when the badge has no identity. `wifi=1` means station mode and connected |
 | `VKKEYS` | one `+ <name> <type> <flags> <help>` line per config key, then `OK <count>` | `<type>` is `STR`, `U32`, `KEY32` or `TOKENS`; `<flags>` is one word: `-`, `secure`, `required` or `secure,required` |
 | `VKGET <key>` | `OK <value>` or `ERR unknown_key` | all values are public |
 | `VKSET <key> <value>` | `OK` · `OK pending` (confirmation shown on the badge) · `ERR unknown_key` · `ERR invalid` · `ERR unavailable` (a secure key on a firmware without the approval engine, or while another approval is on screen) · `ERR nvs_full` (the write failed) | the value is the rest of the line: blanks after the key are skipped, nothing is trimmed from the end, and `VKSET <key>` alone sets the empty string. Keep the whole line under 250 characters |

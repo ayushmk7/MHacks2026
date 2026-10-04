@@ -1,6 +1,6 @@
 # Solana payments: decoder, builder, tokens
 
-The `solana` signing domain: which transaction messages the badge will even consider, how they are decoded, and how apps build one. Files: `src/vk/wallet/pure/sol.h`, `sol_b58.c`, `sol_sha256.c`, `sol_tx.c` (host-tested C99) and `src/vk/features/solana_pay/`.
+The `solana` signing domain: which transaction messages the badge will even consider, how they are decoded, how apps build one, and how a payment is tied to the request it answers. Files: `src/vk/wallet/pure/sol.h`, `sol_b58.c`, `sol_sha256.c`, `sol_tx.c`, `vk_payment.{h,c}` (host-tested C99) and `src/vk/features/solana_pay/`.
 
 The trust decision (who the recipient is, whether they are present) is in [checks.md](checks.md). This document is only about bytes.
 
@@ -114,6 +114,71 @@ size_t sol_tx_build_transfer(const uint8_t payer[32], const uint8_t source[32],
 
 Without a memo the result is 214 bytes. Byte-for-byte equality with `@solana/kit` is not guaranteed (kit orders keys by base58 text within a role); the order within a role has no effect on chain and the decoder reads accounts through the instruction's indices.
 
+## Request memo
+
+A payment that answers a request carries **one Memo instruction whose data is exactly the request's `req_id` as 16 lower-case hex characters**, with nothing before or after it (`00-Interfaces.md` §5: "In memos, `req_id` is written as 16 hex characters"). For the vector request that is `13cec0adb3e69e6e`. The transfer is then 214 + 32 (Memo program key) + 3 (program index, account count, length) + 16 = 265 bytes.
+
+Why: RESULT frames are unsigned, so a payee cannot believe one. The memo puts the request id on chain inside the payer's signed transaction, which lets the payee check that a transaction it is told about pays *this* request ([Checking a received payment](#checking-a-received-payment)).
+
+- **The payer's badge enforces it.** When `ctx.req` is supplied, the check chain requires the memo (check 12a, [checks](checks.md#the-check-chain)): a request payment with no memo, a free-text memo, another request's id or the id in upper case is red **WRONG MEMO** (`mismatch`). The decoder's rules are unchanged: still one transfer and at most one Memo with no accounts; everything it refused before it still refuses.
+- **Without a request** a memo stays free text (a shop's item name) or absent; nothing changes for record-only payments.
+- **Building it.** `wallet.build_transfer{..., req_id = <16 hex>}` writes the memo itself ([Lua API](../platform/lua-api.md#badgewallet-payments)), so an app never formats it. `req_id` together with a non-empty `memo` is `bad_arg`.
+- **SE050.** A 265-byte transfer does not fit the SE050's 242-byte limit; on an SE050-keyed badge a request payment is refused with `too_long` ([signing](signing.md#key)). The SE050 is quarantined on every badge today.
+
+```c
+/* src/vk/wallet/pure/vk_payment.h */
+#define VK_REQ_MEMO_LEN 16
+void vk_req_memo(const uint8_t req_id[8], char out[VK_REQ_MEMO_LEN + 1]);   /* lower-case hex, NUL */
+int  vk_memo_is_req(const uint8_t *memo, size_t len, const uint8_t req_id[8]);   /* 1: exactly that */
+int  vk_req_id_parse(const char *text, size_t len, uint8_t out[8]);   /* 16 hex, either case; 0 = ok */
+```
+
+## Checking a received payment
+
+The payee's half. Before the payee shows PAID it fetches the transaction the RESULT frame names (`getTransaction`) and asks the firmware whether those bytes are the payment it asked for. The check is a pure function:
+
+```c
+/* src/vk/wallet/pure/vk_payment.h */
+int vk_wire_split(const uint8_t *tx, size_t len, const uint8_t **sig, const uint8_t **msg, size_t *msg_len);
+
+typedef struct {
+  const uint8_t *to;       /* 32: the token account that must be credited (required) */
+  const uint8_t *mint;     /* 32 (required) */
+  uint8_t decimals;
+  uint64_t amount;         /* raw units, not 0 (required) */
+  const uint8_t *req_id;   /* 8: the request the memo must name (required) */
+  const uint8_t *payer;    /* 32 or NULL: the fee payer must be this key */
+  const uint8_t *sig;      /* 64 or NULL: the transaction's signature must be this one */
+  int (*verify)(const uint8_t *msg, size_t len, const uint8_t *sig, const uint8_t *pubkey);   /* NULL: not checked */
+} vk_pay_expect_t;
+typedef struct { sol_transfer_t transfer; uint8_t sig[64]; } vk_pay_seen_t;
+
+vk_pay_err_t vk_payment_verify(const uint8_t *tx, size_t len, const vk_pay_expect_t *expect, vk_pay_seen_t *seen);
+const char *vk_pay_err_name(vk_pay_err_t e);
+vk_reason_t vk_pay_reason(vk_pay_err_t e);
+```
+
+`tx` is the **wire transaction**: compact-u16 signature count, the signatures, the message. Only a count of 1 (the single byte `0x01`) is accepted, because the badge's payments have one signer. The checks run in this order; the first difference is the answer:
+
+| # | Check | `vk_pay_err_t` | Name | Reason |
+|---|---|---|---|---|
+| 1 | `expect` and its required fields are present, amount not 0 | `VK_PAY_ERR_ARG` | `arg` | `bad_arg` |
+| 2 | a one-signature wire transaction with a non-empty message | `VK_PAY_ERR_WIRE` | `wire` | `undecodable` |
+| 3 | the message passes the [decoder rules](#decoder-rules) (one transfer, at most one Memo) | `VK_PAY_ERR_SHAPE` | `shape` | `undecodable` |
+| 4 | the signature verifies over the message with the fee payer's key (when `verify` is set) | `VK_PAY_ERR_SIGNATURE` | `signature` | `bad_proof` |
+| 5 | the signature equals `expect.sig` (when set: the RESULT frame's `ref`) | `VK_PAY_ERR_SIG_MISMATCH` | `sig` | `mismatch` |
+| 6 | the fee payer equals `expect.payer` (when set) | `VK_PAY_ERR_PAYER` | `payer` | `mismatch` |
+| 7 | the mint and the decimals are the expected token's | `VK_PAY_ERR_MINT` | `mint` | `mismatch` |
+| 8 | the destination is `expect.to` | `VK_PAY_ERR_RECIPIENT` | `recipient` | `mismatch` |
+| 9 | the amount is `expect.amount` exactly | `VK_PAY_ERR_AMOUNT` | `amount` | `mismatch` |
+| 10 | the memo is exactly `vk_req_memo(expect.req_id)` | `VK_PAY_ERR_MEMO` | `memo` | `mismatch` |
+
+What it does not do: it reads bytes only. Whether the transaction landed and succeeded is in the RPC reply's `meta.err` (null when it succeeded), which the Lua library checks; a lying RPC node can claim anything about the chain, and this check does not change that. What it does stop is the cheap attack: a forged RESULT frame naming any confirmed transaction (someone else's, or a transfer of 0.01 to the payee) no longer turns the payee's screen to PAID.
+
+Lua: `wallet.verify_payment(tx, expected)` and `wallet.record_received(tx, expected)` run it with `verify` set (one Ed25519 verification, about 18 ms with Monocypher) ([Lua API](../platform/lua-api.md#badgewallet-received-payments)).
+
+## Amount helpers
+
 Amount helpers already in the reference, unchanged:
 
 ```c
@@ -159,5 +224,7 @@ Host suite `test_sol` (in `test/host/`), extending the reference test:
 - one negative vector per rule in the table above, including the five named in the product spec: a second non-memo instruction, a Memo with an account, two signers, a versioned (v0) message, trailing bytes;
 - compact-u16: a two-byte memo length (memo of 200 bytes) decodes; a non-minimal encoding is refused;
 - builder output with and without a memo is accepted by the decoder for 100 random key sets.
+
+Host suite `test_payment`: the request memo (encoding, exact match, hex parsing), the wire split (one signature only, the shortest count), `vk_payment_verify` accepting the honest payment and refusing each row of the table above with its own error (wrong signature, someone else's signature, another payer, mint, decimals, token account, owner address, amount ±1, no memo, another request's memo, upper case, free text), and the daily-limit parser and window ([checks](checks.md#daily-limit)).
 
 `vectors.mjs` is extended to emit the Memo vector with `@solana/kit`, building the Memo instruction by hand (program address, no accounts, UTF-8 data) so no new npm package is needed. Run it from `dashboard/` so it uses the dashboard's installed packages.

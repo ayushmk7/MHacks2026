@@ -18,6 +18,10 @@
 namespace vk::presence {
 
 constexpr size_t SLOTS = 4;
+// PROOFs checked per challenge (each check is one Ed25519 verification, ~18 ms). Within the deadline
+// a burst this large overflows upstream's 7-frame receive queue anyway, so the cap adds no cheaper
+// way to lose the real PROOF; it bounds what a flood costs the payer's loop.
+constexpr uint32_t PROOF_CHECKS_MAX = 16;
 
 // Parses the REQ, fills a slot (the one already holding that req_id, else a free one, else the
 // oldest) with a fresh random nonce and result PENDING, sets t0 and sends CHAL to `mac`.
@@ -27,8 +31,10 @@ constexpr size_t SLOTS = 4;
 vk::wallet::Reason challenge(const uint8_t mac[6], const uint8_t *req_frame, size_t len);
 
 // Route for type 3 (PROOF). Judges the PENDING slot with that req_id whose mac is the sender's:
-// bad signature -> BAD_SIG; valid and rx_ms - t0 <= presence_ms -> PRESENT; valid but slower ->
-// LATE. The first PROOF decides. Always consumes the frame.
+// valid and rx_ms - t0 <= presence_ms -> PRESENT; valid but slower -> LATE. The first valid PROOF
+// decides. A PROOF whose signature does not verify (forged, or a recording of an earlier challenge)
+// is ignored and counted: the slot stays PENDING, which the approval shows as amber if no valid
+// PROOF comes. Nothing here stores BAD_SIG. Always consumes the frame.
 bool onProof(const uint8_t mac[6], const uint8_t *frame, size_t len, uint32_t rx_ms);
 
 // The signature of vk::wallet::presenceLookup. For any result other than NONE it also writes the
@@ -39,6 +45,10 @@ const char *resultName(vk_presence_t result);    // "none", "pending", "present"
 
 // The CHAL -> PROOF time of the last PROOF that was judged valid (PRESENT or LATE), in ms.
 uint32_t lastProofMs();
+
+// PROOFs for that request's current challenge that were ignored: invalid signatures, and those over
+// PROOF_CHECKS_MAX that were not checked. 0 for a request with no slot.
+uint32_t badProofs(const uint8_t req_id[8]);
 
 void reset();                                    // empties every slot
 

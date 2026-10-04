@@ -199,7 +199,7 @@ struct Slot {
 };
 // The keys of platform/config.md number 18. Keys beyond the cache still work; they are read from
 // NVS on every call.
-constexpr size_t CACHE_SLOTS = 32;
+constexpr size_t CACHE_SLOTS = 64;
 
 // CamelCase on purpose: the Arduino core defines CHANGE (an interrupt mode) as a macro.
 enum class Pending : uint8_t { Nothing, SetKey, EraseAll };
@@ -300,7 +300,7 @@ bool writeValue(const ConfigKey *key, const char *value) {
 }
 
 // VKRESET, approved: erase the namespace (values and the provisioned flag) and tell every reset
-// listener. The device key, the history and the contacts are not touched.
+// listener. The device key is not touched; each store's VK_ON_RESET listener erases its own file.
 void eraseAll() {
   State &s = state();
   if (!s.open || !s.prefs.clear()) {

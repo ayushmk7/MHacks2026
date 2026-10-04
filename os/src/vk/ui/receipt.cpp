@@ -12,6 +12,7 @@
 #include "../../hal/display.h"
 #include "../../hal/power.h"
 #include "../core/clock.h"
+#include "battery.h"
 
 // The QR encoder that LovyanGFX's own canvas.qrcode() uses. That function draws pure white and
 // black; qr() below draws the same modules in the light theme's paper and ink.
@@ -246,7 +247,10 @@ void statusRight(char *out, size_t cap) {
   } else {
     int percent = (int)(power::percent() + 0.5f);
     percent = clampInt(percent, 0, 100);
-    snprintf(part, sizeof part, "%d%%", percent);
+    // Below a battery threshold (battery.cpp) the figure carries a word; it is still the measured figure.
+    const uint8_t level = vk::ui::battery::level();
+    snprintf(part, sizeof part, "%s%d%%", level == VK_BATT_CRITICAL ? "CRIT " : level == VK_BATT_LOW ? "LOW " : "",
+             percent);
     add(part);
   }
 }

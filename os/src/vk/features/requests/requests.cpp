@@ -98,8 +98,8 @@ bool routeReq(const uint8_t mac[6], const uint8_t *frame, size_t len, int8_t rss
 }
 
 bool routeChal(const uint8_t mac[6], const uint8_t *frame, size_t len, int8_t rssi, uint32_t rx_ms) {
-  (void)rssi; (void)rx_ms;
-  return onChal(mac, frame, len);
+  (void)rssi;
+  return onChal(mac, frame, len, rx_ms);
 }
 
 void appStopping(const char *appId) { closeForApp(appId); }
@@ -116,12 +116,12 @@ VK_CONFIG_KEY(presence_ms, "presence_ms", vk::config::Type::U32, "1500", vk::con
               "CHAL to PROOF deadline, ms");
 VK_CONFIG_KEY(req_ttl_s, "req_ttl_s", vk::config::Type::U32, "60", vk::config::F_NONE, 10, 600,
               "lifetime of a payment request, s");
-VK_CONFIG_KEY(req_period_ms, "req_period_ms", vk::config::Type::U32, "1000", vk::config::F_NONE, 250, 5000,
-              "REQ rebroadcast period, ms");
+VK_CONFIG_KEY(req_period_ms, "req_period_ms", vk::config::Type::U32, "1000", vk::config::F_NONE, 250,
+              REQ_PERIOD_MAX_MS, "REQ rebroadcast period, ms");
 VK_CONFIG_KEY(req_max_proofs, "req_max_proofs", vk::config::Type::U32, "8", vk::config::F_NONE, 1, 64,
-              "presence proofs answered per request");
+              "presence proofs answered per challenger MAC per request");
 VK_CONFIG_KEY(req_gap_ms, "req_gap_ms", vk::config::Type::U32, "200", vk::config::F_NONE, 0, 5000,
-              "minimum time between presence proofs, ms");
+              "minimum time between presence proofs, any request, ms");
 VK_CONFIG_KEY(pay_app, "pay_app", vk::config::Type::STR, "pay", vk::config::F_NONE, 1, 24,
               "app opened from a payment-request notification");
 
@@ -148,6 +148,13 @@ bool sameId(const uint8_t a[8], const uint8_t b[8]) { return memcmp(a, b, 8) == 
 // Payee: the active requests
 // ---------------------------------------------------------------------------
 
+struct Challenger {
+  bool used;
+  uint8_t mac[6];
+  uint32_t proofs;              // PROOFs signed for this MAC, for this request
+  uint32_t last_ms;             // when the last one was signed: the least recent is forgotten first
+};
+
 struct Active {
   bool used;
   uint8_t req_id[8];
@@ -155,13 +162,36 @@ struct Active {
   size_t frame_len;
   uint32_t expiry;              // unix seconds
   char app_id[APP_ID_MAX + 1];
-  uint32_t proofs;              // PROOFs signed for it
-  bool proof_tried;             // last_proof_ms is meaningful
-  uint32_t last_proof_ms;       // when the last signature for it finished
+  uint32_t proofs;              // PROOFs signed for it, all challengers
+  Challenger challengers[CHALLENGERS_PER_REQUEST];
+  uint8_t nonces[ANSWERED_NONCES][16];   // the last nonces answered, a ring
+  size_t nonce_count;           // filled entries of the ring
+  size_t nonce_next;            // where the next one goes
   bool sent;                    // broadcast at least once
   uint32_t last_sent_ms;
 };
 Active sActive[MAX_ACTIVE];
+
+// CHALs waiting for an answer.
+struct Queued {
+  bool used;
+  uint8_t req_id[8];
+  uint8_t mac[6];
+  uint8_t nonce[16];
+  uint8_t payer_pubkey[32];
+  uint32_t rx_ms;
+};
+Queued sQueue[CHAL_QUEUE_LEN];
+
+// The global answer rate: a gap after each answer, and a bucket of ANSWER_BURST answers that refills
+// one per ANSWER_REFILL_MS.
+bool sAnswered = false;         // sAnswerEndMs is meaningful
+uint32_t sAnswerEndMs = 0;      // when the last signature finished
+bool sBucketStarted = false;
+uint32_t sTokens = 0;
+uint32_t sRefillAtMs = 0;
+
+Stats sStats;
 
 // The last few requests that closed, so request_status can still answer "closed" or "expired".
 constexpr size_t MAX_CLOSED = 4;
@@ -193,6 +223,9 @@ void closeSlot(Active &a, State state) {
   target->state = state;
   target->proofs = a.proofs;
   target->order = ++sClosedOrder;
+  for (Queued &q : sQueue) {
+    if (q.used && sameId(q.req_id, a.req_id)) q.used = false;   // nothing more is answered for it
+  }
   memset(&a, 0, sizeof a);
 }
 
@@ -350,7 +383,136 @@ const char *stateName(State state) {
 // Payee: answering CHAL
 // ---------------------------------------------------------------------------
 
-bool onChal(const uint8_t mac[6], const uint8_t *frame, size_t len) {
+namespace {
+
+bool nonceAnswered(const Active &a, const uint8_t nonce[16]) {
+  for (size_t i = 0; i < a.nonce_count; ++i) {
+    if (memcmp(a.nonces[i], nonce, 16) == 0) return true;
+  }
+  return false;
+}
+
+void rememberNonce(Active &a, const uint8_t nonce[16]) {
+  memcpy(a.nonces[a.nonce_next], nonce, 16);
+  a.nonce_next = (a.nonce_next + 1) % ANSWERED_NONCES;
+  if (a.nonce_count < ANSWERED_NONCES) a.nonce_count++;
+}
+
+Challenger *findChallenger(Active &a, const uint8_t mac[6]) {
+  for (Challenger &c : a.challengers) {
+    if (c.used && memcmp(c.mac, mac, 6) == 0) return &c;
+  }
+  return nullptr;
+}
+
+// The entry for `mac`, else a free one, else the least recent one, emptied. Forgetting a MAC gives
+// it a fresh budget, which gains an attacker nothing it could not get from a new MAC.
+Challenger &challengerFor(Active &a, const uint8_t mac[6]) {
+  if (Challenger *found = findChallenger(a, mac)) return *found;
+  Challenger *slot = nullptr;
+  const uint32_t now = nowMs();
+  for (Challenger &c : a.challengers) {
+    if (!c.used) { slot = &c; break; }
+    if (slot == nullptr || (uint32_t)(now - c.last_ms) > (uint32_t)(now - slot->last_ms)) slot = &c;
+  }
+  memset(slot, 0, sizeof *slot);
+  slot->used = true;
+  memcpy(slot->mac, mac, 6);
+  return *slot;
+}
+
+bool overBudget(Active &a, const uint8_t mac[6]) {
+  const Challenger *c = findChallenger(a, mac);
+  return c != nullptr && c->proofs >= configU32("req_max_proofs");
+}
+
+// One token is taken per answer; ANSWER_BURST at most are held.
+bool takeToken(uint32_t now) {
+  if (!sBucketStarted) {
+    sBucketStarted = true;
+    sTokens = ANSWER_BURST;
+    sRefillAtMs = now;
+  }
+  if (sTokens >= ANSWER_BURST) {
+    sRefillAtMs = now;                // a full bucket does not save up
+  } else {
+    const uint32_t periods = (uint32_t)(now - sRefillAtMs) / ANSWER_REFILL_MS;
+    if (periods >= ANSWER_BURST - sTokens) {
+      sTokens = ANSWER_BURST;
+      sRefillAtMs = now;
+    } else {
+      sTokens += periods;
+      sRefillAtMs += periods * ANSWER_REFILL_MS;
+    }
+  }
+  if (sTokens == 0) return false;
+  sTokens--;
+  return true;
+}
+
+bool newer(const Queued &a, const Queued &b) { return (int32_t)(a.rx_ms - b.rx_ms) > 0; }
+
+// Answers at most one queued CHAL: the newest, the one most likely to be inside its payer's
+// deadline. Drops what can no longer be answered usefully first.
+void answerQueued() {
+  const uint32_t now = nowMs();
+  const uint32_t maxAge = configU32("presence_ms");    // an answer later than this would be judged late
+  Queued *pick = nullptr;
+  for (Queued &q : sQueue) {
+    if (!q.used) continue;
+    Active *a = findActive(q.req_id);
+    if (a == nullptr || (uint32_t)(now - q.rx_ms) > maxAge) {
+      q.used = false;
+      sStats.chal_stale++;
+    } else if (nonceAnswered(*a, q.nonce)) {          // the same CHAL queued under two MACs
+      q.used = false;
+      sStats.chal_replayed++;
+    } else if (overBudget(*a, q.mac)) {                // its budget ran out while it waited
+      q.used = false;
+      sStats.chal_over_budget++;
+    } else if (pick == nullptr || newer(q, *pick)) {
+      pick = &q;
+    }
+  }
+  if (pick == nullptr) return;
+
+  // The global rate: a gap since the last signature finished (so a CHAL that arrived while it ran
+  // waits), and the bucket. Neither depends on who asks.
+  if (sAnswered && (uint32_t)(now - sAnswerEndMs) < configU32("req_gap_ms")) return;
+  if (!takeToken(now)) return;
+
+  const Queued q = *pick;
+  pick->used = false;
+  Active *a = findActive(q.req_id);
+
+  // Sign req_id ‖ nonce ‖ payer_pubkey. The loop is blocked for this one signature; that is the
+  // latency the payer measures.
+  uint8_t bytes[VK_PROOF_SIGNED_LEN];
+  vk_proof_signed_bytes(q.req_id, q.nonce, q.payer_pubkey, bytes);
+  vk_proof_t proof;
+  memcpy(proof.req_id, q.req_id, 8);
+  const vk::wallet::Reason signedOk =
+      hooks.signAuto ? hooks.signAuto("pay-proof", bytes, sizeof bytes, proof.sig) : VK_SIGN_FAILED;
+  sAnswered = true;
+  sAnswerEndMs = nowMs();
+  if (signedOk != VK_OK) {
+    VK_REQ_LOG("proof not signed: %s", vk_reason_name(signedOk));
+    return;
+  }
+  Challenger &c = challengerFor(*a, q.mac);
+  c.proofs++;
+  c.last_ms = sAnswerEndMs;
+  a->proofs++;
+  rememberNonce(*a, q.nonce);
+
+  uint8_t out[VK_PROOF_LEN];
+  const size_t n = vk_proof_build(&proof, out, sizeof out);
+  if (n == 0 || hooks.sendFrame == nullptr || !hooks.sendFrame(q.mac, out, n)) VK_REQ_LOG("proof not sent");
+}
+
+}  // namespace
+
+bool onChal(const uint8_t mac[6], const uint8_t *frame, size_t len, uint32_t rx_ms) {
   vk_chal_t chal;
   if (mac == nullptr || vk_chal_parse(frame, len, &chal) != 0) return true;
 
@@ -359,31 +521,37 @@ bool onChal(const uint8_t mac[6], const uint8_t *frame, size_t len) {
   Active *a = findActive(chal.req_id);
   if (a == nullptr) return true;
 
-  // 2. Rate limits per request: a total, and a gap since the last signature finished.
-  if (a->proofs >= configU32("req_max_proofs")) return true;
-  if (a->proof_tried && (uint32_t)(nowMs() - a->last_proof_ms) < configU32("req_gap_ms")) return true;
+  // 2. A nonce this request already answered is a recording played back: the honest payer draws a
+  //    fresh one per challenge. A challenger that had its `req_max_proofs` gets nothing more.
+  if (nonceAnswered(*a, chal.nonce)) { sStats.chal_replayed++; return true; }
+  if (overBudget(*a, mac)) { sStats.chal_over_budget++; return true; }
 
-  // 3. Sign req_id ‖ nonce ‖ payer_pubkey and answer the challenger. The loop is blocked for this
-  //    one signature; that is the latency the payer measures.
-  uint8_t bytes[VK_PROOF_SIGNED_LEN];
-  vk_proof_signed_bytes(chal.req_id, chal.nonce, chal.payer_pubkey, bytes);
-  vk_proof_t proof;
-  memcpy(proof.req_id, chal.req_id, 8);
-  const vk::wallet::Reason signedOk =
-      hooks.signAuto ? hooks.signAuto("pay-proof", bytes, sizeof bytes, proof.sig) : VK_SIGN_FAILED;
-  a->proof_tried = true;
-  a->last_proof_ms = nowMs();
-  if (signedOk != VK_OK) {
-    VK_REQ_LOG("proof not signed: %s", vk_reason_name(signedOk));
-    return true;
+  // 3. Queue it: one entry per request and MAC (a newer CHAL replaces the older one, as the payer's
+  //    re-challenge replaces its slot), else a free entry, else the oldest entry is dropped.
+  Queued *slot = nullptr;
+  for (Queued &q : sQueue) {
+    if (q.used && sameId(q.req_id, chal.req_id) && memcmp(q.mac, mac, 6) == 0) { slot = &q; break; }
   }
-  a->proofs++;
+  if (slot == nullptr) {
+    for (Queued &q : sQueue) {
+      if (!q.used) { slot = &q; break; }
+      if (slot == nullptr || newer(*slot, q)) slot = &q;
+    }
+    if (slot->used) sStats.chal_displaced++;
+  }
+  slot->used = true;
+  memcpy(slot->req_id, chal.req_id, 8);
+  memcpy(slot->mac, mac, 6);
+  memcpy(slot->nonce, chal.nonce, 16);
+  memcpy(slot->payer_pubkey, chal.payer_pubkey, 32);
+  slot->rx_ms = rx_ms;
 
-  uint8_t out[VK_PROOF_LEN];
-  const size_t n = vk_proof_build(&proof, out, sizeof out);
-  if (n == 0 || hooks.sendFrame == nullptr || !hooks.sendFrame(mac, out, n)) VK_REQ_LOG("proof not sent");
+  // 4. Answer now if the rate allows; otherwise the service does, once it does.
+  answerQueued();
   return true;
 }
+
+bool onChal(const uint8_t mac[6], const uint8_t *frame, size_t len) { return onChal(mac, frame, len, nowMs()); }
 
 // ---------------------------------------------------------------------------
 // The signing domains' validators
@@ -419,6 +587,19 @@ struct CacheSlot {
   Cached entry;
 };
 CacheSlot sCache[MAX_CACHED];
+bool sReqVerified = false;      // sReqVerifyMs is meaningful
+uint32_t sReqVerifyMs = 0;      // when the last REQ signature check started
+
+// "pay-req:" ‖ frame[0..signed_len) verifies with the frame's own payee_pubkey.
+bool reqSelfSigned(const uint8_t *frame, const vk_req_t &req) {
+  if (hooks.verify == nullptr) return false;
+  static const char kPrefix[] = VK_PREFIX_PAY_REQ;
+  constexpr size_t prefixLen = sizeof kPrefix - 1;
+  uint8_t message[prefixLen + VK_REQ_SIGNED_MAX];
+  memcpy(message, kPrefix, prefixLen);
+  memcpy(message + prefixLen, frame, req.signed_len);
+  return hooks.verify(message, prefixLen + req.signed_len, req.sig, req.payee_pubkey) == 1;
+}
 
 // "An entry is dropped at its expiry or 30 s after it was last heard."
 void pruneCache() {
@@ -476,20 +657,51 @@ bool onReq(const uint8_t mac[6], const uint8_t *frame, size_t len, int8_t rssi, 
   if (clockOk() && unixNow() >= req.expiry) return false;      // already over: never cached
   pruneCache();
 
-  CacheSlot *slot = nullptr;
+  // An entry is one request of one payee key. Heard again, it refreshes the entry; heard with other
+  // bytes, it is not the payee's (the payee sends the same bytes every time) and is ignored.
   for (CacheSlot &s : sCache) {
-    if (s.used && sameId(s.entry.req.req_id, req.req_id)) { slot = &s; break; }
-  }
-  const bool isNew = slot == nullptr;
-  if (isNew) {
-    // A free slot, else the one that has been silent longest.
-    const uint32_t ms = nowMs();
-    for (CacheSlot &s : sCache) {
-      if (!s.used) { slot = &s; break; }
-      if (slot == nullptr || (uint32_t)(ms - s.entry.heard_ms) > (uint32_t)(ms - slot->entry.heard_ms)) slot = &s;
+    if (!s.used || !sameId(s.entry.req.req_id, req.req_id) ||
+        memcmp(s.entry.req.payee_pubkey, req.payee_pubkey, 32) != 0) {
+      continue;
     }
+    if (s.entry.frame_len != len || memcmp(s.entry.frame, frame, len) != 0) {
+      sStats.req_conflict++;
+      return false;
+    }
+    s.entry.heard_ms = rx_ms;
+    // Whoever replays the bytes from another MAC does not become the one challenged while the
+    // first MAC is still sending them.
+    const bool sameMac = memcmp(s.entry.mac, mac, 6) == 0;
+    if (sameMac || (uint32_t)(rx_ms - s.entry.mac_heard_ms) >= CACHE_MAC_HOLD_MS) {
+      memcpy(s.entry.mac, mac, 6);
+      s.entry.rssi = rssi;
+      s.entry.mac_heard_ms = rx_ms;
+    }
+    return false;
   }
 
+  // A new entry: its signature must verify with the key it names. That proves nothing about who the
+  // key is (the check chain does that against the record); it keeps unsigned junk out of the cache
+  // and the inbox. One check per CACHE_VERIFY_GAP_MS bounds what a flood of junk costs; a request
+  // skipped here is heard again at its next broadcast.
+  const uint32_t ms = nowMs();
+  if (sReqVerified && (uint32_t)(ms - sReqVerifyMs) < CACHE_VERIFY_GAP_MS) {
+    sStats.req_deferred++;
+    return false;
+  }
+  sReqVerified = true;
+  sReqVerifyMs = ms;
+  if (!reqSelfSigned(frame, req)) {
+    sStats.req_bad_sig++;
+    return false;
+  }
+
+  // A free slot, else the one that has been silent longest.
+  CacheSlot *slot = nullptr;
+  for (CacheSlot &s : sCache) {
+    if (!s.used) { slot = &s; break; }
+    if (slot == nullptr || (uint32_t)(ms - s.entry.heard_ms) > (uint32_t)(ms - slot->entry.heard_ms)) slot = &s;
+  }
   slot->used = true;
   memcpy(slot->entry.frame, frame, len);
   slot->entry.frame_len = len;
@@ -497,8 +709,9 @@ bool onReq(const uint8_t mac[6], const uint8_t *frame, size_t len, int8_t rssi, 
   memcpy(slot->entry.mac, mac, 6);
   slot->entry.rssi = rssi;
   slot->entry.heard_ms = rx_ms;
+  slot->entry.mac_heard_ms = rx_ms;
 
-  if (isNew) postNotification(req);
+  postNotification(req);
   return false;                       // a running app gets the frame too
 }
 
@@ -525,6 +738,7 @@ const Cached *cacheAt(size_t index) {
 void update() {
   if (activeCount() != 0) {
     expireDue();
+    answerQueued();
     // The app-stop listener closes an app's requests; this also catches one opened while the app
     // was already stopping (upstream runs the listeners before the app's on_stop).
     if (hooks.appRunning) {
@@ -547,11 +761,22 @@ void update() {
   pruneCache();
 }
 
+const Stats &stats() { return sStats; }
+
 void reset() {
   memset(sActive, 0, sizeof sActive);
   memset(sClosed, 0, sizeof sClosed);
   sClosedOrder = 0;
+  memset(sQueue, 0, sizeof sQueue);
+  sAnswered = false;
+  sAnswerEndMs = 0;
+  sBucketStarted = false;
+  sTokens = 0;
+  sRefillAtMs = 0;
   memset(sCache, 0, sizeof sCache);
+  sReqVerified = false;
+  sReqVerifyMs = 0;
+  memset(&sStats, 0, sizeof sStats);
 }
 
 }  // namespace vk::requests

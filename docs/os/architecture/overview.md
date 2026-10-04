@@ -61,6 +61,7 @@ src/vk/
     clock.h   clock.cpp            SNTP, time source, clock floor
     serial.h  serial.cpp           USB serial commands: VK_SERIAL_COMMAND, VK_INFO_FIELD, VKHELP, VKINFO (config commands are in config.cpp)
     fileio.h  fileio.cpp           the one file layer every store uses (stores.md); replaced by an in-memory one in host tests
+    wifi_net.h wifi_net.cpp        vk::wifi: saved Wi-Fi networks (NVS `vkwifi`), the join state machine, auto-join (ui/shell.md, Wi-Fi); host-tested
   wallet/
     pure/                          C99, no Arduino, host-tested
       sol.h sol_b58.c sol_sha256.c sol_tx.c
@@ -89,7 +90,13 @@ src/vk/
     repaint.h repaint.cpp          requestShellRepaint(), consumeShellRepaint()
     theme.h theme.cpp              theme tokens, VK_THEME; receipt-light and receipt-dark
     receipt.h receipt.cpp          the receipt drawing kit every screen uses (with the QR code)
+    keyboard.h keyboard.cpp        the on-screen keyboard: one text-entry screen for pages and native apps (ui/text-entry.md)
+    keyboard_core.h keyboard_core.c  its layout, cursor and text: pure C99, host-tested
     lua_theme.cpp lua_receipt.cpp  badge.theme and badge.receipt: the theme and the kit for Lua apps
+    screen_power.h screen_power.cpp  service: backlight dim and sleep, the wake key (hook H25), keep-awake
+    lua_screen.cpp                 badge.screen.keep_awake
+    battery.h battery.cpp          service: low-battery levels, the one-time warning
+    power_core.h power_core.c      the pure logic of both (host-tested)
     boot_screen.cpp                Receipt boot screen, called from the rewritten src/ui/boot.cpp
   shell/                           the BadgeOS shell (ui/shell.md)
     shell.cpp                      framework and screen stack; shell::begin(), update(), onAppStopped(), showError(), screenName()
@@ -151,7 +158,7 @@ Consequences that other documents rely on:
 - The signature is made in the loop, outside any Lua callback, so upstream's 250 ms callback budget and 12 s extension cap do not apply to it.
 - While the approval is up, **the shell does not run either**: `shell::update()` is not called, so no shell screen reads a button or draws. When the approval closes it calls `vk::ui::requestShellRepaint()` and the shell redraws on its next pass ([shell](../ui/shell.md#approval-notifications-themes)).
 - With no app running, the screen belongs to the shell: launcher, settings and the dialogs upstream's loop asks for (`shell::onAppStopped()`, `shell::showError()`). There is no launcher app and no service that relaunches one.
-- There is one task. Nothing in our code takes a lock, and nothing may block the loop for longer than a signature or one HTTP request. Long work is a state machine advanced by a service.
+- There is one task. Nothing in our code takes a lock, and nothing may block the loop for longer than a signature or one HTTP request. Long work is a state machine advanced by a service. The one exception is the balance feature's poll: its HTTP request runs on a background task, and the loop only hands it a job and picks up the answer through an atomic flag ([ui](../ui/ui.md#balance)). An app's own requests (`vk.rpc`, `wallet.refresh_balance`) still run in the loop.
 
 ## 6. Self-registration
 
@@ -231,7 +238,7 @@ A feature is a folder under `src/vk/features/`. It registers what it needs and e
 | `store_reg` | domain `store-reg` | wallet core | the app-store client cannot register (hook H10 then refuses). The client is off by default anyway: no broker URL is compiled in (hook H23) |
 | `contacts` | domain `contact`; store; Lua `contact_*`, `contacts` (frames 16–17 are exchanged by the Contacts app itself) | wallet core | no contacts |
 | `history` | approval listener; store; Lua `history` | approval engine | nothing is logged |
-| `balance` | service; Lua `balance`, `token_account`, `refresh_balance` | config, upstream HTTP | the launcher's `BALANCE` row shows `--`; apps must fetch balances themselves |
+| `balance` | service (its poll on a background task); Lua `balance`, `token_account`, `refresh_balance` | config, upstream HTTP | the launcher's `BALANCE` row shows `--`; apps must fetch balances themselves |
 | `bank` | domain `bank`; Lua `begin_bank` | wallet core, `requests` | no bank rail |
 | `devtools` | the dev serial commands listed in [testing](../testing/testing.md#dev-hooks) | dev profile | no unattended testing |
 

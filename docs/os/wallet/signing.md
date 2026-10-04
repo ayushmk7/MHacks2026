@@ -35,7 +35,7 @@ One enum for every refusal, defined in C so the host-tested code shares it. Full
 typedef enum {
   VK_OK = 0, VK_CANCELLED, VK_TIMEOUT, VK_UNDECODABLE, VK_UNVERIFIED, VK_REVOKED, VK_EXPIRED,
   VK_MISMATCH, VK_BAD_PROOF, VK_OVER_CAP, VK_NO_TIME, VK_BUSY, VK_DENIED, VK_NOT_PROVISIONED,
-  VK_TOO_LONG, VK_SIGN_FAILED, VK_BAD_ARG, VK_UNSUPPORTED, VK_IDLE
+  VK_TOO_LONG, VK_SIGN_FAILED, VK_BAD_ARG, VK_UNSUPPORTED, VK_IDLE, VK_OVER_DAILY
 } vk_reason_t;
 const char *vk_reason_name(vk_reason_t r);   /* "ok", "cancelled", "timeout", ... lower-case, same order */
 ```
@@ -110,7 +110,7 @@ String signStoreRegistration(const String &message);   // target of hook H10; ""
 
 ### Cross-feature interfaces
 
-Features may not include each other's headers. The two things one feature needs from another go through function pointers declared here and defined (as null) in `signer.cpp`:
+Features may not include each other's headers. The three things one feature needs from another go through function pointers declared here and defined (as null) in `signer.cpp`:
 
 ```cpp
 namespace vk::wallet {
@@ -121,6 +121,11 @@ extern vk_presence_t (*presenceLookup)(const uint8_t req_id[8], uint8_t payee_pu
 // Set by the balance feature. Null when the feature is absent.
 struct TokenInfo { bool balance_known; uint64_t raw; bool account_known; uint8_t account[32]; };
 extern bool (*tokenInfoLookup)(const uint8_t mint[32], TokenInfo &out);
+
+// Set by the history feature: per token, the raw units signed in the day before `now` (0 = no clock:
+// everything counts). False when the log could not be read. Read by the solana decoder for the
+// daily limit (checks.md, "Daily limit"); null without the feature, and a token with a limit is then blocked.
+extern bool (*spentLookup)(const vk_token_t *tokens, size_t count, uint32_t now, uint64_t out[VK_MAX_TOKENS]);
 }
 ```
 
@@ -134,6 +139,7 @@ The rows:
 | `pay-proof` | `pay-proof:` | no | internal | 56 | `features/requests` | `req_id[8] ‖ nonce[16] ‖ payer_pubkey[32]` |
 | `contact` | `contact:` | no | internal | 113 | `features/contacts` | `peer_nonce[16] ‖ peer_pubkey[32] ‖ own_pubkey[32] ‖ name_len[1] ‖ name[≤32]` |
 | `store-reg` | (none) | no | internal | 200 | `features/store_reg` | exactly `solana-badge-register:<own pubkey base58>:<nonce>`; the nonce uses upstream's `isSafeNonce` character set (copy that function from `broker_client.cpp`) |
+| `selftest` | `selftest:` | yes | none | 34 | `features/selftest_sign` | exactly `badgeos self test ` + 16 lower-case hex digits (a nonce). Amber, hold to sign, "Pays nothing". Used only by the Tests app's signature check ([apps](../apps/apps.md#self-test)); any app may raise it, and it can sign nothing but that text |
 
 "Internal" means no app can hand the wallet core bytes for that domain. Apps call a higher-level function (`wallet.request_open`, `wallet.contact_card`), and the firmware builds the bytes itself.
 
@@ -168,6 +174,7 @@ signRaw(domain, bytes, len, sig)          // static, the only caller of identity
   buffer = prefix ‖ bytes
   identity::sign(buffer, n, sig) ? VK_OK : VK_SIGN_FAILED
   log: [vk] sign <domain> <n> bytes <ms> ms        (on failure, a second line: [vk] sign <domain> FAILED)
+  every VK_ON_SIGN listener(domain, buffer, n, sig or null, result)     (see "Every signature is logged")
 
 signRaw checks both length rules again itself, and builds prefix ‖ bytes in one static 1248-byte
 buffer, not on the stack. signForApproval (the approval engine's entry) returns VK_UNSUPPORTED for a
@@ -175,6 +182,27 @@ null or non-button domain.
 ```
 
 Calls from inside a Lua callback (`signAuto` through `request_open` or `contact_card`) first call `runtime::extendDeadline(2500)`: a software signature can take about a second (finding F7).
+
+## Every signature is logged
+
+`signRaw` is the one place every signature passes, so the signature log is fed from there and no domain, present or future, can sign without leaving a record:
+
+```cpp
+// src/vk/wallet/signer.h
+struct SignEvent {
+  const SignDomain *domain;
+  const uint8_t *signed_bytes;   // prefix || bytes: exactly what the key was asked to sign
+  size_t signed_len;
+  const uint8_t *sig;            // 64 bytes when result is VK_OK, else nullptr
+  Reason result;                 // VK_OK or VK_SIGN_FAILED
+};
+struct SignListener : Registered<SignListener> { void (*fn)(const SignEvent &); };
+#define VK_ON_SIGN(ident, fn) static vk::wallet::SignListener vk_on_sign_##ident(fn)
+```
+
+- After the key answers, signed or refused, `signRaw` calls every listener. A request refused before the key is asked (self-check, a length rule, a domain's validator) made no signature and is not reported.
+- A listener runs on the signing caller's time, often inside a presence reply that has a deadline: it must not write files or block. The history feature's listener copies a 16-byte digest into a RAM queue and writes it later ([stores](stores.md#writing)); button domains are left to their approval row, which also records how the approval ended.
+- Host suite `test_domains` checks that auto and button signatures, signed and refused, each reach a listener once with the exact bytes, and that refusals before the key do not.
 
 ## Why domains cannot be confused
 

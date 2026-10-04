@@ -170,7 +170,7 @@ void checkI2c(Ctx &c) {
 // Storage: the filesystem is mounted, has room, and a small file can be written, read back and
 // deleted through the one file layer.
 void checkStorage(Ctx &c) {
-  char value[VALUE_MAX];
+  char value[ROW_VALUE_MAX];
   const State state = storageProbe(value, sizeof value);
   c.finish(state, "%s", value);
 }
@@ -534,7 +534,7 @@ const ManualOps LED_TEST = {ledsStart, ledsUpdate, ledsDraw, ledsKey, false};
 
 // ---- the table --------------------------------------------------------------------------------
 
-const Check CHECKS[] = {
+const Check TABLE[] = {
     {"display", "DISPLAY", Kind::Manual, Profile::Any, nullptr, &DISPLAY_TEST, 0},
     {"buttons", "BUTTONS", Kind::Manual, Profile::Any, nullptr, &BUTTON_TEST, 0},
     {"leds", "LEDS", Kind::Manual, Profile::Any, nullptr, &LED_TEST, 0},
@@ -561,7 +561,7 @@ void stopHardware() {
 }  // namespace
 
 const Suite HARDWARE = {
-    "hardware", "HARDWARE", Profile::Any, CHECKS, sizeof CHECKS / sizeof CHECKS[0],
+    "hardware", "HARDWARE", Profile::Any, TABLE, sizeof TABLE / sizeof TABLE[0],
     nullptr, nullptr, stopHardware, true,
 };
 

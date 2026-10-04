@@ -195,7 +195,7 @@ bool send(const uint8_t *mac, const uint8_t *frame, size_t len);    // mac nullp
 
 "Forward to the app" means `runtime::dispatchEspnow(mac, data, len, rssi)`, and only when an app is running, the approval is not active, and the app was granted the `espnow` permission (native apps always are: `router.cpp` asks `vk::host::granted("espnow")` for every frame and `permissions.cpp` answers true for a native app). `router::send` returns false for a null frame or a zero length. There is no queue of our own: a frame that arrives with no eligible app is dropped, except that firmware routes have already seen it.
 
-Upstream's receive queue holds 7 frames and silently drops the newest when full. While the loop is blocked by a signature (one to three seconds with a software key), requests rebroadcast by several badges can fill it and a CHAL or PROOF can be lost. A lost exchange leaves the slot `PENDING`, which the approval shows as amber; the Pay app may call `wallet.challenge` again (a fresh nonce replaces the slot).
+Upstream's receive queue holds 7 frames and silently drops the newest when full. While the loop is blocked by a signature (211 ms with the software key, [M2](../testing/testing.md#measurements)), requests rebroadcast by several badges can fill it and a CHAL or PROOF can be lost. A lost exchange leaves the slot `PENDING`, which the approval shows as amber; the Pay app may call `wallet.challenge` again (a fresh nonce replaces the slot).
 
 This also fixes upstream finding F1: the handler is installed once and never cleared (hook H9).
 
@@ -215,31 +215,39 @@ The question presence answers: is the holder of the payee key within radio range
 
 ### Payee: answering CHAL
 
-Route for type 2, in firmware, no app involved:
+Route for type 2, in firmware, no app involved. Nothing in a CHAL is signed, so the payee cannot tell an honest payer from a stranger; the rules below bound what a stranger can take, and none of them is a total that a stranger can use up for everyone.
 
 1. `req_id` matches an active request, else drop.
-2. Rate limits per active request: at most `req_max_proofs` (default 8) proofs in total, and at least `req_gap_ms` (default 200) since the last one. Otherwise drop. The gap is measured from the **end** of the last signature, so a CHAL that queued while that signature ran is dropped. (Measured from the start, a signature slower than the gap would always satisfy it.)
-3. Sign `pay-proof` over `req_id ‖ nonce ‖ payer_pubkey` (from the CHAL) and unicast PROOF to the sender's MAC.
+2. The nonce is not one this request has already answered (the last `ANSWERED_NONCES` = 8 are kept), else drop: a payer draws a fresh nonce for every challenge, so a repeat is a recording played back.
+3. The sender's MAC has had fewer than `req_max_proofs` (default 8) answers for this request, else drop. Each active request counts up to `CHALLENGERS_PER_REQUEST` = 4 MACs; a fifth replaces the one answered least recently.
+4. Queue it. The queue holds `CHAL_QUEUE_LEN` = 4 CHALs for all requests together, one per request and MAC: a newer CHAL from the same MAC for the same request replaces the queued one (as the payer's own re-challenge replaces its slot). When the queue is full the oldest entry is dropped.
+5. Answer the **newest** queued CHAL, now if the rate allows, otherwise from the feature's service on a later pass. Before choosing, drop entries whose request has closed, whose age is over `presence_ms` (the payer would judge the answer late), or that steps 2 and 3 now refuse. The rate is global, across requests and senders: at least `req_gap_ms` (default 200) from the **end** of the last signature (measured from the start, a signature slower than the gap would always satisfy it), and a bucket of `ANSWER_BURST` = 3 answers that refills one per `ANSWER_REFILL_MS` = 1000 ms.
+6. Sign `pay-proof` over `req_id ‖ nonce ‖ payer_pubkey` (from the CHAL) and unicast PROOF to the sender's MAC. A signature that fails counts toward the gap and the bucket but not as an answer.
 
-The loop is blocked for one signature. That is the latency the payer measures.
+The loop is blocked for one signature at a time, and never for more than one per `req_gap_ms`. Sustained, answers take at most 211 ms in every `ANSWER_REFILL_MS`, about a fifth of the loop, however many CHALs arrive; a burst of three takes about 1 s. The time from CHAL to PROOF, including any wait in the queue, is the latency the payer measures. `wallet.request_status(req_id).proofs` counts answers for the request from all senders.
 
 ### Payer: challenging and judging
 
 `src/vk/features/requests/presence.{h,cpp}`. A table of 4 slots: `req_id`, `payee_pubkey` (from the REQ), `mac`, `nonce`, `t0_ms`, `result`. The oldest slot is reused when the table is full.
 
 - `wallet.challenge(mac, req_frame)` parses the REQ, fills a slot with a fresh random nonce and result `PENDING`, sets `t0_ms = millis()` and sends CHAL to `mac`.
-- Route for type 3: find the `PENDING` slot with that `req_id` whose `mac` equals the sender's; verify the signature over `req_id ‖ nonce ‖ own_pubkey` with the slot's `payee_pubkey`. Invalid → `BAD_SIG`. Valid and `rx_ms − t0_ms ≤ presence_ms` → `PRESENT`. Valid but slower → `LATE`. The first PROOF decides; later ones for that slot are ignored. A PROOF whose `rx_ms` is earlier than the slot's `t0_ms` is not judged at all: it answers the nonce of a challenge that has since been replaced. A PROOF from another MAC is ignored.
+- Route for type 3: find the `PENDING` slot with that `req_id` whose `mac` equals the sender's; verify the signature over `req_id ‖ nonce ‖ own_pubkey` with the slot's `payee_pubkey`. Valid and `rx_ms − t0_ms ≤ presence_ms` → `PRESENT`. Valid but slower → `LATE`. The first **valid** PROOF decides; later ones for that slot are not checked.
+- An invalid PROOF (junk, another key, another nonce such as a recording of an earlier challenge, another payer) is **ignored and counted** (`presence::badProofs(req_id)`, log line `[req] proof bad signature, ignored (<n>)`). It decides nothing: anyone can send one from the payee's MAC, and the real PROOF may still come. If no valid PROOF arrives the slot stays `PENDING`, which the approval shows as amber VERIFIED - NOT PRESENT. The firmware never stores `BAD_SIG`; the check chain still turns a valid PROOF whose key is not the record's into red BAD PROOF ([check 13](../wallet/checks.md#the-check-chain)).
+- At most `PROOF_CHECKS_MAX` = 16 PROOFs are verified per challenge (one Ed25519 verification each, 18 ms); further ones are counted unchecked. A re-challenge starts a new count.
+- A PROOF whose `rx_ms` is earlier than the slot's `t0_ms` is not judged at all: it answers the nonce of a challenge that has since been replaced. A PROOF from another MAC is ignored without a verification.
 - `wallet.presence(req_id)` returns the slot's result as a string for the app's UI. The approval reads the same slot through `presenceLookup` ([checks](../wallet/checks.md#presence-lookup)).
 
 `presence_ms` is a config key. Its default (1500) allows for a software signature on the payee; measurement M1 ([testing](../testing/testing.md#measurements)) sets the real value: the 95th percentile of CHAL→PROOF plus half again.
 
 ### Request cache (payer side)
 
-The route for type 1 keeps the last 8 distinct requests seen (by `req_id`): frame, MAC, RSSI, time seen. An entry is dropped at its expiry or 30 s after it was last heard. `wallet.requests()` returns the cache. When a new `req_id` appears and the running app is not the configured `pay_app`, the route posts a notification ([app host](../platform/app-host.md#notifications)). The route returns false, so a running app also gets the frame.
+The route for type 1 keeps the last 8 distinct requests seen, keyed by `req_id` and `payee_pubkey`: frame, MAC, RSSI, time seen. An entry is dropped at its expiry or 30 s after it was last heard. `wallet.requests()` returns the cache. When a new entry is made and the running app is not the configured `pay_app`, the route posts a notification ([app host](../platform/app-host.md#notifications)). The route returns false, so a running app also gets the frame.
 
+- A new entry is made only if the REQ's signature (`pay-req:` ‖ `frame[0..signed_len)`) verifies with the `payee_pubkey` in it. That says nothing about who the key belongs to (the check chain checks it against the record); it keeps unsigned junk out of the cache and the Inbox. At most one such check runs per `CACHE_VERIFY_GAP_MS` = 100 ms; a new REQ heard inside the gap is left for its next broadcast.
+- The payee sends the same bytes every time, so a frame with a cached `req_id` and `payee_pubkey` but other bytes is ignored. The same `req_id` with another key is a separate entry (an impostor's, which the record check turns red).
 - A REQ already past its expiry is never cached or announced. With no clock source only the 30 s rule applies.
 - A ninth request replaces the entry that has been silent longest.
-- A known `req_id` heard from another MAC updates the entry's MAC.
+- The entry's `mac` (the one the Pay app challenges) is the first MAC it was heard from. A copy of the same bytes from another MAC refreshes the entry's age but takes the MAC only once the entry's MAC has been silent for `CACHE_MAC_HOLD_MS` = 10 s (twice the top of `req_period_ms`'s range). A replayer cannot steer the challenge away from a payee that is still broadcasting.
 - The notification body is `<name> <amount> <currency>`, cut to the 39 characters a note holds by shortening the name; the amount is kept whole.
 
 ## Sequences
@@ -269,10 +277,56 @@ What each attack looks like on the payer's screen:
 |---|---|---|
 | Impostor badge broadcasts its own REQ under the merchant's name | the backend has no record for the impostor's key | red, UNVERIFIED RECIPIENT |
 | Impostor replays the merchant's real REQ | record and request verify; the impostor cannot sign a PROOF | amber, VERIFIED - NOT PRESENT |
-| Impostor answers CHAL with a made-up PROOF | signature fails | red, BAD PROOF |
+| Impostor answers CHAL with a made-up PROOF | signature fails; the PROOF is ignored and counted; no valid one comes | amber, VERIFIED - NOT PRESENT |
+| Stranger sends a forged PROOF from the payee's MAC before the real one | ignored; the real PROOF decides | green, as without the stranger |
+| Stranger replays a PROOF recorded from an earlier challenge or request | its nonce or `req_id` is not the slot's; ignored | unchanged |
+| Stranger sends the payee many CHALs, from one MAC or many | per-MAC budget, global rate, bounded queue; nothing is used up for the honest payer once it stops | green once the flood stops; amber while a flood outpaces the payee's rate |
+| Stranger replays a recorded CHAL | its nonce was answered already; dropped unsigned | unchanged |
+| Stranger rebroadcasts the payee's REQ from its own MAC | the cache keeps the payee's MAC while the payee broadcasts | green |
+| Stranger sends a REQ with the payee's `req_id` and other bytes | ignored (bad signature, or other bytes under the same key) | unchanged |
 | App builds a transaction paying someone other than the record's account | destination ≠ `record.solana_ata` | red, WRONG RECIPIENT |
 | App builds a transaction for more than the request | amount ≠ `req.amount` | red, WRONG AMOUNT |
 | Merchant's attestation is revoked | record says revoked | red, REVOKED |
+
+## Limits
+
+What a stranger in radio range can and cannot do to presence, after the rules above. ESP-NOW source MACs are not authenticated: an ESP32 can send as any MAC, and a badge app with the `espnow` permission can send any frame type from its own MAC.
+
+**Cannot:**
+
+- Make a bad payment green. Presence needs a signature by the payee key over the payer's fresh nonce, and the check chain compares that key with the issuer-signed record.
+- Turn an honest exchange red. No invalid PROOF decides anything, so red BAD PROOF comes only from a valid PROOF whose key is not the record's.
+- Replay its way in. Every PROOF signs `req_id ‖ nonce ‖ payer_pubkey`; the nonce is fresh per challenge and the slot holds only the latest one, so a recorded PROOF fails for any later challenge, any other request and any other payer. A recorded CHAL is either for a closed request (dropped) or carries an answered nonce (dropped unsigned).
+- Use up the payee's answers for everyone. There is no per-request total: once a flood stops, the next honest challenge is answered.
+- Freeze the payee's UI. At most one 211 ms signature per `req_gap_ms`, and sustained at most one per `ANSWER_REFILL_MS`.
+- Steer the payer's challenge away from a payee that is still broadcasting, or replace a cached request's bytes.
+
+**Can:**
+
+- Deny service while it keeps transmitting: jam the channel, fill upstream's 7-frame receive queue, or send CHALs faster than the payee's answer rate from MACs it makes up. The honest payer then gets no PROOF in time: amber, never red. A jammer can always do this; no rule here prevents it.
+- Send as the honest payer's MAC and spend that MAC's `req_max_proofs` answers for the request (about 6 s of CHALs at the default rate). That payer then gets no answer for this request (amber); a new request is not affected. This needs a radio that can send as another MAC, not a badge app.
+- Make the payer verify up to `PROOF_CHECKS_MAX` forged PROOFs per challenge (about 290 ms), from the payee's MAC only.
+- Fill the request cache with validly self-signed REQs under keys it makes up, faster than the honest REQ is rebroadcast (each one an impostor entry; the record check turns any of them red if chosen). Each costs the payer one verification, at most one per `CACHE_VERIFY_GAP_MS`.
+- Relay CHAL and PROOF to a payee who is elsewhere but within relay reach. Presence proves the key holder answered in time, not where it is.
+
+Every limit is a named constant in `features/requests/requests.h` or `presence.h`, or a config key registered in `requests.cpp`:
+
+| Limit | Value | Where |
+|---|---|---|
+| answers per challenger MAC per request | `req_max_proofs`, default 8 | config key |
+| gap from the end of one answer to the next, all requests | `req_gap_ms`, default 200 | config key |
+| oldest CHAL still answered; CHAL→PROOF deadline | `presence_ms`, default 1500 | config key |
+| answer bucket | `ANSWER_BURST` 3, refilled one per `ANSWER_REFILL_MS` 1000 ms | `requests.h` |
+| CHALs waiting, all requests | `CHAL_QUEUE_LEN` 4 | `requests.h` |
+| challenger MACs counted per request | `CHALLENGERS_PER_REQUEST` 4 | `requests.h` |
+| answered nonces remembered per request | `ANSWERED_NONCES` 8 | `requests.h` |
+| PROOFs verified per challenge | `PROOF_CHECKS_MAX` 16 | `presence.h` |
+| new-REQ signature checks | one per `CACHE_VERIFY_GAP_MS` 100 ms | `requests.h` |
+| silence before a cached request's MAC changes | `CACHE_MAC_HOLD_MS` = 2 × `REQ_PERIOD_MAX_MS` (5000, the top of `req_period_ms`'s range) | `requests.h` |
+
+Refusals are counted in `vk::requests::stats()` (`chal_replayed`, `chal_over_budget`, `chal_displaced`, `chal_stale`, `req_bad_sig`, `req_deferred`, `req_conflict`) and invalid PROOFs in `presence::badProofs(req_id)`. Host suite `test_requests` reproduces each attack (`test_attack_*`).
+
+No frame, signed byte string or sign domain changed for these rules, so the protocol version stays 1 and a badge with them talks to one without.
 
 ## Adding a frame type
 

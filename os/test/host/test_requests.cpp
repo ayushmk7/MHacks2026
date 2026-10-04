@@ -32,6 +32,7 @@ static uint8_t PAYER_PUB[32];
 static const uint8_t MAC_PAYEE[6] = {0x02, 0xAA, 0, 0, 0, 0x01};
 static const uint8_t MAC_PAYER[6] = {0x02, 0xBB, 0, 0, 0, 0x02};
 static const uint8_t MAC_OTHER[6] = {0x02, 0xCC, 0, 0, 0, 0x03};
+static const uint8_t MAC_SPOOF_BASE[6] = {0x02, 0xDD, 0, 0, 0, 0};   // an attacker's made-up MACs: [5] varies
 
 static uint32_t t_ms = 0;
 static uint32_t t_unix = 0;
@@ -154,7 +155,7 @@ static requests::OpenArgs args(uint64_t amount = 1000, const char *app = "reques
   return a;
 }
 
-// A syntactically valid REQ with the given id; the cache never verifies the signature.
+// A REQ with the given id, signed by the vectors' device key (the payee) as its firmware would.
 static std::vector<uint8_t> makeReq(uint8_t id, uint32_t expiry, const char *name = "Shop", uint64_t amount = 1000,
                                     const char *currency = "HACK", uint8_t rail = VK_RAIL_SOLANA) {
   vk_req_t r;
@@ -170,6 +171,11 @@ static std::vector<uint8_t> makeReq(uint8_t id, uint32_t expiry, const char *nam
   uint8_t out[VK_REQ_MAX_LEN];
   const size_t n = vk_req_build(&r, out, sizeof out);
   CHECK(n != 0);
+  r.signed_len = n - 64;
+  const char *prefix = VK_PREFIX_PAY_REQ;
+  std::vector<uint8_t> message(prefix, prefix + strlen(prefix));
+  message.insert(message.end(), out, out + r.signed_len);
+  host_ed25519_sign(V_DEVICE_SEED, message.data(), message.size(), out + r.signed_len);
   return std::vector<uint8_t>(out, out + n);
 }
 
@@ -502,67 +508,201 @@ static void test_proof_verifies_with_the_payee_key() {
   CHECK(requests::requestStatus(o.req_id, st, proofs) && proofs == 1);
 }
 
+// The PROOF frame sent to `mac` last, parsed; false if none.
+static bool lastProofTo(const uint8_t mac[6], vk_proof_t &out) {
+  for (size_t i = sent.size(); i-- > 0;) {
+    if (memcmp(sent[i].mac, mac, 6) == 0 && vk_proof_parse(sent[i].frame.data(), sent[i].frame.size(), &out) == 0) return true;
+  }
+  return false;
+}
+
+static bool proofSignsNonce(const vk_proof_t &p, uint8_t nonceFill, const uint8_t payer[32]) {
+  uint8_t nonce[16];
+  memset(nonce, nonceFill, sizeof nonce);
+  uint8_t message[10 + VK_PROOF_SIGNED_LEN];
+  memcpy(message, VK_PREFIX_PAY_PROOF, 10);
+  vk_proof_signed_bytes(p.req_id, nonce, payer, message + 10);
+  return host_ed25519_verify(message, sizeof message, p.sig, V_DEVICE_PUB) == 1;
+}
+
 static void test_proof_rate_limits() {
+  State st; uint32_t proofs = 0;
+
+  // req_max_proofs answers per challenger MAC per request (T-REQ4: one badge, nine CHALs, three answers).
   fresh();
   cfg_max_proofs = 3;
-  cfg_gap_ms = 200;
-  requests::Opened o;
+  requests::Opened o, o2;
   CHECK(requests::openRequest(args(), o) == VK_OK);
-  const std::vector<uint8_t> chal = makeChal(o.req_id, 1, PAYER_PUB);
-
-  CHECK(requests::onChal(MAC_PAYER, chal.data(), chal.size()));
-  CHECK(countSent(VK_T_PROOF) == 1);
-  // Too soon: 199 ms after the last one.
-  t_ms += 199;
-  CHECK(requests::onChal(MAC_PAYER, chal.data(), chal.size()));
-  CHECK(countSent(VK_T_PROOF) == 1);
-  // At the gap exactly it is answered.
-  t_ms += 1;
-  CHECK(requests::onChal(MAC_PAYER, chal.data(), chal.size()));
-  CHECK(countSent(VK_T_PROOF) == 2);
-  t_ms += 200;
-  CHECK(requests::onChal(MAC_OTHER, chal.data(), chal.size()));           // the limit is per request, not per sender
-  CHECK(countSent(VK_T_PROOF) == 3);
-
-  // The total is reached: nothing more, however long the wait.
-  const int signsBefore = sign_calls;
-  for (int i = 0; i < 5; i++) {
-    t_ms += 1000;
-    CHECK(requests::onChal(MAC_PAYER, chal.data(), chal.size()));
+  for (uint8_t i = 0; i < 9; i++) {
+    t_ms += 1500;                                           // beyond the gap and the bucket
+    CHECK(requests::onChal(MAC_PAYER, makeChal(o.req_id, i, PAYER_PUB).data(), VK_CHAL_LEN));
   }
   CHECK(countSent(VK_T_PROOF) == 3);
-  CHECK(sign_calls == signsBefore);
-  State st; uint32_t proofs = 0;
-  CHECK(requests::requestStatus(o.req_id, st, proofs) && proofs == 3);
-
-  // A second request has its own budget.
-  requests::Opened o2;
-  CHECK(requests::openRequest(args(), o2) == VK_OK);
-  CHECK(requests::onChal(MAC_PAYER, makeChal(o2.req_id, 2, PAYER_PUB).data(), VK_CHAL_LEN));
+  CHECK(requests::stats().chal_over_budget == 6);
+  const int signsBefore = sign_calls;
+  t_ms += 1500;
+  CHECK(requests::onChal(MAC_PAYER, makeChal(o.req_id, 0x77, PAYER_PUB).data(), VK_CHAL_LEN));
+  requests::update();
+  CHECK(sign_calls == signsBefore);                         // refused before anything is signed
+  // Another MAC has its own budget, and so does the same MAC on another request.
+  CHECK(requests::onChal(MAC_OTHER, makeChal(o.req_id, 0x50, PAYER_PUB).data(), VK_CHAL_LEN));
   CHECK(countSent(VK_T_PROOF) == 4);
+  CHECK(requests::requestStatus(o.req_id, st, proofs) && proofs == 4);   // all challengers together
+  CHECK(requests::openRequest(args(), o2) == VK_OK);
+  t_ms += 1500;
+  CHECK(requests::onChal(MAC_PAYER, makeChal(o2.req_id, 0x51, PAYER_PUB).data(), VK_CHAL_LEN));
+  CHECK(countSent(VK_T_PROOF) == 5);
 
-  // With no gap configured, back-to-back challenges are answered up to the total.
+  // Only CHALLENGERS_PER_REQUEST MACs are counted; the least recent is forgotten (and so starts afresh).
+  fresh();
+  cfg_max_proofs = 1;
+  CHECK(requests::openRequest(args(), o) == VK_OK);
+  uint8_t mac[6];
+  memcpy(mac, MAC_SPOOF_BASE, 6);
+  for (uint8_t i = 0; i <= requests::CHALLENGERS_PER_REQUEST; i++) {
+    t_ms += 1500;
+    mac[5] = i;
+    CHECK(requests::onChal(mac, makeChal(o.req_id, i, PAYER_PUB).data(), VK_CHAL_LEN));
+  }
+  CHECK(countSent(VK_T_PROOF) == requests::CHALLENGERS_PER_REQUEST + 1);
+  t_ms += 1500;
+  mac[5] = 0;                                               // forgotten: answered again
+  CHECK(requests::onChal(mac, makeChal(o.req_id, 0x60, PAYER_PUB).data(), VK_CHAL_LEN));
+  t_ms += 1500;
+  mac[5] = (uint8_t)requests::CHALLENGERS_PER_REQUEST;      // still counted: refused
+  CHECK(requests::onChal(mac, makeChal(o.req_id, 0x61, PAYER_PUB).data(), VK_CHAL_LEN));
+  CHECK(countSent(VK_T_PROOF) == requests::CHALLENGERS_PER_REQUEST + 2);
+
+  // req_gap_ms is global: measured from the end of the last signature, whatever request and MAC.
+  // A CHAL that arrives inside the gap waits in the queue and is answered by the service.
+  fresh();
+  CHECK(requests::openRequest(args(), o) == VK_OK);
+  CHECK(requests::openRequest(args(), o2) == VK_OK);
+  CHECK(requests::onChal(MAC_PAYER, makeChal(o.req_id, 1, PAYER_PUB).data(), VK_CHAL_LEN));
+  CHECK(countSent(VK_T_PROOF) == 1);
+  t_ms += 199;
+  CHECK(requests::onChal(MAC_OTHER, makeChal(o2.req_id, 2, PAYER_PUB).data(), VK_CHAL_LEN));
+  requests::update();
+  CHECK(countSent(VK_T_PROOF) == 1);
+  t_ms += 1;
+  requests::update();
+  CHECK(countSent(VK_T_PROOF) == 2);
+  vk_proof_t p;
+  CHECK(lastProofTo(MAC_OTHER, p) && memcmp(p.req_id, o2.req_id, 8) == 0 && proofSignsNonce(p, 2, PAYER_PUB));
+
+  // The bucket: ANSWER_BURST answers back to back, then one per ANSWER_REFILL_MS however many ask.
   fresh();
   cfg_gap_ms = 0;
   CHECK(requests::openRequest(args(), o) == VK_OK);
-  const std::vector<uint8_t> chal2 = makeChal(o.req_id, 3, PAYER_PUB);
-  for (int i = 0; i < 9; i++) CHECK(requests::onChal(MAC_PAYER, chal2.data(), chal2.size()));
-  CHECK(countSent(VK_T_PROOF) == 8);                        // nine CHALs, req_max_proofs answers (T-REQ4)
+  for (uint8_t i = 0; i < 6; i++) {
+    mac[5] = i;
+    CHECK(requests::onChal(mac, makeChal(o.req_id, i, PAYER_PUB).data(), VK_CHAL_LEN));
+  }
+  CHECK(countSent(VK_T_PROOF) == requests::ANSWER_BURST);
+  t_ms += requests::ANSWER_REFILL_MS - 1;
+  requests::update();
+  CHECK(countSent(VK_T_PROOF) == requests::ANSWER_BURST);
+  t_ms += 1;
+  requests::update();
+  requests::update();
+  CHECK(countSent(VK_T_PROOF) == requests::ANSWER_BURST + 1);
+  // A long quiet period refills the bucket to ANSWER_BURST, not more.
+  t_ms += 100 * requests::ANSWER_REFILL_MS;
+  for (uint8_t i = 10; i < 16; i++) {
+    mac[5] = i;
+    CHECK(requests::onChal(mac, makeChal(o.req_id, i, PAYER_PUB).data(), VK_CHAL_LEN));
+  }
+  CHECK(countSent(VK_T_PROOF) == 2 * requests::ANSWER_BURST + 1);
 
   // A signature that fails is not counted as a proof, but it starts the gap.
   fresh();
   CHECK(requests::openRequest(args(), o) == VK_OK);
-  const std::vector<uint8_t> chal3 = makeChal(o.req_id, 4, PAYER_PUB);
   sign_fails = true;
-  CHECK(requests::onChal(MAC_PAYER, chal3.data(), chal3.size()));
+  CHECK(requests::onChal(MAC_PAYER, makeChal(o.req_id, 4, PAYER_PUB).data(), VK_CHAL_LEN));
   sign_fails = false;
   CHECK(sent.empty());
   CHECK(requests::requestStatus(o.req_id, st, proofs) && proofs == 0);
-  CHECK(requests::onChal(MAC_PAYER, chal3.data(), chal3.size()));         // inside the gap
+  CHECK(requests::onChal(MAC_PAYER, makeChal(o.req_id, 5, PAYER_PUB).data(), VK_CHAL_LEN));   // inside the gap
   CHECK(sent.empty());
   t_ms += 200;
-  CHECK(requests::onChal(MAC_PAYER, chal3.data(), chal3.size()));
+  requests::update();
   CHECK(countSent(VK_T_PROOF) == 1);
+}
+
+static void test_chal_queue() {
+  requests::Opened o, o2;
+  vk_proof_t p;
+  uint8_t mac[6];
+  memcpy(mac, MAC_SPOOF_BASE, 6);
+
+  // Newest first: of two CHALs that waited, the later one is answered first.
+  fresh();
+  CHECK(requests::openRequest(args(), o) == VK_OK);
+  CHECK(requests::onChal(MAC_OTHER, makeChal(o.req_id, 1, V_ISSUER_PUB).data(), VK_CHAL_LEN));
+  t_ms += 10;
+  mac[5] = 1;
+  CHECK(requests::onChal(mac, makeChal(o.req_id, 2, V_ISSUER_PUB).data(), VK_CHAL_LEN));
+  t_ms += 10;
+  CHECK(requests::onChal(MAC_PAYER, makeChal(o.req_id, 3, PAYER_PUB).data(), VK_CHAL_LEN));
+  t_ms += 200;
+  sent.clear();
+  requests::update();
+  CHECK(countSent(VK_T_PROOF) == 1 && lastProofTo(MAC_PAYER, p));
+  t_ms += 200;
+  sent.clear();
+  requests::update();
+  CHECK(countSent(VK_T_PROOF) == 1 && lastProofTo(mac, p));
+
+  // A newer CHAL from the same MAC for the same request replaces the queued one.
+  fresh();
+  CHECK(requests::openRequest(args(), o) == VK_OK);
+  CHECK(requests::onChal(MAC_OTHER, makeChal(o.req_id, 1, V_ISSUER_PUB).data(), VK_CHAL_LEN));
+  t_ms += 10;
+  CHECK(requests::onChal(MAC_PAYER, makeChal(o.req_id, 0x21, PAYER_PUB).data(), VK_CHAL_LEN));
+  t_ms += 10;
+  CHECK(requests::onChal(MAC_PAYER, makeChal(o.req_id, 0x22, PAYER_PUB).data(), VK_CHAL_LEN));
+  t_ms += 200;
+  sent.clear();
+  requests::update();
+  t_ms += 200;
+  requests::update();
+  CHECK(countSent(VK_T_PROOF) == 1);                        // one answer for MAC_PAYER, for the newer nonce
+  CHECK(lastProofTo(MAC_PAYER, p) && proofSignsNonce(p, 0x22, PAYER_PUB));
+
+  // A full queue drops its oldest entry for a newer CHAL.
+  fresh();
+  CHECK(requests::openRequest(args(), o) == VK_OK);
+  CHECK(requests::onChal(MAC_OTHER, makeChal(o.req_id, 1, V_ISSUER_PUB).data(), VK_CHAL_LEN));   // answered
+  for (uint8_t i = 0; i <= requests::CHAL_QUEUE_LEN; i++) {
+    t_ms += 1;
+    mac[5] = i;
+    CHECK(requests::onChal(mac, makeChal(o.req_id, (uint8_t)(0x30 + i), V_ISSUER_PUB).data(), VK_CHAL_LEN));
+  }
+  CHECK(requests::stats().chal_displaced == 1);
+
+  // A CHAL that waited longer than presence_ms is dropped unanswered: the payer would judge it late.
+  fresh();
+  CHECK(requests::openRequest(args(), o) == VK_OK);
+  CHECK(requests::onChal(MAC_OTHER, makeChal(o.req_id, 1, V_ISSUER_PUB).data(), VK_CHAL_LEN));
+  CHECK(requests::onChal(MAC_PAYER, makeChal(o.req_id, 2, PAYER_PUB).data(), VK_CHAL_LEN, t_ms - 1400));
+  t_ms += 101;                                              // the CHAL is 1501 ms old: dropped before the rate is asked
+  sent.clear();
+  requests::update();
+  CHECK(countSent(VK_T_PROOF) == 0);
+  CHECK(requests::stats().chal_stale == 1);
+
+  // Closing a request drops what is queued for it.
+  fresh();
+  CHECK(requests::openRequest(args(), o) == VK_OK);
+  CHECK(requests::openRequest(args(), o2) == VK_OK);
+  CHECK(requests::onChal(MAC_OTHER, makeChal(o2.req_id, 1, V_ISSUER_PUB).data(), VK_CHAL_LEN));
+  CHECK(requests::onChal(MAC_PAYER, makeChal(o.req_id, 2, PAYER_PUB).data(), VK_CHAL_LEN));
+  CHECK(requests::closeRequest(o.req_id));
+  t_ms += 200;
+  sent.clear();
+  const int signsBefore = sign_calls;
+  requests::update();
+  CHECK(sign_calls == signsBefore && countSent(VK_T_PROOF) == 0);
 }
 
 // ---- the validators of the two signing domains ------------------------------------------------
@@ -615,34 +755,45 @@ static void test_cache_keeps_eight_distinct() {
   for (uint8_t id = 1; id <= 8; id++) {
     const std::vector<uint8_t> f = makeReq(id, expiry);
     CHECK(!requests::onReq(MAC_PAYEE, f.data(), f.size(), -40, t_ms));     // false: the app gets it too
-    t_ms += 10;
+    t_ms += requests::CACHE_VERIFY_GAP_MS;                                  // one signature check per gap
   }
   CHECK(requests::cacheCount() == 8);
   CHECK(notes.size() == 8);
 
-  // The same request heard again is not a new entry, and is not announced again.
+  // The same request heard again is not a new entry, and is not announced again. Heard from
+  // another MAC while its first MAC is still sending it, the entry keeps the first MAC.
   const std::vector<uint8_t> again = makeReq(3, expiry);
+  const int verifiesBefore = verify_calls;
   CHECK(!requests::onReq(MAC_OTHER, again.data(), again.size(), -70, t_ms));
+  CHECK(verify_calls == verifiesBefore);                    // the same bytes: nothing to check again
   CHECK(requests::cacheCount() == 8);
   CHECK(notes.size() == 8);
-  bool found = false;
-  for (size_t i = 0; i < requests::cacheCount(); i++) {
-    const requests::Cached *c = requests::cacheAt(i);
-    CHECK(c != nullptr);
-    if (c && c->req.req_id[0] == 3) {
-      found = true;
-      CHECK(memcmp(c->mac, MAC_OTHER, 6) == 0);             // who it was last heard from
-      CHECK(c->rssi == -70);
-      CHECK(c->heard_ms == t_ms);
-      CHECK(c->frame_len == again.size() && memcmp(c->frame, again.data(), again.size()) == 0);
-      CHECK(c->req.amount == 1000 && strcmp(c->req.name, "Shop") == 0);
+  auto entry = [](uint8_t id) -> const requests::Cached * {
+    for (size_t i = 0; i < requests::cacheCount(); i++) {
+      if (requests::cacheAt(i)->req.req_id[0] == id) return requests::cacheAt(i);
     }
-  }
-  CHECK(found);
+    return nullptr;
+  };
+  const requests::Cached *c = entry(3);
+  CHECK(c != nullptr);
+  CHECK(memcmp(c->mac, MAC_PAYEE, 6) == 0);
+  CHECK(c->rssi == -40);                                    // as heard from that MAC
+  CHECK(c->heard_ms == t_ms);                               // heard, from anyone
+  CHECK(c->frame_len == again.size() && memcmp(c->frame, again.data(), again.size()) == 0);
+  CHECK(c->req.amount == 1000 && strcmp(c->req.name, "Shop") == 0);
   CHECK(requests::cacheAt(8) == nullptr);
+  // Once the first MAC has been silent for CACHE_MAC_HOLD_MS, the other MAC takes the entry.
+  const uint32_t firstHeard = c->mac_heard_ms;
+  t_ms = firstHeard + requests::CACHE_MAC_HOLD_MS - 1;
+  CHECK(!requests::onReq(MAC_OTHER, again.data(), again.size(), -70, t_ms));
+  CHECK(memcmp(entry(3)->mac, MAC_PAYEE, 6) == 0);
+  t_ms = firstHeard + requests::CACHE_MAC_HOLD_MS;
+  CHECK(!requests::onReq(MAC_OTHER, again.data(), again.size(), -70, t_ms));
+  CHECK(memcmp(entry(3)->mac, MAC_OTHER, 6) == 0 && entry(3)->rssi == -70);
+  CHECK(entry(3)->mac_heard_ms == t_ms);
 
   // A ninth distinct request replaces the one that has been silent longest (id 1).
-  t_ms += 10;
+  t_ms += requests::CACHE_VERIFY_GAP_MS;
   const std::vector<uint8_t> ninth = makeReq(9, expiry);
   CHECK(!requests::onReq(MAC_PAYEE, ninth.data(), ninth.size(), -40, t_ms));
   CHECK(requests::cacheCount() == 8);
@@ -661,6 +812,17 @@ static void test_cache_keeps_eight_distinct() {
   bad[61] = 0;                                              // name_len 0
   CHECK(!requests::onReq(MAC_PAYEE, bad.data(), bad.size(), -40, t_ms));
   CHECK(requests::cacheCount() == 8);
+
+  // A new request heard within CACHE_VERIFY_GAP_MS of the last check is left for its next broadcast.
+  t_ms += requests::CACHE_VERIFY_GAP_MS;
+  const std::vector<uint8_t> f11 = makeReq(11, expiry), f12 = makeReq(12, expiry);
+  CHECK(!requests::onReq(MAC_PAYEE, f11.data(), f11.size(), -40, t_ms));
+  CHECK(!requests::onReq(MAC_PAYEE, f12.data(), f12.size(), -40, t_ms + 1));
+  CHECK(entry(11) != nullptr && entry(12) == nullptr);
+  CHECK(requests::stats().req_deferred == 1);
+  t_ms += requests::CACHE_VERIFY_GAP_MS;
+  CHECK(!requests::onReq(MAC_PAYEE, f12.data(), f12.size(), -40, t_ms));
+  CHECK(entry(12) != nullptr);
 }
 
 static void test_cache_drops_by_age_and_expiry() {
@@ -669,9 +831,11 @@ static void test_cache_drops_by_age_and_expiry() {
   const std::vector<uint8_t> a = makeReq(1, t_unix + 600);
   const std::vector<uint8_t> b = makeReq(2, t_unix + 600);
   const std::vector<uint8_t> c = makeReq(3, t_unix + 20);
+  requests::onReq(MAC_PAYEE, c.data(), c.size(), -40, t_ms - 2 * requests::CACHE_VERIFY_GAP_MS);
+  t_ms += requests::CACHE_VERIFY_GAP_MS;                    // one signature check per gap; a is heard last
+  requests::onReq(MAC_PAYEE, b.data(), b.size(), -40, t_ms - requests::CACHE_VERIFY_GAP_MS);
+  t_ms += requests::CACHE_VERIFY_GAP_MS;
   requests::onReq(MAC_PAYEE, a.data(), a.size(), -40, t_ms);
-  requests::onReq(MAC_PAYEE, b.data(), b.size(), -40, t_ms);
-  requests::onReq(MAC_PAYEE, c.data(), c.size(), -40, t_ms);
   CHECK(requests::cacheCount() == 3);
 
   // b is heard again 20 s later; a is not.
@@ -732,6 +896,7 @@ static void test_cache_notification() {
   // While the pay app is the running app nothing is posted, but the request is still cached.
   pay_app_running = true;
   const std::vector<uint8_t> b = makeReq(2, t_unix + 600);
+  t_ms += requests::CACHE_VERIFY_GAP_MS;
   requests::onReq(MAC_PAYEE, b.data(), b.size(), -40, t_ms);
   CHECK(notes.size() == 1);
   CHECK(requests::cacheCount() == 2);
@@ -739,14 +904,17 @@ static void test_cache_notification() {
 
   // Bank rail: cents. An unknown currency: the raw number.
   const std::vector<uint8_t> c = makeReq(3, t_unix + 600, "Bank", 1250, "USD", VK_RAIL_BANK);
+  t_ms += requests::CACHE_VERIFY_GAP_MS;
   requests::onReq(MAC_PAYEE, c.data(), c.size(), -40, t_ms);
   CHECK(notes.size() == 2 && notes[1].body == "Bank 12.50 USD");
   const std::vector<uint8_t> d = makeReq(4, t_unix + 600, "Odd", 1250, "XYZ");
+  t_ms += requests::CACHE_VERIFY_GAP_MS;
   requests::onReq(MAC_PAYEE, d.data(), d.size(), -40, t_ms);
   CHECK(notes.size() == 3 && notes[2].body == "Odd 1250 XYZ");
 
   // A long name is shortened so the amount still fits the 39 characters a note shows.
   const std::vector<uint8_t> e = makeReq(5, t_unix + 600, "A very long merchant name, 32 ch", 123456789, "HACK");
+  t_ms += requests::CACHE_VERIFY_GAP_MS;
   requests::onReq(MAC_PAYEE, e.data(), e.size(), -40, t_ms);
   CHECK(notes.size() == 4);
   CHECK(notes[3].body.size() == 39);
@@ -850,23 +1018,27 @@ static void test_late_bad_sig_other_mac_first_decides() {
   CHECK(strcmp(presence::resultName(VK_PRESENCE_LATE), "late") == 0);
 
   // Bad signature: signed by a key that is not the request's payee (an impostor's made-up PROOF).
+  // It is ignored and counted; it decides nothing, and the slot never becomes BAD_SIG.
   fresh();
   o = openAsPayee();
   CHECK(presence::challenge(MAC_PAYEE, o.frame, o.frame_len) == VK_OK);
   CHECK(lastChal(chal));
   std::vector<uint8_t> forged = makeProof(o.req_id, chal.nonce, PAYER_PUB, V_ISSUER_SEED);
   CHECK(presence::onProof(MAC_PAYEE, forged.data(), forged.size(), t_ms + 10));
-  CHECK(presence::lookup(o.req_id, key, nonce) == VK_PRESENCE_BAD_SIG);
+  CHECK(presence::lookup(o.req_id, key, nonce) == VK_PRESENCE_PENDING);
   CHECK(memcmp(key, V_DEVICE_PUB, 32) == 0);
-  CHECK(strcmp(presence::resultName(VK_PRESENCE_BAD_SIG), "bad_sig") == 0);
-  // The first PROOF decided: a valid one afterwards changes nothing.
+  CHECK(presence::badProofs(o.req_id) == 1);
+  CHECK(strcmp(presence::resultName(VK_PRESENCE_BAD_SIG), "bad_sig") == 0);   // the name stays for the enum
+  // The first valid PROOF decides, and after it nothing is checked again.
   good = makeProof(o.req_id, chal.nonce, PAYER_PUB, V_DEVICE_SEED);
-  const int verifiesBefore = verify_calls;
   CHECK(presence::onProof(MAC_PAYEE, good.data(), good.size(), t_ms + 20));
-  CHECK(presence::lookup(o.req_id, nullptr, nullptr) == VK_PRESENCE_BAD_SIG);
+  CHECK(presence::lookup(o.req_id, nullptr, nullptr) == VK_PRESENCE_PRESENT);
+  const int verifiesBefore = verify_calls;
+  CHECK(presence::onProof(MAC_PAYEE, forged.data(), forged.size(), t_ms + 30));
+  CHECK(presence::lookup(o.req_id, nullptr, nullptr) == VK_PRESENCE_PRESENT);
   CHECK(verify_calls == verifiesBefore);
 
-  // Bad signature: a real PROOF for another nonce (a recorded one, replayed), and one for another payer.
+  // A real PROOF for another nonce (a recorded one, replayed), and one for another payer: ignored.
   fresh();
   o = openAsPayee();
   CHECK(presence::challenge(MAC_PAYEE, o.frame, o.frame_len) == VK_OK);
@@ -876,15 +1048,43 @@ static void test_late_bad_sig_other_mac_first_decides() {
   otherNonce[0] ^= 1;
   std::vector<uint8_t> replay = makeProof(o.req_id, otherNonce, PAYER_PUB, V_DEVICE_SEED);
   CHECK(presence::onProof(MAC_PAYEE, replay.data(), replay.size(), t_ms + 10));
-  CHECK(presence::lookup(o.req_id, nullptr, nullptr) == VK_PRESENCE_BAD_SIG);
+  std::vector<uint8_t> forOther = makeProof(o.req_id, chal.nonce, V_ISSUER_PUB, V_DEVICE_SEED);
+  CHECK(presence::onProof(MAC_PAYEE, forOther.data(), forOther.size(), t_ms + 10));
+  CHECK(presence::lookup(o.req_id, nullptr, nullptr) == VK_PRESENCE_PENDING);
+  CHECK(presence::badProofs(o.req_id) == 2);
 
+  // Only invalid PROOFs until the deadline and after: the slot stays PENDING (amber), never red.
+  // A valid one after the deadline is LATE. At most PROOF_CHECKS_MAX are checked per challenge;
+  // the rest are counted unchecked. A new challenge starts a new count.
   fresh();
   o = openAsPayee();
   CHECK(presence::challenge(MAC_PAYEE, o.frame, o.frame_len) == VK_OK);
   CHECK(lastChal(chal));
-  std::vector<uint8_t> forOther = makeProof(o.req_id, chal.nonce, V_ISSUER_PUB, V_DEVICE_SEED);
-  CHECK(presence::onProof(MAC_PAYEE, forOther.data(), forOther.size(), t_ms + 10));
-  CHECK(presence::lookup(o.req_id, nullptr, nullptr) == VK_PRESENCE_BAD_SIG);
+  forged = makeProof(o.req_id, chal.nonce, PAYER_PUB, V_ISSUER_SEED);
+  for (uint32_t i = 0; i < presence::PROOF_CHECKS_MAX - 1; i++) {
+    CHECK(presence::onProof(MAC_PAYEE, forged.data(), forged.size(), t_ms + 10 + i));
+  }
+  CHECK(verify_calls == (int)presence::PROOF_CHECKS_MAX - 1);
+  good = makeProof(o.req_id, chal.nonce, PAYER_PUB, V_DEVICE_SEED);
+  CHECK(presence::onProof(MAC_PAYEE, good.data(), good.size(), t_ms + cfg_presence_ms + 1));
+  CHECK(presence::lookup(o.req_id, nullptr, nullptr) == VK_PRESENCE_LATE);
+  fresh();
+  o = openAsPayee();
+  CHECK(presence::challenge(MAC_PAYEE, o.frame, o.frame_len) == VK_OK);
+  CHECK(lastChal(chal));
+  forged = makeProof(o.req_id, chal.nonce, PAYER_PUB, V_ISSUER_SEED);
+  for (uint32_t i = 0; i < presence::PROOF_CHECKS_MAX + 4; i++) {
+    CHECK(presence::onProof(MAC_PAYEE, forged.data(), forged.size(), t_ms + 10 + i));
+  }
+  CHECK(verify_calls == (int)presence::PROOF_CHECKS_MAX);
+  CHECK(presence::badProofs(o.req_id) == presence::PROOF_CHECKS_MAX + 4);
+  CHECK(presence::lookup(o.req_id, nullptr, nullptr) == VK_PRESENCE_PENDING);
+  CHECK(presence::challenge(MAC_PAYEE, o.frame, o.frame_len) == VK_OK);
+  CHECK(lastChal(chal));
+  CHECK(presence::badProofs(o.req_id) == 0);
+  good = makeProof(o.req_id, chal.nonce, PAYER_PUB, V_DEVICE_SEED);
+  CHECK(presence::onProof(MAC_PAYEE, good.data(), good.size(), t_ms + 50));
+  CHECK(presence::lookup(o.req_id, nullptr, nullptr) == VK_PRESENCE_PRESENT);
 
   // A PROOF from another MAC is ignored, valid or not; the slot stays PENDING for the real one.
   fresh();
@@ -1032,18 +1232,220 @@ static void test_honest_exchange() {
   CHECK(memcmp(key, c->req.payee_pubkey, 32) == 0);
   CHECK(presence::lastProofMs() == t_ms - t0);
 
-  // An impostor replays the REQ from its own MAC: the payer challenges that MAC and nobody who
-  // holds the payee key answers, so the slot stays PENDING (amber on the approval).
+  // An impostor replays the REQ from its own MAC. While the payee keeps broadcasting, the cache
+  // keeps the payee's MAC. Challenged at the impostor's MAC (T-REQ3, or a payer that only ever heard
+  // the replay), nobody who holds the payee key answers, so the slot stays PENDING (amber).
   CHECK(!requests::onReq(MAC_OTHER, req.data(), req.size(), -30, t_ms));
   c = requests::cacheAt(0);
-  CHECK(memcmp(c->mac, MAC_OTHER, 6) == 0);
-  CHECK(presence::challenge(c->mac, c->frame, c->frame_len) == VK_OK);
+  CHECK(memcmp(c->mac, MAC_PAYEE, 6) == 0);
+  CHECK(presence::challenge(MAC_OTHER, c->frame, c->frame_len) == VK_OK);
   // The real payee's PROOF for the new nonce would come from another MAC and is ignored.
   vk_chal_t again;
   CHECK(lastChal(again));
   const std::vector<uint8_t> real = makeProof(o.req_id, again.nonce, PAYER_PUB, V_DEVICE_SEED);
   CHECK(presence::onProof(MAC_PAYEE, real.data(), real.size(), t_ms + 100));
   CHECK(presence::lookup(o.req_id, nullptr, nullptr) == VK_PRESENCE_PENDING);
+}
+
+// ---- attacks: someone in radio range tries to spoil an honest payment ---------------------------
+// Audit finding 9 / build-list item 20. Each test plays an attacker who can send any frame from any
+// MAC (an ESP32 can set its own MAC) but does not hold the payee's key. None of them may turn an
+// honest exchange into anything but PRESENT, and none may leave a lasting effect once it stops.
+
+// The CHAL the payer's firmware sent last, answered by the payee's firmware: the PROOF frame, or
+// an empty vector when the payee did not answer.
+static std::vector<uint8_t> payeeAnswers(const uint8_t chalFrame[VK_CHAL_LEN], const uint8_t mac[6]) {
+  bePayee();
+  sent.clear();
+  requests::onChal(mac, chalFrame, VK_CHAL_LEN);
+  requests::update();                                       // a queued answer goes out on the next pass
+  std::vector<uint8_t> proof;
+  for (const Sent &s : sent) {
+    if (vk_frame_type(s.frame.data(), s.frame.size()) == VK_T_PROOF && memcmp(s.mac, mac, 6) == 0) proof = s.frame;
+  }
+  bePayer();
+  sent.clear();
+  return proof;
+}
+
+// Attack 1a: eight CHALs from the attacker's own MAC used to exhaust req_max_proofs for the whole
+// request, so the honest payer's CHAL afterwards was never answered.
+static void test_attack_chal_flood_one_mac() {
+  fresh();
+  bePayee();
+  requests::Opened o;
+  CHECK(requests::openRequest(args(), o) == VK_OK);
+  for (int i = 0; i < 16; i++) {
+    t_ms += 1500;                                           // slow enough for every rate limit
+    requests::onChal(MAC_OTHER, makeChal(o.req_id, (uint8_t)(0x40 + i), V_ISSUER_PUB).data(), VK_CHAL_LEN);
+  }
+  t_ms += 1500;
+  bePayer();
+  CHECK(presence::challenge(MAC_PAYEE, o.frame, o.frame_len) == VK_OK);
+  vk_chal_t chal;
+  CHECK(lastChal(chal));
+  uint8_t chalFrame[VK_CHAL_LEN];
+  vk_chal_build(&chal, chalFrame, sizeof chalFrame);
+  const std::vector<uint8_t> proof = payeeAnswers(chalFrame, MAC_PAYER);
+  CHECK(!proof.empty());                                    // the honest payer is still answered
+  CHECK(presence::onProof(MAC_PAYEE, proof.data(), proof.size(), t_ms + 50));
+  CHECK(presence::lookup(o.req_id, nullptr, nullptr) == VK_PRESENCE_PRESENT);
+}
+
+// Attack 1b: the same with a fresh spoofed MAC per CHAL. While it lasts the attacker competes for
+// the payee's answer rate; once it stops the honest payer is answered (nothing was used up).
+static void test_attack_chal_flood_spoofed_macs() {
+  fresh();
+  bePayee();
+  requests::Opened o;
+  CHECK(requests::openRequest(args(), o) == VK_OK);
+  uint8_t mac[6];
+  memcpy(mac, MAC_SPOOF_BASE, 6);
+  for (int i = 0; i < 64; i++) {
+    t_ms += 300;
+    mac[5] = (uint8_t)i;
+    requests::onChal(mac, makeChal(o.req_id, (uint8_t)i, V_ISSUER_PUB).data(), VK_CHAL_LEN);
+    requests::update();
+  }
+  t_ms += 1500;
+  const std::vector<uint8_t> chal = makeChal(o.req_id, 0xC3, PAYER_PUB);
+  sent.clear();
+  CHECK(requests::onChal(MAC_PAYER, chal.data(), chal.size()));
+  requests::update();
+  CHECK(countSent(VK_T_PROOF) == 1);
+  vk_proof_t p;
+  CHECK(lastProofTo(MAC_PAYER, p) && proofSignsNonce(p, 0xC3, PAYER_PUB));
+}
+
+// Attack 2: one forged PROOF, sent from the payee's MAC before the real one arrives, used to decide
+// the slot BAD_SIG (red BAD PROOF) and the real PROOF was then ignored.
+static void test_attack_forged_proof_first() {
+  fresh();
+  const requests::Opened o = openAsPayee();
+  CHECK(presence::challenge(MAC_PAYEE, o.frame, o.frame_len) == VK_OK);
+  vk_chal_t chal;
+  CHECK(lastChal(chal));
+  // Junk signature, a signature by another key, and the right key over a wrong nonce.
+  std::vector<uint8_t> junk = makeProof(o.req_id, chal.nonce, PAYER_PUB, V_DEVICE_SEED);
+  junk[20] ^= 0xFF;
+  const std::vector<uint8_t> otherKey = makeProof(o.req_id, chal.nonce, PAYER_PUB, V_ISSUER_SEED);
+  uint8_t wrongNonce[16];
+  memcpy(wrongNonce, chal.nonce, 16);
+  wrongNonce[15] ^= 1;
+  const std::vector<uint8_t> otherNonce = makeProof(o.req_id, wrongNonce, PAYER_PUB, V_DEVICE_SEED);
+  const std::vector<uint8_t> otherPayer = makeProof(o.req_id, chal.nonce, V_ISSUER_PUB, V_DEVICE_SEED);
+  CHECK(presence::onProof(MAC_PAYEE, junk.data(), junk.size(), t_ms + 5));
+  CHECK(presence::onProof(MAC_PAYEE, otherKey.data(), otherKey.size(), t_ms + 6));
+  CHECK(presence::onProof(MAC_PAYEE, otherNonce.data(), otherNonce.size(), t_ms + 7));
+  CHECK(presence::onProof(MAC_PAYEE, otherPayer.data(), otherPayer.size(), t_ms + 8));
+  CHECK(presence::lookup(o.req_id, nullptr, nullptr) == VK_PRESENCE_PENDING);       // not red
+  const std::vector<uint8_t> good = makeProof(o.req_id, chal.nonce, PAYER_PUB, V_DEVICE_SEED);
+  CHECK(presence::onProof(MAC_PAYEE, good.data(), good.size(), t_ms + 250));
+  CHECK(presence::lookup(o.req_id, nullptr, nullptr) == VK_PRESENCE_PRESENT);
+}
+
+// Attack 3: replay. A PROOF recorded from an earlier challenge (of this request or of an earlier
+// one) is sent again after the payer challenged afresh. It used to decide BAD_SIG.
+static void test_attack_replayed_proof() {
+  fresh();
+  const requests::Opened earlier = openAsPayee();
+  CHECK(presence::challenge(MAC_PAYEE, earlier.frame, earlier.frame_len) == VK_OK);
+  vk_chal_t c0;
+  CHECK(lastChal(c0));
+  const std::vector<uint8_t> recordedEarlier = makeProof(earlier.req_id, c0.nonce, PAYER_PUB, V_DEVICE_SEED);
+  CHECK(presence::onProof(MAC_PAYEE, recordedEarlier.data(), recordedEarlier.size(), t_ms + 100));
+  CHECK(presence::lookup(earlier.req_id, nullptr, nullptr) == VK_PRESENCE_PRESENT);
+
+  t_ms += 5000;
+  const requests::Opened o = openAsPayee();
+  CHECK(presence::challenge(MAC_PAYEE, o.frame, o.frame_len) == VK_OK);
+  vk_chal_t c1;
+  CHECK(lastChal(c1));
+  const std::vector<uint8_t> recorded = makeProof(o.req_id, c1.nonce, PAYER_PUB, V_DEVICE_SEED);
+  t_ms += 2000;                                             // the first exchange looked lost: challenge again
+  CHECK(presence::challenge(MAC_PAYEE, o.frame, o.frame_len) == VK_OK);
+  vk_chal_t c2;
+  CHECK(lastChal(c2));
+  // The attacker replays the answer to the first challenge, after the second one was sent.
+  CHECK(presence::onProof(MAC_PAYEE, recorded.data(), recorded.size(), t_ms + 10));
+  CHECK(presence::lookup(o.req_id, nullptr, nullptr) == VK_PRESENCE_PENDING);
+  // A PROOF from the earlier request does not even name this one's slot.
+  CHECK(presence::onProof(MAC_PAYEE, recordedEarlier.data(), recordedEarlier.size(), t_ms + 11));
+  CHECK(presence::lookup(o.req_id, nullptr, nullptr) == VK_PRESENCE_PENDING);
+  const std::vector<uint8_t> good = makeProof(o.req_id, c2.nonce, PAYER_PUB, V_DEVICE_SEED);
+  CHECK(presence::onProof(MAC_PAYEE, good.data(), good.size(), t_ms + 300));
+  CHECK(presence::lookup(o.req_id, nullptr, nullptr) == VK_PRESENCE_PRESENT);
+}
+
+// Attack 3b: a recorded CHAL is replayed to the payee, from the honest payer's MAC. Each copy used
+// to cost a signature and a unit of the request's budget. A CHAL of a request that has closed is
+// not answered at all.
+static void test_attack_replayed_chal() {
+  fresh();
+  bePayee();
+  requests::Opened old, o;
+  CHECK(requests::openRequest(args(), old) == VK_OK);
+  const std::vector<uint8_t> oldChal = makeChal(old.req_id, 0x31, PAYER_PUB);
+  CHECK(requests::onChal(MAC_PAYER, oldChal.data(), oldChal.size()));
+  CHECK(countSent(VK_T_PROOF) == 1);
+  CHECK(requests::closeRequest(old.req_id));
+  CHECK(requests::openRequest(args(), o) == VK_OK);
+  const std::vector<uint8_t> chal = makeChal(o.req_id, 0x32, PAYER_PUB);
+  t_ms += 1500;
+  CHECK(requests::onChal(MAC_PAYER, chal.data(), chal.size()));
+  CHECK(countSent(VK_T_PROOF) == 2);
+  const int signsBefore = sign_calls;
+  for (int i = 0; i < 10; i++) {
+    t_ms += 1500;
+    CHECK(requests::onChal(MAC_PAYER, chal.data(), chal.size()));
+    CHECK(requests::onChal(MAC_OTHER, chal.data(), chal.size()));
+    CHECK(requests::onChal(MAC_PAYER, oldChal.data(), oldChal.size()));
+    requests::update();
+  }
+  CHECK(sign_calls == signsBefore);
+  CHECK(countSent(VK_T_PROOF) == 2);
+}
+
+static std::vector<uint8_t> makeSignedReq(uint8_t id, uint32_t expiry, uint64_t amount = 1000) {
+  return makeReq(id, expiry, "Shop", amount);
+}
+
+// Attack 4: the cache. A replay of the honest REQ from the attacker's MAC used to move the entry's
+// MAC (the payer then challenged the attacker: amber), and a REQ with the same req_id but other
+// bytes used to replace the honest frame (red BAD REQUEST, or the wrong amount listed).
+static void test_attack_req_cache() {
+  fresh();
+  bePayer();
+  const std::vector<uint8_t> honest = makeSignedReq(1, t_unix + 600);
+  CHECK(!requests::onReq(MAC_PAYEE, honest.data(), honest.size(), -50, t_ms));
+  CHECK(requests::cacheCount() == 1 && notes.size() == 1);
+
+  // Replayed byte for byte, from another MAC, while the payee keeps broadcasting.
+  for (int i = 0; i < 5; i++) {
+    t_ms += 300;
+    CHECK(!requests::onReq(MAC_OTHER, honest.data(), honest.size(), -20, t_ms));
+    t_ms += 700;
+    CHECK(!requests::onReq(MAC_PAYEE, honest.data(), honest.size(), -50, t_ms));
+    t_ms += 1;
+    CHECK(!requests::onReq(MAC_OTHER, honest.data(), honest.size(), -20, t_ms));
+  }
+  CHECK(requests::cacheCount() == 1);
+  CHECK(memcmp(requests::cacheAt(0)->mac, MAC_PAYEE, 6) == 0);
+
+  // The same req_id and payee key with another amount (the signature no longer matches).
+  std::vector<uint8_t> altered = makeSignedReq(1, t_unix + 600, 999999);
+  altered[altered.size() - 1] ^= 1;
+  CHECK(!requests::onReq(MAC_PAYEE, altered.data(), altered.size(), -50, t_ms));
+  CHECK(requests::cacheCount() == 1);
+  const requests::Cached *c = requests::cacheAt(0);
+  CHECK(c->frame_len == honest.size() && memcmp(c->frame, honest.data(), honest.size()) == 0);
+  CHECK(c->req.amount == 1000);
+
+  // A REQ whose signature does not verify is neither cached nor announced.
+  std::vector<uint8_t> forged = makeSignedReq(2, t_unix + 600);
+  forged[forged.size() - 1] ^= 1;
+  CHECK(!requests::onReq(MAC_OTHER, forged.data(), forged.size(), -50, t_ms));
+  CHECK(requests::cacheCount() == 1 && notes.size() == 1);
 }
 
 // ---- null hooks: nothing crashes, everything is refused ---------------------------------------
@@ -1057,7 +1459,7 @@ static void test_null_hooks() {
   requests::update();
   CHECK(requests::onChal(MAC_PAYER, V_REQ, sizeof V_REQ));
   CHECK(!requests::onReq(MAC_PAYEE, V_REQ, sizeof V_REQ, -40, 0));
-  CHECK(requests::cacheCount() == 1);                       // cached; no clock, no inbox
+  CHECK(requests::cacheCount() == 0);                       // no verifier: nothing can be checked, nothing cached
   CHECK(presence::challenge(MAC_PAYEE, V_REQ, sizeof V_REQ) == VK_SIGN_FAILED);
   uint8_t proof[VK_PROOF_LEN] = {'V', 'K', 1, VK_T_PROOF};
   CHECK(presence::onProof(MAC_PAYEE, proof, sizeof proof, 0));
@@ -1078,6 +1480,7 @@ int main() {
   test_chal_for_unknown_request_is_dropped();
   test_proof_verifies_with_the_payee_key();
   test_proof_rate_limits();
+  test_chal_queue();
   test_validators();
   test_cache_keeps_eight_distinct();
   test_cache_drops_by_age_and_expiry();
@@ -1088,6 +1491,12 @@ int main() {
   test_rechallenge_replaces_the_slot();
   test_oldest_slot_is_reused();
   test_honest_exchange();
+  test_attack_chal_flood_one_mac();
+  test_attack_chal_flood_spoofed_macs();
+  test_attack_forged_proof_first();
+  test_attack_replayed_proof();
+  test_attack_replayed_chal();
+  test_attack_req_cache();
   test_null_hooks();
 
   if (fails) {

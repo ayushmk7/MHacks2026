@@ -103,4 +103,8 @@ bool validCardBytes(const uint8_t *bytes, size_t len, const uint8_t *ownKey);
 // Forgets the swap nonce. Does not touch the file or `hooks`.
 void reset();
 
+// The VK_ON_RESET listener (VKRESET, stores.md): forgets the swap nonce and removes the contacts
+// file with its .tmp and .bad. `hooks` are kept.
+void eraseAll();
+
 }  // namespace vk::contacts

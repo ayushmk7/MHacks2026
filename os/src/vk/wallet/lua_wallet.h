@@ -7,6 +7,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "pure/vk_checks.h"    // vk_token_t
+#include "pure/vk_payment.h"   // vk_pay_seen_t
 #include "reason.h"
 
 extern "C" {
@@ -35,5 +37,26 @@ int luaRefuse(lua_State *L, Reason reason);
 // base64Encode writes exactly base64Length(len) characters to `out` and no terminating NUL.
 size_t base64Length(size_t len);
 void base64Encode(const uint8_t *in, size_t len, char *out);
+
+// ---- The payee's check of a fetched payment (solana-payments.md, "Checking a received payment") ----
+
+// What luaCheckPayment found in a transaction that passed.
+struct CheckedPayment {
+  vk_pay_seen_t seen;        // the decoded transfer and the transaction's signature
+  vk_token_t token;          // the token it paid
+  uint8_t req_id[8];         // the request it answers
+};
+
+// The body of wallet.verify_payment(tx, expected) and of wallet.record_received(tx, expected):
+// reads `tx` (the wire transaction's raw bytes) and the `expected` table at those stack positions,
+// extends the callback deadline for one Ed25519 verification and runs vk_payment_verify() with the
+// payer's signature checked. Returns 0 with `out` filled when the transaction is the expected
+// payment; otherwise pushes `nil, reason, detail` and returns 3, so a binding writes
+//   if (int n = vk::wallet::luaCheckPayment(L, 1, 2, paid)) return n;
+// A wrong type (tx not a string, expected not a table, a field not a string) raises a Lua error.
+int luaCheckPayment(lua_State *L, int txIndex, int expectIndex, CheckedPayment &out);
+
+// Pushes `nil, reason, detail` and returns 3.
+int luaRefuseDetail(lua_State *L, Reason reason, const char *detail);
 
 }  // namespace vk::wallet

@@ -34,7 +34,7 @@ Permission `sign`.
 | Function | Returns | Notes |
 |---|---|---|
 | `wallet.check_record(record, sig)` | `{ok, reason, display_name, device_pubkey, kind, solana_wallet, solana_ata, expiry, status, issued_at}` | Verifies the issuer signature, status and expiry. For list UIs only: the approval verifies the record again itself. Keys are base58; `kind` is `"merchant"` or `"person"`; `status` `"active"` or `"revoked"`. Details below |
-| `wallet.build_transfer{destination=, amount=, blockhash=, [symbol=], [source=], [memo=]}` | message bytes | `destination`, `source`, `blockhash` base58. `source` defaults to `wallet.token_account(symbol)`; `symbol` defaults to the first token. Fails with `bad_arg` or `unsupported`. Details below |
+| `wallet.build_transfer{destination=, amount=, blockhash=, [symbol=], [source=], [memo=], [req_id=]}` | message bytes | `destination`, `source`, `blockhash` base58. `source` defaults to `wallet.token_account(symbol)`; `symbol` defaults to the first token. `req_id` (16 hex characters, as `wallet.requests()` gives it) adds the request memo a payment to that request must carry ([request memo](../wallet/solana-payments.md#request-memo)). Fails with `bad_arg` or `unsupported`. Details below |
 | `wallet.begin(domain, bytes, [ctx])` | `true` | Opens the firmware approval for a button domain. The app stops running until it closes |
 | `wallet.begin_solana(msg, [ctx])` | `true` | Same as `wallet.begin("solana", msg, ctx)` |
 | `wallet.begin_bank(payload, [ctx])` | `true` | Same as `wallet.begin("bank", payload, ctx)` (feature `bank`) |
@@ -56,7 +56,8 @@ Permission `sign`.
 `wallet.build_transfer`:
 
 - A missing required field, or a field that is not a string (a numeric `amount` included), raises a Lua error.
-- `bad_arg`: unknown `symbol`, bad base58, a bad or zero amount, source equal to destination, a memo that is not UTF-8 or is too long. An empty `memo` means no memo.
+- `bad_arg`: unknown `symbol`, bad base58, a bad or zero amount, source equal to destination, a memo that is not UTF-8 or is too long, a `req_id` that is not 16 hex characters, or a `req_id` together with a non-empty `memo`. An empty `memo` means no memo.
+- **Paying a request:** pass `req_id = entry.req_id` and `ctx.req = entry.req` to `begin_solana`. Without the memo, or with any other memo, the approval is red WRONG MEMO (`mismatch`).
 - `unsupported`: no token table, a default source that is not known yet, or no identity.
 - A bad argument that was supplied is reported before a missing default.
 
@@ -72,7 +73,7 @@ Before calling `begin` it extends the callback deadline by 2500 ms once, once mo
 
 The same header declares three helpers for bindings in feature folders: `int luaRefuse(lua_State *, Reason)` (pushes `nil, reason` and returns 2), `size_t base64Length(size_t)` and `void base64Encode(const uint8_t *, size_t, char *out)`. Base64 is implemented in `lua_wallet.cpp` because upstream's is in `src/identity/`, which features may not include.
 
-`begin` reasons: `not_provisioned`, `busy`, `too_long`, `unsupported`, `bad_arg`. (A Lua app without the permission never reaches `begin`: the call raises an error. `denied` exists for native apps.) `poll` reasons: `cancelled`, `timeout`, `sign_failed`, and for a blocked (red) approval the cause: `undecodable`, `unverified`, `revoked`, `expired`, `mismatch`, `bad_proof`, `over_cap`, `no_time`. A red approval reports its cause however it was closed (CANCEL or the timeout).
+`begin` reasons: `not_provisioned`, `busy`, `too_long`, `unsupported`, `bad_arg`. (A Lua app without the permission never reaches `begin`: the call raises an error. `denied` exists for native apps.) `poll` reasons: `cancelled`, `timeout`, `sign_failed`, and for a blocked (red) approval the cause: `undecodable`, `unverified`, `revoked`, `expired`, `mismatch`, `bad_proof`, `over_cap`, `over_daily` (the token's `day_limit`, [checks](../wallet/checks.md#daily-limit)), `no_time`. A red approval reports its cause however it was closed (CANCEL or the timeout).
 
 ## `badge.wallet`: requests
 
@@ -86,7 +87,65 @@ Permission `request`. Feature `requests`.
 
 `request_open` costs one signature (about 0.2 s with a software key) and does not turn ESP-NOW on: the app calls `badge.espnow.enable(true)` (upstream enables it at boot by default). A request belongs to the app that opened it and closes when that app stops.
 
-The payer's RESULT frame arrives in `on_espnow` (needs `espnow`). It is unauthenticated: confirm the transaction on chain before showing "paid" (`vk.confirm`).
+The payer's RESULT frame arrives in `on_espnow` (needs `espnow`). It is unauthenticated: before showing "paid", fetch the transaction it names and check it with `wallet.verify_payment` ([below](#badgewallet-received-payments)). A confirmed status alone (`vk.confirm`) proves only that *some* transaction landed.
+
+## `badge.wallet`: received payments
+
+The payee's check that a transaction pays its request ([solana-payments](../wallet/solana-payments.md#checking-a-received-payment)). Implemented in `src/vk/wallet/lua_wallet.cpp` (`verify_payment`) and `src/vk/features/history/lua_history.cpp` (`record_received`).
+
+| Function | Permission | Returns |
+|---|---|---|
+| `wallet.verify_payment(tx, expected)` | none | `true, {payer, sig}` (both base58: the paying badge's key and the transaction signature), or `nil, reason, detail` |
+| `wallet.record_received(tx, expected)` | `history` | `true`, or `nil, reason, detail`. Runs the same check, then writes a `received` row to the history from the transaction's own bytes. Calling it again for the same transaction writes nothing and returns `true` |
+
+`tx` is the **raw wire transaction** (bytes, not base64): `badge.codec.b64dec(result.transaction[1])`, where `result` is the reply of the RPC call
+
+```json
+{"method": "getTransaction",
+ "params": ["<signature base58>", {"encoding": "base64", "commitment": "confirmed", "maxSupportedTransactionVersion": 0}]}
+```
+
+`result.transaction` is the array `["<base64>", "base64"]`; `result` is null (Lua `nil`) until the transaction is confirmed. **The caller must also check `result.meta.err == nil`**: a failed transaction is on chain too, with the same bytes, and moved nothing. The signature to fetch is the RESULT frame's `ref` (`badge.codec.b58enc(ref)`).
+
+`expected` is a table of strings:
+
+| Field | Required | Meaning |
+|---|---|---|
+| `amount` | yes | the requested amount in display units (`"12.50"`), as passed to `request_open`. A string, never a number |
+| `req_id` | yes | the request's id, 16 hex characters (`request_open(...).req_id`) |
+| `symbol` | no | the token; default the first token of the table |
+| `to` | no | the token account that must be credited, base58; default this badge's own (`wallet.token_account(symbol)`) |
+| `sig` | no | the transaction signature the RESULT frame carried: its 64 raw bytes, or base58. When given, the fetched transaction must be that one |
+| `payer` | no | base58 key the transaction's fee payer must be (the payer badge's key) |
+
+A field of the wrong type (or a missing `amount` or `req_id`) raises a Lua error. Reasons, with `detail` saying which check failed (the order of the [table](../wallet/solana-payments.md#checking-a-received-payment)):
+
+| Reason | `detail` |
+|---|---|
+| `bad_arg` | `symbol`, `amount`, `req_id`, `to`, `payer`, `sig`: that field is not valid |
+| `unsupported` | `token` (no token table), `to` (this badge's token account is not known yet: call `wallet.refresh_balance()` first), `write` (`record_received` only: the history file could not be written) |
+| `undecodable` | `wire` (not a one-signature transaction), `shape` (not one transfer plus at most one Memo) |
+| `bad_proof` | `signature`: the transaction's signature does not verify over its message |
+| `mismatch` | `sig`, `payer`, `mint`, `recipient`, `amount`, `memo`: that part is not what was expected |
+
+Each call extends the callback deadline by 2500 ms for one Ed25519 verification (about 18 ms with Monocypher); `record_received` adds 1500 ms for the history scan and write.
+
+The intended use in the payee's flow (`lib/vk.lua`):
+
+```lua
+-- after a RESULT with status 0 for request `req` (from request_open) and amount `amount`
+local sig58 = badge.codec.b58enc(result.ref)
+local tx = vk.rpc("getTransaction", {sig58, {encoding = "base64", commitment = vk.commitment,
+                                             maxSupportedTransactionVersion = 0}})
+if tx and tx.meta and tx.meta.err == nil then
+  local raw = badge.codec.b64dec(tx.transaction[1])
+  local ok, why, detail = badge.wallet.verify_payment(raw, {amount = amount, req_id = req.req_id, sig = result.ref})
+  if ok then
+    badge.wallet.record_received(raw, {amount = amount, req_id = req.req_id, sig = result.ref})   -- needs "history"
+    -- PAID
+  end
+end
+```
 
 ## `badge.wallet`: contacts
 
@@ -106,11 +165,24 @@ A contact's name is what its owner chose to call themselves. It is **never** sho
 
 ## `badge.wallet`: history
 
-Permission `history`. Feature `history`.
+Permission `history` ("read and add to payment history"). Feature `history`.
 
 | Function | Returns |
 |---|---|
-| `wallet.history([max])` | array, newest first, of `{time, domain, outcome, reason, amount, symbol, name, address, app, sig, dev}`. `outcome` is `"signed"`, `"cancelled"`, `"timeout"`, `"blocked"`, `"failed"` or `"approved"` (a confirmation that is not a signature); `sig` is base58 or `nil` (the only field that can be `nil`); `dev` is true if a dev-build override was used. `amount` is always a string in display units (`"0"` for a confirmation); `address` is base58, or `""` when there is no recipient; `time` is 0 when the clock had no source. `max` defaults to 20, limit 64. The call extends the callback deadline by 1500 ms (one file read per entry) |
+| `wallet.history([max])` | array, newest first, of `{kind, time, domain, outcome, reason, amount, symbol, name, address, app, sig, dev, req_id, count, items}`. `max` defaults to 20, limit 64 (rows, not signatures). The call extends the callback deadline by 1500 ms (one file read per entry) |
+| `wallet.record_received(tx, expected)` | see [received payments](#badgewallet-received-payments) |
+
+The fields of a `wallet.history` row ([stores](../wallet/stores.md#history)):
+
+- `kind`: `"approval"` (an approval outcome), `"auto"` (signatures the badge made with no screen: payment requests, presence proofs, contact cards, store registration) or `"received"` (a payment `record_received` checked).
+- `outcome`: `"signed"`, `"cancelled"`, `"timeout"`, `"blocked"`, `"failed"`, `"approved"` (a confirmation that is not a signature) or `"received"`. An auto row is `"signed"` or `"failed"` (the key refused).
+- `amount` is always a string in display units (`"0"` for a confirmation and for an auto row); `symbol` and `name` may be `""`.
+- `address` is base58, or `""` when there is none: the other party (the recipient of an approval, the payer of a received payment).
+- `app` is the app id, cut to 15 characters.
+- `sig` (base58) is present only for a signed approval and for a received payment (the transaction's signature); `req_id` (16 hex) only when the row answered or received a request; otherwise these are `nil`.
+- `dev` is true if a dev-build override was used.
+- Auto rows only: `count` (1 to 8 signatures in this row) and `items`, an array of `{time, digest}`: when each signature was made and the first 16 bytes of SHA-256 of what was signed, as 32 hex characters. `time` of the row is its newest item's.
+- `time` is 0 when the clock had no source.
 
 ## `badge.wallet`: balance
 
@@ -147,6 +219,16 @@ No permission needed. The firmware's receipt kit ([ui](../ui/ui.md#the-receipt-k
 | `receipt.qr(x, y, size, text)` | a QR code of `text` centred in a light `size` × `size` square, in both themes ([the QR code](../ui/ui.md#the-receipt-kit)). Returns `true`, or `false` when nothing was drawn (an empty text, or one over 154 bytes) |
 
 A `y` is the top of the capital letters, as everywhere in the kit. What an app passes cannot hurt the firmware: an argument of the wrong type raises a Lua error (`luaL_check*`); coordinates may be integers or floats and are clamped to one screen beyond each edge (x −320 to 640, y −240 to 480), so no drawing loop runs long; a text is cut to 160 bytes before the kit sees it (which then cuts it to its space with `..`), may be a number, and may be nil, which is the empty text. The module is additive: the API version stays 2, and an app that must run on an older firmware checks `badge.receipt` for nil, as `vk.ui` does.
+
+## `badge.screen`
+
+No permission needed: keeping the screen lit costs battery, not trust, and it ends with the app. Implemented in `src/vk/ui/lua_screen.cpp` ([screen dim and sleep](../ui/ui.md#screen-dim-and-sleep)).
+
+| Function | Does |
+|---|---|
+| `screen.keep_awake(on)` | while `on` is true the screen neither dims nor sleeps (a game being played, a code being shown); `false` lets the timers run again, starting from that moment. Cleared when the app stops. Returns nothing |
+
+An app need not call it to stay usable: any key wakes the screen. Without it, the first key pressed on a dimmed or dark screen only wakes it and never reaches `on_button`. The module is additive (API version 2); an app for an older firmware checks `badge.screen` for nil.
 
 ## `badge.codec`
 

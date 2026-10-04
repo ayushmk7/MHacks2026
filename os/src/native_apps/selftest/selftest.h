@@ -27,9 +27,9 @@ enum class State : uint8_t { Waiting, Running, Ok, Fail, Skip };   // Skip is sh
 enum class Kind : uint8_t { Auto, Manual };
 enum class Profile : uint8_t { Any, Dev };   // Dev: the row exists only when VK_PROFILE_DEV is 1
 
-constexpr size_t VALUE_MAX = 40;         // a result's value, with its NUL
-constexpr size_t NAME_MAX = 33;          // a row's serial name: an app id is up to 32 characters
-constexpr size_t LABEL_MAX = 20;         // a row's label on the screen
+constexpr size_t ROW_VALUE_MAX = 40;     // a result's value, with its NUL
+constexpr size_t ROW_NAME_MAX = 33;      // a row's serial name: an app id is up to 32 characters
+constexpr size_t ROW_LABEL_MAX = 20;     // a row's label on the screen
 constexpr size_t SCRATCH_BYTES = 128;    // what one check may keep between its steps
 
 const char *stateText(State state);      // "OK", "FAIL", "--", ".."
@@ -58,7 +58,7 @@ struct Ctx {
   // ---- set by finish(), read by the runner ----
   bool finished = false;
   State result = State::Waiting;
-  char value[VALUE_MAX] = "";
+  char value[ROW_VALUE_MAX] = "";
 
   void reset(uint32_t at, size_t row, const char *rowName);
 
@@ -108,9 +108,9 @@ struct Suite {
 struct Row {
   const Check *check = nullptr;
   State state = State::Waiting;
-  char name[NAME_MAX] = "";
-  char label[LABEL_MAX] = "";
-  char value[VALUE_MAX] = "";
+  char name[ROW_NAME_MAX] = "";
+  char label[ROW_LABEL_MAX] = "";
+  char value[ROW_VALUE_MAX] = "";
 };
 
 struct Counts {

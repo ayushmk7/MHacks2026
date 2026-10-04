@@ -21,6 +21,7 @@
 #include "../../wallet/crypto.h"            // vk_verify_c
 #include "../../wallet/lua_wallet.h"        // luaBegin, luaRefuse, base64Encode
 #include "../../wallet/pure/sol.h"
+#include "../../wallet/pure/vk_payment.h"     // vk_req_id_parse, vk_req_memo
 #include "../../wallet/pure/vk_record.h"
 #include "../../wallet/signer.h"            // publicKey, tokenInfoLookup
 
@@ -54,23 +55,27 @@ bool decodeKey32(const char *text, size_t len, uint8_t out[32]) {
   return text != nullptr && strlen(text) == len && sol_b58_decode(text, out, 32) == 0;
 }
 
-// wallet.build_transfer{destination=, amount=, blockhash=, [symbol=], [source=], [memo=]}
+// wallet.build_transfer{destination=, amount=, blockhash=, [symbol=], [source=], [memo=], [req_id=]}
 //   -> message bytes | nil, "bad_arg" | nil, "unsupported"
+// `req_id` (16 hex characters, either case) makes the memo the request memo the check chain
+// requires of a payment that answers that request: the id in 16 lower-case hex characters
+// (solana-payments.md, "Request memo"). A non-empty `memo` together with `req_id` is bad_arg.
 // The payer and transfer authority is always this badge. `symbol` defaults to the first token of
 // the provisioned table; `source` defaults to this badge's token account for that token, which the
 // balance feature learns from the RPC node. "unsupported" means a default could not be resolved.
 int l_build_transfer(lua_State *L) {
   luaL_checktype(L, 1, LUA_TTABLE);
   lua_settop(L, 1);
-  luaL_checkstack(L, 10, "build_transfer");   // six fields, the scratch block, the results
+  luaL_checkstack(L, 11, "build_transfer");   // seven fields, the scratch block, the results
 
-  size_t destinationLen = 0, amountLen = 0, blockhashLen = 0, symbolLen = 0, sourceLen = 0, memoLen = 0;
+  size_t destinationLen = 0, amountLen = 0, blockhashLen = 0, symbolLen = 0, sourceLen = 0, memoLen = 0, reqLen = 0;
   const char *destinationText = transferField(L, "destination", true, &destinationLen);
   const char *amountText = transferField(L, "amount", true, &amountLen);
   const char *blockhashText = transferField(L, "blockhash", true, &blockhashLen);
   const char *symbolText = transferField(L, "symbol", false, &symbolLen);
   const char *sourceText = transferField(L, "source", false, &sourceLen);
   const char *memoText = transferField(L, "memo", false, &memoLen);
+  const char *reqText = transferField(L, "req_id", false, &reqLen);
 
   // The token: by symbol, or the first row of the table.
   vk_token_t tokens[VK_MAX_TOKENS];
@@ -95,6 +100,14 @@ int l_build_transfer(lua_State *L) {
     return luaRefuse(L, VK_BAD_ARG);
   }
   if (sourceText != nullptr && !decodeKey32(sourceText, sourceLen, source)) return luaRefuse(L, VK_BAD_ARG);
+  char reqMemo[VK_REQ_MEMO_LEN + 1];
+  if (reqText != nullptr) {
+    uint8_t reqId[8];
+    if (memoLen != 0 || vk_req_id_parse(reqText, reqLen, reqId) != 0) return luaRefuse(L, VK_BAD_ARG);
+    vk_req_memo(reqId, reqMemo);
+    memoText = reqMemo;
+    memoLen = VK_REQ_MEMO_LEN;
+  }
 
   // Defaults.
   if (sourceText == nullptr) {

@@ -274,13 +274,17 @@ def run(badge, badge2):
     # the payee badge's own device key. And the payment the payer signs: 10.00 to the record's account.
     now = int(time.time())
     record, record_sig = keys.record(issued_at=now - 5, expiry=now + 3600, device_pubkey=payee_key)
-    message = keys.transfer(payer_key, 1000)
-    payment = {"msg_hex": message, "record_hex": record, "sig_hex": record_sig}
+    payment = {"record_hex": record, "sig_hex": record_sig}
+
+    def paying(req_id, **extra):
+        """The payment for that request: 10.00 with the request memo, 16 lower-case hex characters
+        of req_id (solana-payments.md, "Request memo"; without it the approval is red WRONG MEMO)."""
+        return dict(payment, msg_hex=keys.transfer(payer_key, 1000, memo=req_id.lower()), req_id=req_id, **extra)
 
     try:
         # ---- T-REQ1, T-REQ2, T-CHK1: the honest payment --------------------------------------
         req_id, payee_channel = open_request(payee)
-        start_payer(payer, dict(payment, req_id=req_id))
+        start_payer(payer, paying(req_id))
         payer_channel = int(rp_wait(payer, r"up ch \d+").split()[-1])
         assert payer_channel == payee_channel, (
             "the badges are on different ESP-NOW channels (%d and %d): join both to the same hotspot, "
@@ -329,7 +333,7 @@ def run(badge, badge2):
 
         # ---- T-REQ3: a replayed request ------------------------------------------------------
         req_id, _ = open_request(payee)     # a fresh request (stopping reqtest closed the last one)
-        start_payer(payer, dict(payment, req_id=req_id, challenge_mac=REPLAYER_MAC, wait_ms=3000))
+        start_payer(payer, paying(req_id, challenge_mac=REPLAYER_MAC, wait_ms=3000))
         rp_wait(payer, "seen .*", timeout=10)
         assert rp_wait(payer, r"chal 1 \S+.*") == "chal 1 ok"
         assert rp_wait(payer, r"begin (?:ok|err \S+)", timeout=BEGIN_TIMEOUT_S) == "begin ok"

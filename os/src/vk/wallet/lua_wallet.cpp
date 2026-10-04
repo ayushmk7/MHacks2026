@@ -20,6 +20,7 @@
 #include "../core/clock.h"
 #include "../core/config.h"
 #include "../host/lua_registry.h"
+#include "crypto.h"            // vk_verify_c
 #include "pure/sol.h"
 #include "signer.h"
 
@@ -134,7 +135,127 @@ int luaBegin(lua_State *L, const char *domain, int bytesIndex, int ctxIndex) {
   return 1;
 }
 
+// ---------------------------------------------------------------------------
+// luaCheckPayment: the payee's check of a fetched transaction
+// ---------------------------------------------------------------------------
+
+int luaRefuseDetail(lua_State *L, Reason reason, const char *detail) {
+  lua_pushnil(L);
+  lua_pushstring(L, reasonName(reason));
+  lua_pushstring(L, detail);
+  return 3;
+}
+
 namespace {
+
+// expected.<key> of the table at `index`: nullptr when absent and optional; a value that is not a
+// string (a missing required one included) raises a Lua error, as build_transfer's fields do. The
+// value stays on the stack, so the pointer stays valid.
+const char *expectField(lua_State *L, int index, const char *key, bool required, size_t *len) {
+  *len = 0;
+  const int type = lua_getfield(L, index, key);
+  if (type == LUA_TNIL && !required) return nullptr;
+  if (type != LUA_TSTRING) {
+    luaL_error(L, "expected.%s must be a string", key);
+    return nullptr;
+  }
+  return lua_tolstring(L, -1, len);
+}
+
+// Base58 text of exactly n bytes (32 or 64). Text with a NUL inside it is not base58.
+bool decodeBase58(const char *text, size_t len, uint8_t *out, size_t n) {
+  return text != nullptr && strlen(text) == len && sol_b58_decode(text, out, n) == 0;
+}
+
+}  // namespace
+
+int luaCheckPayment(lua_State *L, int txIndex, int expectIndex, CheckedPayment &out) {
+  txIndex = lua_absindex(L, txIndex);
+  expectIndex = lua_absindex(L, expectIndex);
+  size_t txLen = 0;
+  const uint8_t *tx = (const uint8_t *)luaL_checklstring(L, txIndex, &txLen);
+  luaL_checktype(L, expectIndex, LUA_TTABLE);
+  luaL_checkstack(L, 8, "check payment");   // six fields, then the results
+
+  size_t amountLen = 0, reqLen = 0, symbolLen = 0, toLen = 0, payerLen = 0, sigLen = 0;
+  const char *amountText = expectField(L, expectIndex, "amount", true, &amountLen);
+  const char *reqText = expectField(L, expectIndex, "req_id", true, &reqLen);
+  const char *symbolText = expectField(L, expectIndex, "symbol", false, &symbolLen);
+  const char *toText = expectField(L, expectIndex, "to", false, &toLen);
+  const char *payerText = expectField(L, expectIndex, "payer", false, &payerLen);
+  const char *sigText = expectField(L, expectIndex, "sig", false, &sigLen);
+
+  memset(&out, 0, sizeof out);
+  // The token: by symbol, or the first row of the table (as build_transfer).
+  vk_token_t tokens[VK_MAX_TOKENS];
+  const size_t tokenCount = vk::config::tokens(tokens);
+  const vk_token_t *token = nullptr;
+  if (symbolText == nullptr) {
+    if (tokenCount == 0) return luaRefuseDetail(L, VK_UNSUPPORTED, "token");
+    token = &tokens[0];
+  } else {
+    for (size_t i = 0; i < tokenCount && token == nullptr; ++i) {
+      if (strlen(tokens[i].symbol) == symbolLen && memcmp(tokens[i].symbol, symbolText, symbolLen) == 0) token = &tokens[i];
+    }
+    if (token == nullptr) return luaRefuseDetail(L, VK_BAD_ARG, "symbol");
+  }
+  out.token = *token;
+
+  // What the app supplied, checked before any default is looked up.
+  uint64_t amount = 0;
+  if (strlen(amountText) != amountLen || sol_parse_amount(amountText, token->decimals, &amount) != 0 || amount == 0) {
+    return luaRefuseDetail(L, VK_BAD_ARG, "amount");
+  }
+  if (vk_req_id_parse(reqText, reqLen, out.req_id) != 0) return luaRefuseDetail(L, VK_BAD_ARG, "req_id");
+  uint8_t to[32], payer[32], sig[64];
+  if (toText != nullptr && !decodeBase58(toText, toLen, to, sizeof to)) return luaRefuseDetail(L, VK_BAD_ARG, "to");
+  if (payerText != nullptr && !decodeBase58(payerText, payerLen, payer, sizeof payer)) return luaRefuseDetail(L, VK_BAD_ARG, "payer");
+  if (sigText != nullptr) {
+    // The 64 raw bytes a RESULT frame's ref carries, or the signature in base58.
+    if (sigLen == sizeof sig) memcpy(sig, sigText, sizeof sig);
+    else if (!decodeBase58(sigText, sigLen, sig, sizeof sig)) return luaRefuseDetail(L, VK_BAD_ARG, "sig");
+  }
+  // Default recipient: this badge's own token account for the token, as the balance feature knows it.
+  if (toText == nullptr) {
+    TokenInfo info{};
+    if (tokenInfoLookup == nullptr || !tokenInfoLookup(token->mint, info) || !info.account_known) {
+      return luaRefuseDetail(L, VK_UNSUPPORTED, "to");
+    }
+    memcpy(to, info.account, sizeof to);
+  }
+
+  vk_pay_expect_t expect;
+  memset(&expect, 0, sizeof expect);
+  expect.to = to;
+  expect.mint = token->mint;
+  expect.decimals = token->decimals;
+  expect.amount = amount;
+  expect.req_id = out.req_id;
+  expect.payer = payerText != nullptr ? payer : nullptr;
+  expect.sig = sigText != nullptr ? sig : nullptr;
+  expect.verify = vk_verify_c;
+  ::runtime::extendDeadline(kCryptoBudgetMs);       // the payer's signature over the message
+  const vk_pay_err_t err = vk_payment_verify(tx, txLen, &expect, &out.seen);
+  if (err != VK_PAY_OK) return luaRefuseDetail(L, vk_pay_reason(err), vk_pay_err_name(err));
+  return 0;
+}
+
+namespace {
+
+// wallet.verify_payment(tx, expected) -> true, {payer, sig} | nil, reason, detail
+// The payee's check before it shows PAID. `tx` is the raw wire transaction the RPC node returned.
+int l_verify_payment(lua_State *L) {
+  CheckedPayment paid;
+  if (int n = luaCheckPayment(L, 1, 2, paid)) return n;
+  char text[SOL_B58_SIG_MAX];
+  lua_pushboolean(L, 1);
+  lua_createtable(L, 0, 2);
+  lua_pushlstring(L, text, sol_b58_encode(paid.seen.transfer.fee_payer, 32, text, sizeof text));
+  lua_setfield(L, -2, "payer");
+  lua_pushlstring(L, text, sol_b58_encode(paid.seen.sig, 64, text, sizeof text));
+  lua_setfield(L, -2, "sig");
+  return 2;
+}
 
 // ---------------------------------------------------------------------------
 // badge.wallet: identity (no permission)
@@ -454,6 +575,8 @@ VK_LUA_FUNCTION(time_ok, "wallet", "time_ok", nullptr, l_time_ok);
 VK_LUA_FUNCTION(time, "wallet", "time", nullptr, l_time);
 VK_LUA_FUNCTION(tokens, "wallet", "tokens", nullptr, l_tokens);
 VK_LUA_FUNCTION(config, "wallet", "config", nullptr, l_config);
+
+VK_LUA_FUNCTION(verify_payment, "wallet", "verify_payment", nullptr, l_verify_payment);
 
 VK_LUA_FUNCTION(begin, "wallet", "begin", "sign", l_begin);
 VK_LUA_FUNCTION(poll, "wallet", "poll", "sign", l_poll);

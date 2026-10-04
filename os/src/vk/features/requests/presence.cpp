@@ -38,6 +38,8 @@ struct Slot {
   uint32_t t0_ms;               // when the CHAL was sent
   vk_presence_t result;
   uint32_t order;               // higher = challenged later; the lowest is "the oldest slot"
+  uint32_t checks;              // signatures verified for this challenge
+  uint32_t bad;                 // PROOFs ignored: invalid, or over PROOF_CHECKS_MAX
 };
 Slot sSlots[SLOTS];
 uint32_t sOrder = 0;
@@ -95,7 +97,7 @@ bool onProof(const uint8_t mac[6], const uint8_t *frame, size_t len, uint32_t rx
   if (mac == nullptr || vk_proof_parse(frame, len, &proof) != 0) return true;
 
   // The PENDING slot with that req_id whose mac is the sender's. A slot that has its result keeps
-  // it: the first PROOF decides.
+  // it: the first valid PROOF decides.
   Slot *slot = findSlot(proof.req_id);
   if (slot == nullptr || slot->result != VK_PRESENCE_PENDING) return true;
   if (memcmp(slot->mac, mac, 6) != 0) return true;
@@ -108,6 +110,12 @@ bool onProof(const uint8_t mac[6], const uint8_t *frame, size_t len, uint32_t rx
   const uint8_t *own = hooks.ownKey ? hooks.ownKey() : nullptr;
   if (own == nullptr) return true;
 
+  if (slot->checks >= PROOF_CHECKS_MAX) {
+    slot->bad++;
+    return true;
+  }
+  slot->checks++;
+
   // The signed message: "pay-proof:" ‖ req_id ‖ nonce ‖ own_pubkey.
   static const char kPrefix[] = VK_PREFIX_PAY_PROOF;
   const size_t prefixLen = sizeof kPrefix - 1;
@@ -118,8 +126,11 @@ bool onProof(const uint8_t mac[6], const uint8_t *frame, size_t len, uint32_t rx
   const bool valid = hooks.verify != nullptr &&
                      hooks.verify(message, sizeof message, proof.sig, slot->payee_pubkey) == 1;
   if (!valid) {
-    slot->result = VK_PRESENCE_BAD_SIG;
-    VK_PRESENCE_LOG("proof bad signature");
+    // Forged, or a recording of an earlier challenge (its nonce is gone). Anyone can send one from
+    // the payee's MAC, so it decides nothing: the real PROOF may still come. No valid PROOF by the
+    // deadline leaves the slot PENDING, which is amber.
+    slot->bad++;
+    VK_PRESENCE_LOG("proof bad signature, ignored (%lu)", (unsigned long)slot->bad);
     return true;
   }
 
@@ -151,6 +162,11 @@ const char *resultName(vk_presence_t result) {
 }
 
 uint32_t lastProofMs() { return sLastProofMs; }
+
+uint32_t badProofs(const uint8_t req_id[8]) {
+  const Slot *slot = req_id ? findSlot(req_id) : nullptr;
+  return slot ? slot->bad : 0;
+}
 
 void reset() {
   memset(sSlots, 0, sizeof sSlots);

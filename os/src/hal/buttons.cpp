@@ -3,6 +3,8 @@
 #include "../badge_log.h"
 #include "badge_i2c.h"
 #include "../vk/vk_build.h"                     // VK: H17
+#include "../vk/ui/screen_power.h"             // VK: H25
+#include "../vk/ui/keyboard.h"                 // VK: H26
 #if VK_TEST_HOOKS                                // VK: H17
 #include "../vk/features/devtools/devtools.h"   // VK: H17
 #endif                                           // VK: H17
@@ -171,7 +173,8 @@ void update() {
           // the only way to answer the two questions a dead-key report raises:
           // is the press reaching the expander at all, and is P0..P5 mapped the
           // way config.h assumes? Read it with the silkscreen in hand.
-          for (uint8_t i = 0; i < BUTTON_COUNT; ++i) {
+          const bool typing = vk::ui::keyboard::state() != vk::ui::keyboard::State::CLOSED;   // VK: H26
+          for (uint8_t i = 0; i < BUTTON_COUNT && !typing; ++i) {                              // VK: H26
             if (sPressedMask & (uint8_t)(1U << i)) {
               badge_log::tagf("btn", "P%u %s down (raw=0x%02X)", i, name(i), raw);
             }
@@ -198,6 +201,7 @@ void update() {
     }
   }
 
+  vk_screen_filter_buttons(sDownMask, &sPressedMask, &sReleasedMask);       // VK: H25
 #if VK_TEST_HOOKS                                                           // VK: H17
   vk_dev_apply_injected_buttons(&sDownMask, &sPressedMask, &sReleasedMask); // VK: H17
 #endif                                                                      // VK: H17

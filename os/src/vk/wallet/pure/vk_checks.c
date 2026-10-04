@@ -2,13 +2,15 @@
    Spec: docs/os/wallet/checks.md ("The check chain"). No side effects, no hardware. */
 #include "vk_checks.h"
 #include <string.h>
+#include "vk_payment.h"
 
 const char *vk_headline_text(vk_headline_t h) {
   static const char *const T[] = {
     "VERIFIED - PRESENT", "VERIFIED - NOT PRESENT", "CLOCK UNSYNCED",
     "CANNOT READ PAYMENT", "UNKNOWN TOKEN", "UNVERIFIED RECIPIENT", "REVOKED", "EXPIRED", "STALE RECORD",
     "WRONG RECIPIENT", "WRONG AMOUNT", "BAD REQUEST", "BAD PROOF",
-    "OVER LIMIT"};
+    "OVER LIMIT",
+    "WRONG MEMO", "DAILY LIMIT"};
   return (unsigned)h < sizeof T / sizeof T[0] ? T[(unsigned)h] : "?";
 }
 
@@ -64,6 +66,15 @@ void vk_check_solana(const vk_check_input_t *in, vk_verdict_t *out) {
   /* 3: amount <= max */
   if (token->max != 0 && out->transfer.amount > token->max) { fail(out, VK_HL_OVER_LIMIT, VK_OVER_CAP, 0); return; }
 
+  /* 3a: amount + what was signed for this token in the last day <= the daily limit. Before check 4,
+     so the dev override (which can pass only check 4) cannot pass it either. */
+  if (in->day) {
+    const vk_day_t *d = &in->day[token - in->tokens];
+    if (d->set && (!d->spent_known || d->spent > d->limit || out->transfer.amount > d->limit - d->spent)) {
+      fail(out, VK_HL_DAILY_LIMIT, VK_OVER_DAILY, 0); return;
+    }
+  }
+
   /* 4: a record and its signature were supplied (the one failure a dev build may override) */
   if (!in->record || in->record_len == 0 || !in->record_sig) { fail(out, VK_HL_UNVERIFIED, VK_UNVERIFIED, 1); return; }
 
@@ -105,6 +116,13 @@ void vk_check_solana(const vk_check_input_t *in, vk_verdict_t *out) {
       fail(out, VK_HL_WRONG_AMOUNT, VK_MISMATCH, 0); return;
     }
 
+    /* 12a: the transfer carries this request's memo (solana-payments.md, "Request memo"), so the
+       payee can tell on chain which request it pays. A transfer with another memo, or none, is not
+       an answer to this request. */
+    if (!vk_memo_is_req(out->transfer.memo, out->transfer.memo_len, out->req.req_id)) {
+      fail(out, VK_HL_WRONG_MEMO, VK_MISMATCH, 0); return;
+    }
+
     /* 13: a judged proof (PRESENT, LATE, BAD_SIG) must be good and made for this record's key */
     if (in->presence) {
       uint8_t payee[32], nonce[16];
@@ -132,4 +150,43 @@ void vk_check_solana(const vk_check_input_t *in, vk_verdict_t *out) {
 
   /* The cap: above it SELECT is a hold, whatever the colour. */
   if (token->cap != 0 && out->transfer.amount > token->cap) out->select = VK_SEL_HOLD;
+}
+
+/* ---- daily limit ----------------------------------------------------------------------------- */
+
+int vk_day_counts(uint32_t written, uint32_t now) {
+  if (written == 0 || now == 0 || written > now) return 1;
+  return now - written < VK_DAY_SECONDS;
+}
+
+int vk_day_limits_parse(const char *text, const vk_token_t *tokens, size_t count, uint64_t out[VK_MAX_TOKENS]) {
+  int seen[VK_MAX_TOKENS] = {0};
+  size_t i;
+  const char *p = text;
+  if (!out) return -1;
+  for (i = 0; i < VK_MAX_TOKENS; i++) out[i] = 0;
+  if (!text || !*text) return 0;
+  if (count > VK_MAX_TOKENS || (count && !tokens)) return -1;
+  for (;;) {
+    const char *colon = strchr(p, ':'), *end = strchr(p, ',');
+    char amount[24];
+    size_t sym_len, amount_len, k;
+    const vk_token_t *token = NULL;
+    if (!end) end = p + strlen(p);
+    if (!colon || colon > end) return -1;
+    sym_len = (size_t)(colon - p);
+    for (k = 0; k < count; k++) {
+      if (strlen(tokens[k].symbol) == sym_len && memcmp(tokens[k].symbol, p, sym_len) == 0) { token = &tokens[k]; break; }
+    }
+    if (!token || seen[k]) return -1;
+    seen[k] = 1;
+    amount_len = (size_t)(end - colon - 1);
+    if (amount_len == 0 || amount_len >= sizeof amount) return -1;
+    memcpy(amount, colon + 1, amount_len);
+    amount[amount_len] = '\0';
+    if (sol_parse_amount(amount, token->decimals, &out[k]) != 0) return -1;
+    if (*end == '\0') return 0;
+    p = end + 1;
+    if (*p == '\0') return -1;                    /* a trailing comma */
+  }
 }

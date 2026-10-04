@@ -23,6 +23,29 @@ typedef struct {
 } vk_token_t;
 #define VK_MAX_TOKENS 3   /* keeps the provisioning line under the 256-byte serial receive buffer */
 
+/* ---- daily limit (checks.md, "Daily limit") ------------------------------------------------- */
+#define VK_DAY_SECONDS 86400u     /* the rolling window */
+
+/* One token's daily limit and what the signature log says was spent in the window. */
+typedef struct {
+  int      set;            /* 1: a limit applies to this token (a `limit` of 0 then allows nothing) */
+  uint64_t limit;          /* raw units */
+  int      spent_known;    /* 0: the total could not be read; with `set` the payment is blocked */
+  uint64_t spent;          /* raw units signed in the window, this payment not included */
+} vk_day_t;
+
+/* The config text `day_limit`: entries `SYMBOL:amount` separated by ',', amount in display units
+   with at most the token's decimals; every symbol must be in the token table, at most once.
+   out[i] is token i's limit in raw units, 0 when the text names no limit for it (an entry of 0 also
+   means no limit, as for cap and max). NULL or "" sets every limit to 0. 0 on success; on any error
+   out is unspecified. */
+int vk_day_limits_parse(const char *text, const vk_token_t *tokens, size_t count, uint64_t out[VK_MAX_TOKENS]);
+
+/* 1 if a payment signed at `written` falls in the window ending at `now`: now - written < a day.
+   Conservative where a time is unknown: written 0 (no clock then), now 0 (no clock now) and
+   written > now (the clock went back since) all count. */
+int vk_day_counts(uint32_t written, uint32_t now);
+
 /* ---- presence ------------------------------------------------------------- */
 typedef enum { VK_PRESENCE_NONE, VK_PRESENCE_PENDING, VK_PRESENCE_PRESENT, VK_PRESENCE_LATE, VK_PRESENCE_BAD_SIG } vk_presence_t;
 
@@ -34,7 +57,8 @@ typedef enum {
   VK_HL_VERIFIED_PRESENT, VK_HL_NOT_PRESENT, VK_HL_CLOCK_UNSYNCED,
   VK_HL_CANNOT_READ, VK_HL_UNKNOWN_TOKEN, VK_HL_UNVERIFIED, VK_HL_REVOKED, VK_HL_EXPIRED, VK_HL_STALE,
   VK_HL_WRONG_RECIPIENT, VK_HL_WRONG_AMOUNT, VK_HL_BAD_REQUEST, VK_HL_BAD_PROOF,
-  VK_HL_OVER_LIMIT
+  VK_HL_OVER_LIMIT,
+  VK_HL_WRONG_MEMO, VK_HL_DAILY_LIMIT
 } vk_headline_t;
 const char *vk_headline_text(vk_headline_t h);
 
@@ -47,6 +71,7 @@ typedef struct {
   uint32_t now;              vk_time_source_t time_source;   uint32_t record_ttl_s;
   int (*verify)(const uint8_t *msg, size_t len, const uint8_t *sig, const uint8_t *pubkey);   /* 1 = valid */
   vk_presence_t (*presence)(const uint8_t req_id[8], uint8_t payee_pubkey_out[32], uint8_t nonce_out[16]);   /* may be NULL: presence is then NONE */
+  const vk_day_t *day;       /* token_count entries, parallel to tokens; NULL = no daily limit for any token */
 } vk_check_input_t;
 
 typedef struct {
@@ -59,7 +84,8 @@ typedef struct {
   vk_presence_t presence;
 } vk_verdict_t;
 
-/* Runs checks 1..13 of checks.md in order; the first that fails decides the verdict (red,
+/* Runs checks 1..13 of checks.md in order (with 3a, the daily limit, after 3 and 12a, the request
+   memo, after 12); the first that fails decides the verdict (red,
    select DISABLED, its reason and headline). If none fails the verdict is amber or green with
    reason VK_OK, and the token's cap may turn SELECT into a hold.
 

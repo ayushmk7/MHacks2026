@@ -59,7 +59,7 @@ float pulse(uint32_t t_ms, uint32_t period_ms) {
   return PULSE_FLOOR + (1.0f - PULSE_FLOOR) * wave;
 }
 
-// ---- the five approval patterns (ui.md, table under "LED patterns") ---------------------------
+// ---- the five approval patterns and the battery blink (ui.md, table under "LED patterns") ------
 
 // Slow green pulse, 1.5 s period. Ends when the approval closes (the engine calls stop()).
 bool approveGreen(uint32_t t_ms) {
@@ -92,6 +92,14 @@ bool refusedBlink(uint32_t t_ms) {
   return t_ms < 400;
 }
 
+// Battery low or critical (battery.cpp), once when the level is entered: two short red blinks at half
+// strength, 150 ms on, 150 ms off. Unlike `refused` (one long blink) it is not an answer to a key.
+bool lowBattery(uint32_t t_ms) {
+  fill(SEVERITY_RED, (t_ms < 450 && (t_ms % 300) < 150) ? 0.5f : 0.0f);
+  return t_ms < 600;
+}
+
+VK_LED_PATTERN(low_battery, "low_battery", lowBattery);
 VK_LED_PATTERN(approve_green, "approve_green", approveGreen);
 VK_LED_PATTERN(approve_amber, "approve_amber", approveAmber);
 VK_LED_PATTERN(approve_red, "approve_red", approveRed);

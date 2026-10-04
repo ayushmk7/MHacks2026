@@ -63,9 +63,42 @@ String signStoreRegistration(const String &message);   // target of hook H10; ""
 // against and the nonce that was sent. Null when the feature is absent.
 extern vk_presence_t (*presenceLookup)(const uint8_t req_id[8], uint8_t payee_pubkey_out[32], uint8_t nonce_out[16]);
 
+// Set by the battery service. True while the measured battery is at the critical level: begin()
+// then refuses to open a new approval with VK_LOW_BATTERY. Null when the service is absent.
+extern bool (*batteryCritical)();
+
 // Set by the balance feature. Null when the feature is absent.
 struct TokenInfo { bool balance_known; uint64_t raw; bool account_known; uint8_t account[32]; };
 extern bool (*tokenInfoLookup)(const uint8_t mint[32], TokenInfo &out);
+
+// Set by the history feature (checks.md, "Daily limit"). For each of the `count` tokens, the raw
+// units of the payments this badge signed (approval rows with that symbol) within the day before `now`
+// (vk_day_counts; `now` 0 = the clock has no source, so every logged payment counts). False when
+// the log could not be read. Null when the feature is absent: a token with a daily limit is then
+// blocked, because its total is unknown.
+extern bool (*spentLookup)(const vk_token_t *tokens, size_t count, uint32_t now, uint64_t out[VK_MAX_TOKENS]);
+
+// --- The signature log (signing.md, "Every signature is logged"). ---
+
+// What signRaw() tells every sign listener after it asked the key for a signature, whether the key
+// signed or refused. Nothing is reported for a request refused before the key was asked (self-check,
+// length): no signature was attempted.
+struct SignEvent {
+  const SignDomain *domain;
+  const uint8_t *signed_bytes;   // prefix || bytes: exactly what the key was asked to sign
+  size_t signed_len;
+  const uint8_t *sig;            // 64 bytes when result is VK_OK, else nullptr
+  Reason result;                 // VK_OK or VK_SIGN_FAILED
+};
+
+// A listener runs inside signRaw(), on the signing caller's stack and time (a presence PROOF is
+// waiting for it): it must not write files or block. The history feature queues the entry and
+// writes it later.
+struct SignListener : Registered<SignListener> {
+  void (*fn)(const SignEvent &);
+  explicit SignListener(void (*f)(const SignEvent &)) : fn(f) {}
+};
+#define VK_ON_SIGN(ident, fn) static vk::wallet::SignListener vk_on_sign_##ident(fn)
 
 // --- Self-check (signing.md, "Self-check"). Added by WP11. ---
 

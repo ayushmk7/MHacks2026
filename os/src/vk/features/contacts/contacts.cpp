@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "../../core/config.h"   // VK_ON_RESET
 #include "../../core/fileio.h"
 
 #ifndef VK_HOST_TEST
@@ -432,5 +433,19 @@ bool validCardBytes(const uint8_t *bytes, size_t len, const uint8_t *own) {
 }
 
 void reset() { nonceState = Swap{}; }
+
+void eraseAll() {
+  reset();
+  const vk::fileio::Ops *io = vk::fileio::ops;
+  if (io == nullptr) return;
+  io->removeFile(FILE_PATH);
+  io->removeFile(TMP_FILE_PATH);
+  io->removeFile(BAD_FILE_PATH);
+  VK_CONTACT_LOG("contacts erased");
+}
+
+namespace {
+VK_ON_RESET(contacts, eraseAll);   // VKRESET erases the contacts with the wallet config (stores.md)
+}
 
 }  // namespace vk::contacts

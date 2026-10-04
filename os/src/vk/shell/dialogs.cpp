@@ -25,6 +25,11 @@ using namespace vk::ui;
 String sDeleteId;
 String sDeleteName;
 
+// The app-error screen offers "SELECT retry" only for an app that stopped with an error. It is also
+// where a failed delete lands, and there runtime::lastApp() is whatever app ran last, not the one
+// that could not be deleted. appErrorSet() makes it true; the delete path clears it after showError().
+bool sErrorRetryable = true;
+
 void deleteDraw() {
   frame("DELETE APP", "SELECT delete", "CANCEL keep");
   receipt::row(X0, X1, 48, "APP", sDeleteName.c_str());
@@ -52,11 +57,12 @@ void deleteUpdate() {
     app_store::refresh();
     if (removed) {
       badge_log::tagf("os", "deleted app '%s'", id.c_str());
-      pulseLedBad(500);
+      pulseLed(500);                         // done as asked: the theme's pulse, not the red of a failure
       home();                                // the launcher clamps its cursor to the shorter list
     } else {
       badge_log::tagf("os", "could not delete app '%s'", id.c_str());
       ::shell::showError("Could not delete " + name);
+      sErrorRetryable = false;               // there is no app to retry: runtime::lastApp() is unrelated
     }
     return;
   }
@@ -77,7 +83,7 @@ constexpr int ERROR_LINES = 13;
 String sError;
 
 void errorDraw() {
-  frame("APP STOPPED", "SELECT retry", "CANCEL launcher");
+  frame("APP STOPPED", sErrorRetryable ? "SELECT retry" : "", "CANCEL launcher");
   // Wrapped by hand: a traceback is one long line, and running off the edge would hide the useful part.
   int offset = 0;
   for (int line = 0; line < ERROR_LINES && offset < (int)sError.length(); ++line) {
@@ -95,6 +101,7 @@ void errorDraw() {
 
 void errorUpdate() {
   if (buttons::pressed(BTN_A)) {
+    if (!sErrorRetryable) return;
     // The current app is already empty (it was torn down): the retry target is the last app.
     const String retry = runtime::lastApp();
     if (retry.length() && app_store::exists(retry)) {
@@ -205,7 +212,9 @@ uint32_t sInstallStart = 0;
 
 void installingEnter() { sInstallStart = millis(); }
 
-bool installStuck() { return (millis() - sInstallStart) >= INSTALL_ESCAPE_MS; }
+uint32_t installElapsed() { return millis() - sInstallStart; }
+
+bool installStuck() { return installElapsed() >= INSTALL_ESCAPE_MS; }
 
 void installingUpdate() {
   if (broker::lastResult().length() == 0) {
@@ -228,7 +237,13 @@ void installingDraw() {
     return;
   }
 
-  frame("INSTALLING", installStuck() ? "stuck? CANCEL to give up" : "verifying sha256 before each write", "");
+  // Until CANCEL works, the footer counts down to it: a screen that ignores CANCEL with no word
+  // about it looks hung.
+  const uint32_t elapsed = installElapsed();
+  const bool stuck = elapsed >= INSTALL_ESCAPE_MS;
+  char wait[24] = "";
+  if (!stuck) snprintf(wait, sizeof wait, "CANCEL in %us", (unsigned)((INSTALL_ESCAPE_MS - elapsed + 999) / 1000));
+  frame("INSTALLING", stuck ? "stuck? CANCEL to give up" : "verifying sha256 before each write", wait);
   const unsigned percent = broker::installProgress();
   char value[16];
   snprintf(value, sizeof value, "%u%%", percent);
@@ -255,6 +270,7 @@ void appDeleteOpen(const String &id, const String &name) {
 
 void appErrorSet(const String &message) {
   sError = message;
+  sErrorRetryable = true;
   sError.replace("\t", "  ");   // a Lua traceback indents with tabs, which the kit would draw as "?"
 }
 

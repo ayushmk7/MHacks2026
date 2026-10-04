@@ -2,6 +2,7 @@
    headline texts; reason names. Spec: docs/os/wallet/checks.md ("The check chain", "Tests"),
    docs/os/reference/reasons.md. */
 #include "../../src/vk/wallet/pure/vk_checks.h"
+#include "../../src/vk/wallet/pure/vk_payment.h"
 #include <stdio.h>
 #include <string.h>
 #include "host_ed25519.h"
@@ -25,11 +26,16 @@ static vk_presence_t presence_stub(const uint8_t req_id[8], uint8_t payee_pubkey
   return p_result;
 }
 
-/* The honest payment: vector message, record, request, a PRESENT proof, synced clock. */
+/* The vector transfer (V_LEGACY's keys and amount) with the vector request's memo: what a payer
+   badge builds to answer V_REQ (checks.md, check 12a). */
+#define REQ_MEMO "13cec0adb3e69e6e"
+static uint8_t req_msg[SOL_TX_MSG_MAX]; static size_t req_msg_len;
+
+/* The honest payment: the request-memo transfer, record, request, a PRESENT proof, synced clock. */
 static vk_check_input_t base(void) {
   vk_check_input_t in;
   memset(&in, 0, sizeof in);
-  in.msg = V_LEGACY; in.msg_len = sizeof V_LEGACY;
+  in.msg = req_msg; in.msg_len = req_msg_len;
   in.record = V_RECORD; in.record_len = sizeof V_RECORD; in.record_sig = V_RECORD_SIG;
   in.req = V_REQ; in.req_len = sizeof V_REQ;
   in.own_pubkey = V_PAYER; in.issuer_key = V_ISSUER_PUB;
@@ -85,10 +91,14 @@ static size_t make_req(vk_req_t *r, const uint8_t *seed) {
 }
 static vk_req_t vector_req(void) { vk_req_t r; vk_req_parse(V_REQ, sizeof V_REQ, &r); return r; }
 
-/* A transfer from the vector payer. */
+/* A transfer from the vector payer, with the vector request's memo. */
 static uint8_t msg[SOL_TX_MSG_MAX];
+static size_t make_msg_memo(const uint8_t *destination, const uint8_t *mint, uint64_t amount, uint8_t decimals, const char *memo) {
+  return sol_tx_build_transfer(V_PAYER, V_SRC, destination, mint, V_BH, amount, decimals,
+                               (const uint8_t *)memo, memo ? strlen(memo) : 0, msg, sizeof msg);
+}
 static size_t make_msg(const uint8_t *destination, const uint8_t *mint, uint64_t amount, uint8_t decimals) {
-  return sol_tx_build_transfer(V_PAYER, V_SRC, destination, mint, V_BH, amount, decimals, NULL, 0, msg, sizeof msg);
+  return make_msg_memo(destination, mint, amount, decimals, REQ_MEMO);
 }
 
 /* ---- assertions ---------------------------------------------------------------------------- */
@@ -121,15 +131,20 @@ static void test_green(void) {
   EXPECT_GREEN(&v);
   CHECK(v.severity == VK_SEV_GREEN && v.select == VK_SEL_PRESS && v.reason == VK_OK && v.headline == VK_HL_VERIFIED_PRESENT && v.dev_overridable == 0);
   CHECK(v.decoded == 1 && v.tx_err == SOL_TX_OK && v.token == &TOKENS[0]);
-  CHECK(v.transfer.amount == 1000 && v.transfer.decimals == 2 && v.transfer.memo == NULL && !memcmp(v.transfer.destination, V_DST, 32) && !memcmp(v.transfer.fee_payer, V_PAYER, 32));
+  CHECK(v.transfer.amount == 1000 && v.transfer.decimals == 2 && !memcmp(v.transfer.destination, V_DST, 32) && !memcmp(v.transfer.fee_payer, V_PAYER, 32));
+  CHECK(v.transfer.memo_len == 16 && v.transfer.memo != NULL && memcmp(v.transfer.memo, REQ_MEMO, 16) == 0);
   CHECK(v.record_ok == 1 && strcmp(v.record.display_name, "MHacks Merch") == 0 && !memcmp(v.record.device_pubkey, V_DEVICE_PUB, 32) && v.record.kind == VK_KIND_MERCHANT);
   CHECK(v.req_ok == 1 && v.req.amount == 1000 && strcmp(v.req.currency, "HACK") == 0 && !memcmp(v.req.req_id, r.req_id, 8));
   CHECK(v.presence == VK_PRESENCE_PRESENT && p_calls == 1 && memcmp(p_seen_req_id, r.req_id, 8) == 0);
-  /* the same payment with a Memo: green, and the memo is exposed */
-  in = base(); in.msg = V_MEMO_LEGACY; in.msg_len = sizeof V_MEMO_LEGACY;
+  /* a free-text Memo with no request: allowed (a shop's item name), and the memo is exposed */
+  in = base(); in.msg = V_MEMO_LEGACY; in.msg_len = sizeof V_MEMO_LEGACY; in.req = NULL; in.req_len = 0;
   vk_check_solana(&in, &v);
-  EXPECT_GREEN(&v);
+  EXPECT_OK(&v, VK_SEV_AMBER, VK_HL_NOT_PRESENT, "VERIFIED - NOT PRESENT", VK_SEL_HOLD);
   CHECK(v.transfer.memo_len == sizeof V_MEMO_TEXT && v.transfer.memo != NULL && memcmp(v.transfer.memo, V_MEMO_TEXT, sizeof V_MEMO_TEXT) == 0);
+  /* no memo and no request: as before */
+  in = base(); in.msg = V_LEGACY; in.msg_len = sizeof V_LEGACY; in.req = NULL; in.req_len = 0;
+  vk_check_solana(&in, &v);
+  EXPECT_OK(&v, VK_SEV_AMBER, VK_HL_NOT_PRESENT, "VERIFIED - NOT PRESENT", VK_SEL_HOLD); CHECK(v.transfer.memo == NULL);
   /* a second token in the table does not matter */
   in = base(); in.token_count = 2;
   vk_check_solana(&in, &v); EXPECT_GREEN(&v); CHECK(v.token == &TOKENS[0]);
@@ -358,6 +373,84 @@ static void test_check_12_wrong_amount(void) {
   vk_check_solana(&in, &v); EXPECT_RED(&v, VK_HL_WRONG_AMOUNT, "WRONG AMOUNT", VK_MISMATCH, 0);
 }
 
+static void test_check_12a_wrong_memo(void) {
+  vk_check_input_t in; vk_verdict_t v; vk_req_t r; size_t n;
+  /* a request payment with no memo (V_LEGACY: the honest transfer before memos were required) */
+  in = base(); in.msg = V_LEGACY; in.msg_len = sizeof V_LEGACY;
+  vk_check_solana(&in, &v); EXPECT_RED(&v, VK_HL_WRONG_MEMO, "WRONG MEMO", VK_MISMATCH, 0);
+  CHECK(v.decoded == 1 && v.record_ok == 1 && v.req_ok == 1 && p_calls == 0 && v.transfer.memo == NULL);
+  /* a free-text memo */
+  in = base(); in.msg = V_MEMO_LEGACY; in.msg_len = sizeof V_MEMO_LEGACY;
+  vk_check_solana(&in, &v); EXPECT_RED(&v, VK_HL_WRONG_MEMO, "WRONG MEMO", VK_MISMATCH, 0);
+  /* another request's id; upper case; the id with something after it; a prefix */
+  in = base(); in.msg = msg; in.msg_len = make_msg_memo(V_DST, V_MINT, 1000, 2, "13cec0adb3e69e6f");
+  vk_check_solana(&in, &v); EXPECT_RED(&v, VK_HL_WRONG_MEMO, "WRONG MEMO", VK_MISMATCH, 0);
+  in.msg_len = make_msg_memo(V_DST, V_MINT, 1000, 2, "13CEC0ADB3E69E6E");
+  vk_check_solana(&in, &v); EXPECT_RED(&v, VK_HL_WRONG_MEMO, "WRONG MEMO", VK_MISMATCH, 0);
+  in.msg_len = make_msg_memo(V_DST, V_MINT, 1000, 2, "13cec0adb3e69e6e ");
+  vk_check_solana(&in, &v); EXPECT_RED(&v, VK_HL_WRONG_MEMO, "WRONG MEMO", VK_MISMATCH, 0);
+  in.msg_len = make_msg_memo(V_DST, V_MINT, 1000, 2, "req:13cec0adb3e69e6e");
+  vk_check_solana(&in, &v); EXPECT_RED(&v, VK_HL_WRONG_MEMO, "WRONG MEMO", VK_MISMATCH, 0);
+  /* the memo of a fresh request with another id is accepted for that request only */
+  in = base(); r = vector_req(); r.req_id[7] ^= 0x01; n = make_req(&r, V_DEVICE_SEED); in.req = req; in.req_len = n;
+  vk_check_solana(&in, &v); EXPECT_RED(&v, VK_HL_WRONG_MEMO, "WRONG MEMO", VK_MISMATCH, 0);
+  in.msg = msg; in.msg_len = make_msg_memo(V_DST, V_MINT, 1000, 2, "13cec0adb3e69e6f");
+  vk_check_solana(&in, &v); EXPECT_GREEN(&v);
+  /* a wrong amount is reported before a wrong memo (check 12 comes first) */
+  in = base(); in.msg = msg; in.msg_len = make_msg_memo(V_DST, V_MINT, 1001, 2, NULL);
+  vk_check_solana(&in, &v); EXPECT_RED(&v, VK_HL_WRONG_AMOUNT, "WRONG AMOUNT", VK_MISMATCH, 0);
+  /* a bad proof is reported after a wrong memo */
+  in = base(); in.msg = V_LEGACY; in.msg_len = sizeof V_LEGACY; p_result = VK_PRESENCE_BAD_SIG;
+  vk_check_solana(&in, &v); EXPECT_RED(&v, VK_HL_WRONG_MEMO, "WRONG MEMO", VK_MISMATCH, 0);
+  /* everything else the decoder refused is still refused: two memos are not a shape it reads */
+  CHECK(sol_tx_decode_transfer(V_CB_LEGACY, sizeof V_CB_LEGACY, &v.transfer) == SOL_TX_ERR_PROGRAM);
+}
+
+static void test_check_3a_daily_limit(void) {
+  vk_check_input_t in; vk_verdict_t v; vk_day_t day[2];
+  memset(day, 0, sizeof day);
+  /* no limit set: the total does not matter */
+  in = base(); in.day = day; day[0].spent_known = 1; day[0].spent = 999999;
+  vk_check_solana(&in, &v); EXPECT_GREEN(&v);
+  /* a limit of 50.00 with 40.00 spent: 10.00 fits exactly, 10.01 does not */
+  day[0].set = 1; day[0].limit = 5000; day[0].spent = 4000; day[0].spent_known = 1;
+  in = base(); in.day = day;
+  vk_check_solana(&in, &v); EXPECT_GREEN(&v);
+  day[0].spent = 4001; p_calls = 0;
+  vk_check_solana(&in, &v); EXPECT_RED(&v, VK_HL_DAILY_LIMIT, "DAILY LIMIT", VK_OVER_DAILY, 0);
+  CHECK(v.decoded == 1 && v.token == &TOKENS[0] && v.record_ok == 0 && v.req_ok == 0 && p_calls == 0);
+  /* already over (the limit was lowered) */
+  day[0].spent = 9000;
+  vk_check_solana(&in, &v); EXPECT_RED(&v, VK_HL_DAILY_LIMIT, "DAILY LIMIT", VK_OVER_DAILY, 0);
+  /* the total could not be read: blocked */
+  day[0].spent = 0; day[0].spent_known = 0;
+  vk_check_solana(&in, &v); EXPECT_RED(&v, VK_HL_DAILY_LIMIT, "DAILY LIMIT", VK_OVER_DAILY, 0);
+  /* set with limit 0 (an unreadable day_limit): nothing may be spent */
+  day[0].spent_known = 1; day[0].limit = 0;
+  vk_check_solana(&in, &v); EXPECT_RED(&v, VK_HL_DAILY_LIMIT, "DAILY LIMIT", VK_OVER_DAILY, 0);
+  /* no overflow near the top of the u64 range */
+  day[0].limit = 18446744073709551615ULL; day[0].spent = 18446744073709551615ULL - 999;
+  vk_check_solana(&in, &v); EXPECT_RED(&v, VK_HL_DAILY_LIMIT, "DAILY LIMIT", VK_OVER_DAILY, 0);
+  day[0].spent = 18446744073709551615ULL - 1000;
+  vk_check_solana(&in, &v); EXPECT_GREEN(&v);
+  /* it comes after the max (OVER LIMIT wins) and before the record: the dev override cannot pass it */
+  day[0].limit = 5000; day[0].spent = 4500;
+  in = base(); in.day = day; in.msg = msg; in.msg_len = make_msg(V_DST, V_MINT, 100001, 2);
+  vk_check_solana(&in, &v); EXPECT_RED(&v, VK_HL_OVER_LIMIT, "OVER LIMIT", VK_OVER_CAP, 0);
+  in = base(); in.day = day; in.record = NULL; in.record_len = 0; in.record_sig = NULL;
+  vk_check_solana(&in, &v); EXPECT_RED(&v, VK_HL_DAILY_LIMIT, "DAILY LIMIT", VK_OVER_DAILY, 0); CHECK(v.dev_overridable == 0);
+  /* the limit is per token: the second token's entry decides for a payment in it */
+  memset(day, 0, sizeof day); day[1].set = 1; day[1].limit = 1; day[1].spent_known = 1;
+  in = base(); in.day = day; in.token_count = 2;
+  vk_check_solana(&in, &v); EXPECT_GREEN(&v);
+  in.msg = V_ALT_LEGACY; in.msg_len = sizeof V_ALT_LEGACY; in.record = NULL;
+  vk_check_solana(&in, &v); EXPECT_RED(&v, VK_HL_DAILY_LIMIT, "DAILY LIMIT", VK_OVER_DAILY, 0); CHECK(v.token == &TOKENS[1]);
+  /* under FLOOR and with no request the rule is the same */
+  memset(day, 0, sizeof day); day[0].set = 1; day[0].limit = 999; day[0].spent_known = 1;
+  in = base(); in.day = day; in.time_source = VK_TIME_FLOOR; in.req = NULL; in.req_len = 0;
+  vk_check_solana(&in, &v); EXPECT_RED(&v, VK_HL_DAILY_LIMIT, "DAILY LIMIT", VK_OVER_DAILY, 0);
+}
+
 static void test_check_13_bad_proof(void) {
   vk_check_input_t in; vk_verdict_t v;
   /* the proof's signature was invalid */
@@ -442,29 +535,32 @@ static void test_headline_texts(void) {
     {VK_HL_VERIFIED_PRESENT, "VERIFIED - PRESENT"}, {VK_HL_NOT_PRESENT, "VERIFIED - NOT PRESENT"}, {VK_HL_CLOCK_UNSYNCED, "CLOCK UNSYNCED"},
     {VK_HL_CANNOT_READ, "CANNOT READ PAYMENT"}, {VK_HL_UNKNOWN_TOKEN, "UNKNOWN TOKEN"}, {VK_HL_UNVERIFIED, "UNVERIFIED RECIPIENT"},
     {VK_HL_REVOKED, "REVOKED"}, {VK_HL_EXPIRED, "EXPIRED"}, {VK_HL_STALE, "STALE RECORD"}, {VK_HL_WRONG_RECIPIENT, "WRONG RECIPIENT"},
-    {VK_HL_WRONG_AMOUNT, "WRONG AMOUNT"}, {VK_HL_BAD_REQUEST, "BAD REQUEST"}, {VK_HL_BAD_PROOF, "BAD PROOF"}, {VK_HL_OVER_LIMIT, "OVER LIMIT"}};
+    {VK_HL_WRONG_AMOUNT, "WRONG AMOUNT"}, {VK_HL_BAD_REQUEST, "BAD REQUEST"}, {VK_HL_BAD_PROOF, "BAD PROOF"}, {VK_HL_OVER_LIMIT, "OVER LIMIT"},
+    {VK_HL_WRONG_MEMO, "WRONG MEMO"}, {VK_HL_DAILY_LIMIT, "DAILY LIMIT"}};
   size_t i;
-  CHECK(sizeof T / sizeof T[0] == 14 && VK_HL_OVER_LIMIT == 13);
+  CHECK(sizeof T / sizeof T[0] == 16 && VK_HL_OVER_LIMIT == 13 && VK_HL_WRONG_MEMO == 14 && VK_HL_DAILY_LIMIT == 15);
   for (i = 0; i < sizeof T / sizeof T[0]; i++) CHECK(strcmp(vk_headline_text(T[i].h), T[i].text) == 0);
-  CHECK(strcmp(vk_headline_text((vk_headline_t)14), "?") == 0);
+  CHECK(strcmp(vk_headline_text((vk_headline_t)16), "?") == 0);
 }
 
 /* Every vk_reason_t has a distinct lower-case name, in the order of reasons.md. */
 static void test_reason_names(void) {
   static const char *const NAMES[] = {"ok", "cancelled", "timeout", "undecodable", "unverified", "revoked", "expired", "mismatch",
-    "bad_proof", "over_cap", "no_time", "busy", "denied", "not_provisioned", "too_long", "sign_failed", "bad_arg", "unsupported", "idle"};
+    "bad_proof", "over_cap", "no_time", "busy", "denied", "not_provisioned", "too_long", "sign_failed", "bad_arg", "unsupported", "idle",
+    "over_daily", "low_battery"};
   int i, j; const char *s;
-  CHECK(sizeof NAMES / sizeof NAMES[0] == 19 && VK_REASON_COUNT == 19);
+  CHECK(sizeof NAMES / sizeof NAMES[0] == 21 && VK_REASON_COUNT == 21);
   CHECK(VK_OK == 0 && VK_CANCELLED == 1 && VK_TIMEOUT == 2 && VK_UNDECODABLE == 3 && VK_UNVERIFIED == 4 && VK_REVOKED == 5 && VK_EXPIRED == 6);
   CHECK(VK_MISMATCH == 7 && VK_BAD_PROOF == 8 && VK_OVER_CAP == 9 && VK_NO_TIME == 10 && VK_BUSY == 11 && VK_DENIED == 12 && VK_NOT_PROVISIONED == 13);
   CHECK(VK_TOO_LONG == 14 && VK_SIGN_FAILED == 15 && VK_BAD_ARG == 16 && VK_UNSUPPORTED == 17 && VK_IDLE == 18);
-  for (i = 0; i <= VK_IDLE; i++) {
+  CHECK(VK_OVER_DAILY == 19);
+  for (i = 0; i < VK_REASON_COUNT; i++) {
     const char *name = vk_reason_name((vk_reason_t)i);
     CHECK(strcmp(name, NAMES[i]) == 0 && name[0] != 0);
     for (s = name; *s; s++) CHECK((*s >= 'a' && *s <= 'z') || *s == '_');            /* lower-case */
     for (j = 0; j < i; j++) CHECK(strcmp(name, vk_reason_name((vk_reason_t)j)) != 0); /* distinct */
   }
-  CHECK(strcmp(vk_reason_name((vk_reason_t)19), "?") == 0 && strcmp(vk_reason_name((vk_reason_t)-1), "?") == 0);
+  CHECK(strcmp(vk_reason_name((vk_reason_t)21), "?") == 0 && strcmp(vk_reason_name((vk_reason_t)-1), "?") == 0);
 }
 
 int main(void) {
@@ -473,6 +569,8 @@ int main(void) {
   memcpy(TOKENS[1].mint, V_ALT_MINT, 32); TOKENS[1].decimals = 2; memcpy(TOKENS[1].symbol, "ALT", 4);
   CHECK(VK_MAX_TOKENS == 3);
   split_vector();
+  req_msg_len = sol_tx_build_transfer(V_PAYER, V_SRC, V_DST, V_MINT, V_BH, 1000, 2, (const uint8_t *)REQ_MEMO, 16, req_msg, sizeof req_msg);
+  CHECK(req_msg_len == 214 + 32 + 3 + 16);
 
   test_green();
   test_check_1_cannot_read();
@@ -486,6 +584,8 @@ int main(void) {
   test_check_10_wrong_recipient();
   test_check_11_bad_request();
   test_check_12_wrong_amount();
+  test_check_12a_wrong_memo();
+  test_check_3a_daily_limit();
   test_check_13_bad_proof();
   test_amber_clock_unsynced();
   test_amber_not_present();

@@ -21,6 +21,7 @@
 #include "../../wallet/crypto.h"
 #include "../../wallet/pure/sol.h"
 #include "../../wallet/pure/vk_checks.h"
+#include "../../wallet/pure/vk_payment.h"
 #include "../../wallet/pure/vk_record.h"
 #include "../../wallet/signer.h"
 #include "../../wallet/approval.h"   // last: it removes the Arduino core's DISABLED macro
@@ -35,6 +36,9 @@ VK_CONFIG_KEY(tokens, "tokens", vk::config::Type::TOKENS, nullptr,
               "payment tokens with caps: mint:decimals:symbol:cap:max[,...]");
 VK_CONFIG_KEY(record_ttl_s, "record_ttl_s", vk::config::Type::U32, "30", vk::config::F_SECURE, 5, 3600,
               "maximum age of a registry record under SNTP, seconds");
+// No default and no compiled-in amount: unset means no daily limit (checks.md, "Daily limit").
+VK_CONFIG_KEY(day_limit, "day_limit", vk::config::Type::STR, nullptr, vk::config::F_SECURE, 0, 96,
+              "daily spending limit per token: SYMBOL:amount[,...], display units; empty = none");
 
 static_assert(SOL_TX_MSG_MAX == 1232, "the solana domain's max_len below is the decoder's limit");
 
@@ -94,6 +98,8 @@ int verifyRemembering(const uint8_t *msg, size_t len, const uint8_t *sig, const 
 // static: begin() is reached from inside a Lua callback, where the stack is already deep, and the
 // verification below needs what is left of it. sVerdict.token points into sTokens.
 vk_token_t sTokens[VK_MAX_TOKENS];
+vk_day_t sDay[VK_MAX_TOKENS];
+bool sDayUnreadable;          // day_limit is set but does not parse: every payment is blocked
 vk_verdict_t sVerdict;
 vk_record_t sRecord;          // step 1 only
 
@@ -189,6 +195,31 @@ uint8_t requestDecimals(const char *currency, const vk_token_t *tokens, size_t c
   return 0;
 }
 
+// The daily limit of each token (checks.md, "Daily limit"): the provisioned day_limit and what the
+// signature log says was signed in the last day. An unreadable day_limit blocks every token (a
+// secure key that does not parse is not "no limit"), and so does a total the log cannot give.
+// `now` is 0 when the clock has no source: every logged payment then counts.
+void fillDailyLimits(size_t tokenCount, uint32_t now) {
+  memset(sDay, 0, sizeof sDay);
+  uint64_t limits[VK_MAX_TOKENS];
+  const String text = vk::config::text("day_limit");
+  sDayUnreadable = vk_day_limits_parse(text.c_str(), sTokens, tokenCount, limits) != 0;
+  if (sDayUnreadable) badge_log::tagf("pay", "day_limit unreadable: every payment is blocked");
+  bool any = false;
+  for (size_t i = 0; i < tokenCount; ++i) {
+    sDay[i].set = sDayUnreadable || limits[i] != 0;
+    sDay[i].limit = sDayUnreadable ? 0 : limits[i];
+    any = any || sDay[i].set;
+  }
+  if (!any || sDayUnreadable) return;
+  uint64_t spent[VK_MAX_TOKENS] = {0, 0, 0};
+  const bool known = vk::wallet::spentLookup != nullptr && vk::wallet::spentLookup(sTokens, tokenCount, now, spent);
+  for (size_t i = 0; i < tokenCount; ++i) {
+    sDay[i].spent_known = known;
+    sDay[i].spent = known ? spent[i] : 0;
+  }
+}
+
 Reason decodeSolana(const uint8_t *bytes, size_t len, const Ctx &ctx, ApprovalRequest &out) {
   // The issuer key. Without one no record can be trusted: the chain gets a zero key and a verifier
   // that refuses everything.
@@ -227,6 +258,8 @@ Reason decodeSolana(const uint8_t *bytes, size_t len, const Ctx &ctx, ApprovalRe
   in.record_ttl_s = vk::config::u32("record_ttl_s");
   in.verify = verify;
   in.presence = vk::wallet::presenceLookup;         // null without the requests feature: presence is NONE
+  fillDailyLimits(in.token_count, vk::clock::ok() ? in.now : 0);
+  in.day = sDay;
   vk_check_solana(&in, &sVerdict);
 
   const vk_verdict_t &v = sVerdict;
@@ -249,6 +282,28 @@ Reason decodeSolana(const uint8_t *bytes, size_t len, const Ctx &ctx, ApprovalRe
   }
 
   // Detail rows, in priority order; at most four are kept.
+  if (decoded && v.headline == VK_HL_DAILY_LIMIT) {
+    const vk_day_t &day = sDay[v.token - sTokens];
+    if (ApprovalLine *line = addLine(out, "Today")) {
+      if (sDayUnreadable) {
+        strlcpy(line->value, "day_limit unreadable", sizeof line->value);
+      } else if (!day.spent_known) {
+        strlcpy(line->value, "total unknown", sizeof line->value);
+      } else {
+        char spent[24];
+        if (sol_format_amount(day.spent, v.token->decimals, spent, sizeof spent) == 0) strlcpy(spent, "?", sizeof spent);
+        amountText(line->value, "", day.limit, v.token->decimals, v.token->symbol);
+        char text[sizeof line->value];
+        strlcpy(text, spent, sizeof text);
+        strlcat(text, " of ", sizeof text);
+        strlcat(text, line->value, sizeof text);
+        strlcpy(line->value, text, sizeof line->value);   // "40.00 of 50.00 HACK"
+      }
+    }
+  }
+  if (decoded && v.headline == VK_HL_WRONG_MEMO && v.req_ok) {
+    if (ApprovalLine *line = addLine(out, "Request")) vk_req_memo(v.req.req_id, line->value);
+  }
   if (decoded && v.headline == VK_HL_WRONG_AMOUNT && v.req_ok) {
     if (ApprovalLine *line = addLine(out, "Requested")) {
       amountText(line->value, "", v.req.amount, requestDecimals(v.req.currency, sTokens, in.token_count),
@@ -297,6 +352,10 @@ Reason decodeSolana(const uint8_t *bytes, size_t len, const Ctx &ctx, ApprovalRe
     out.amount = v.transfer.amount;
     out.decimals = v.token->decimals;
     strlcpy(out.symbol, v.token->symbol, sizeof out.symbol);
+  }
+  if (v.req_ok) {
+    out.has_req_id = true;
+    memcpy(out.req_id, v.req.req_id, sizeof out.req_id);
   }
 
   // 4. Always open the approval, a red one included. The only refusals without a screen are the

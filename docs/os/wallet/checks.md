@@ -14,6 +14,7 @@ Principle: **no trust decision comes from the app.** The app supplies bytes (the
 | Presence result | the firmware's own presence table, keyed by `req_id` | made by the firmware ([protocol](../protocol/espnow.md#presence)) |
 | Clock | the clock service | SNTP, or the floor (below) |
 | Token table, caps | provisioned config | — |
+| Daily limits, and what was signed today | provisioned config `day_limit`; the signature log | — ([Daily limit](#daily-limit)) |
 
 ## Registry record
 
@@ -134,9 +135,12 @@ typedef enum {
   VK_HL_VERIFIED_PRESENT, VK_HL_NOT_PRESENT, VK_HL_CLOCK_UNSYNCED,
   VK_HL_CANNOT_READ, VK_HL_UNKNOWN_TOKEN, VK_HL_UNVERIFIED, VK_HL_REVOKED, VK_HL_EXPIRED, VK_HL_STALE,
   VK_HL_WRONG_RECIPIENT, VK_HL_WRONG_AMOUNT, VK_HL_BAD_REQUEST, VK_HL_BAD_PROOF,
-  VK_HL_OVER_LIMIT
+  VK_HL_OVER_LIMIT,
+  VK_HL_WRONG_MEMO, VK_HL_DAILY_LIMIT
 } vk_headline_t;
 const char *vk_headline_text(vk_headline_t h);
+
+typedef struct { int set; uint64_t limit; int spent_known; uint64_t spent; } vk_day_t;   /* see Daily limit */
 
 typedef struct {
   const uint8_t *msg;        size_t msg_len;
@@ -147,6 +151,7 @@ typedef struct {
   uint32_t now;              vk_time_source_t time_source;   uint32_t record_ttl_s;
   int (*verify)(const uint8_t *msg, size_t len, const uint8_t *sig, const uint8_t *pubkey);   /* 1 = valid */
   vk_presence_t (*presence)(const uint8_t req_id[8], uint8_t payee_pubkey_out[32], uint8_t nonce_out[16]);   /* may be NULL: presence is then NONE */
+  const vk_day_t *day;       /* token_count entries, parallel to tokens; NULL = no daily limit for any token */
 } vk_check_input_t;
 
 typedef struct {
@@ -169,6 +174,7 @@ Checks run in this order. The first one that fails decides the verdict; a red ve
 | 1 | message decodes ([rules](solana-payments.md#decoder-rules)) and account 0 is `own_pubkey` | `CANNOT_READ` ("CANNOT READ PAYMENT") | `undecodable` | no |
 | 2 | the mint is in the token table and the decimals match | `UNKNOWN_TOKEN` ("UNKNOWN TOKEN") | `undecodable` | no |
 | 3 | amount ≤ token `max` (when `max` ≠ 0) | `OVER_LIMIT` ("OVER LIMIT") | `over_cap` | no |
+| 3a | if the token has a daily limit: its total is known and today's total + amount ≤ the limit ([Daily limit](#daily-limit)) | `DAILY_LIMIT` ("DAILY LIMIT") | `over_daily` | no |
 | 4 | a record and its signature were supplied | `UNVERIFIED` ("UNVERIFIED RECIPIENT") | `unverified` | **yes** |
 | 5 | the record parses and the issuer signature is valid | `UNVERIFIED` | `unverified` | no |
 | 6 | `status` is active | `REVOKED` ("REVOKED") | `revoked` | no |
@@ -177,6 +183,7 @@ Checks run in this order. The first one that fails decides the verdict; a red ve
 | 10 | the record has `solana_ata` and it equals the decoded destination | `WRONG_RECIPIENT` ("WRONG RECIPIENT") | `mismatch` | no |
 | 11 | if a request was supplied (whether or not the `requests` feature is present): it parses, its `pay-req:` signature verifies with `record.device_pubkey`, `req.payee_pubkey == record.device_pubkey`, `req.rail` is Solana, `req.expiry` > `now` | `BAD_REQUEST` ("BAD REQUEST") | `unverified` | no |
 | 12 | if a request was supplied: `req.currency` equals the token symbol and `req.amount` equals the decoded amount | `WRONG_AMOUNT` ("WRONG AMOUNT") | `mismatch` | no |
+| 12a | if a request was supplied: the message carries a Memo and its data is exactly `req.req_id` in 16 lower-case hex characters ([request memo](solana-payments.md#request-memo)) | `WRONG_MEMO` ("WRONG MEMO") | `mismatch` | no |
 | 13 | if a request was supplied and the presence result is `PRESENT`, `LATE` or `BAD_SIG`: the result is not `BAD_SIG`, and the payee key stored with it equals `record.device_pubkey`. (`NONE` has no slot and `PENDING` has no proof to judge; both pass this check and become amber below. The stored key is compared only for `PRESENT`, `LATE` and `BAD_SIG`, although the lookup writes it for `PENDING` too) | `BAD_PROOF` ("BAD PROOF") | `bad_proof` | no |
 
 Terms in the table, as `vk_checks.c` implements them:
@@ -186,7 +193,7 @@ Terms in the table, as `vk_checks.c` implements them:
 - `VK_TIME_NONE` is treated like `VK_TIME_FLOOR`.
 - The REQ signature is verified over `"pay-req:"` followed by `frame[0..signed_len)`, so the requests feature must sign exactly those bytes ([protocol](../protocol/espnow.md#codec)).
 
-Check numbers are kept stable; there is no check 7. The record's `time_source` can never be NONE here, because the caller raised the clock from the verified record first ([Verdict to screen](#verdict-to-screen)).
+Check numbers are kept stable; there is no check 7. Checks 3a and 12a were added later and run in the place their number gives: 3a after 3 (so before check 4, the only one the dev override can pass: the override can never pass a daily limit), 12a after 12 (a wrong amount is reported before a missing memo). The record's `time_source` can never be NONE here, because the caller raised the clock from the verified record first ([Verdict to screen](#verdict-to-screen)).
 
 If nothing failed, the verdict is the **first** row of this table that applies:
 
@@ -200,12 +207,29 @@ Then the cap: if the amount is above the token's `cap` (when `cap` ≠ 0), `sele
 
 Why record-only payments are allowed (amber, not red): a shop inside a game has no payee badge in the room. The recipient is still issuer-verified and the amount still comes from the bytes; what is missing is proof that the merchant is physically here, and the screen says exactly that.
 
+## Daily limit
+
+A rolling 24-hour limit per token on what this badge signs, on top of the per-payment `cap` (hold) and `max` (blocked).
+
+- **Config.** Key `day_limit` ([config](../platform/config.md#keys)), registered by `features/solana_pay/domain_solana.cpp`: `SYMBOL:amount[,SYMBOL:amount…]`, amounts in display units with at most the token's decimals, every symbol in the token table and at most once (`HACK:50.00`). **Unset (the default) means no daily limit**; a token the value does not name has none; an amount of `0` is no limit, as for `cap` and `max`. There is no compiled-in amount. The key is secure: raising it on a provisioned badge needs the on-badge confirmation. The `tokens` format is not changed.
+- **Parsed by** `int vk_day_limits_parse(const char *text, const vk_token_t *tokens, size_t count, uint64_t out[VK_MAX_TOKENS])` (pure, `vk_checks.h`). A value that does not parse **blocks every payment** (each token gets `set = 1, limit = 0`) and logs `[pay] day_limit unreadable: every payment is blocked`: a secure limit that cannot be read is not "no limit".
+- **Counted from the signature log**, so it survives a reboot: `vk::wallet::spentLookup` (set by the history feature, [stores](stores.md#history)) sums the approval rows with outcome `signed`, a non-zero amount and the token's symbol and decimals whose time is inside the window. Cancelled, blocked and failed approvals, received payments and auto signatures are not counted. A signed payment counts even if it was never sent: the signature exists and can still be broadcast.
+- **The window** is `int vk_day_counts(uint32_t written, uint32_t now)`: `now − written < 86400`. Where a time is unknown it counts the payment, so the total can only be too high, never too low:
+  - **clock unset when the payment was signed** (time 0 in the log): counted;
+  - **clock unset now** (`decodeSolana` passes `now = 0` when `clock::ok()` is false): every logged payment counts;
+  - **a row newer than now** (the clock went back, e.g. a FLOOR clock after a reboot): counted;
+  - **clock at FLOOR** (behind real time): the window reaches further back than a day.
+  In practice a signed payment always has a time: a payment with no verified record is red, and a verified record raises the clock to at least FLOOR before the chain runs. Only a dev-build override can sign with no clock.
+- **When the total is unknown** (the log file exists but cannot be read, more than four payments failed to be logged this boot, or the history feature is absent) a token with a limit is blocked. A signed payment whose row could not be written is kept in a RAM list of four and still counted until reboot.
+- **Decision: blocked, not hold.** Over the limit is red, `over_daily`, not dev-overridable, like `max`. `cap` already turns a large payment into a hold; a daily limit that one more hold could pass would only be a second cap, and would not stop a rogue app that keeps raising approvals or someone holding a stolen badge. The owner raises the limit with a confirmed `VKSET day_limit` when it is meant to be higher.
+- **Limit of the design.** The log keeps 128 rows. If more than 128 rows were written in the last day (approvals, received payments, auto-signature batches of up to 8), the oldest in-window payments are no longer in the ring and the total is too low by them.
+
 ## Verdict to screen
 
 `decodeSolana` (the `solana` domain's decoder) does, in order:
 
 1. If a record and signature were supplied and `vk_record_verify` passes, call `clock::raiseTo(record.issued_at)`.
-2. Fill `vk_check_input_t` from the config (issuer key, token table, `record_ttl_s`), the clock, the verifier, `presenceLookup`; call `vk_check_solana`.
+2. Fill `vk_check_input_t` from the config (issuer key, token table, `record_ttl_s`, `day_limit`), the clock, the verifier, `presenceLookup`, and the day's totals from `spentLookup` ([Daily limit](#daily-limit)); call `vk_check_solana`.
 
    - **One verification per signature.** Step 1 and check 5 of the chain verify the same record. The verifier `decodeSolana` passes to both is `vk_verify_c` behind a one-entry memory: when a call has byte-for-byte the same message, signature and key as the previous one, the previous answer is returned. A signature check is a pure function of those three inputs, so the result cannot differ; the chain is unchanged and still asks for every verification itself. A record-only `begin` therefore costs one verification and a `begin` with a record and a request costs two (measured: 434 ms and 854 ms from the call to the first draw, [M3](../testing/testing.md#measurements)).
    - **No issuer key.** If `issuer_key` is not set, step 1 is skipped and the chain gets a zero key **and** a verifier that refuses everything. The zero key alone is not enough: 32 zero bytes encode a low-order Ed25519 point, and TweetNaCl accepts forged signatures for it.
@@ -219,6 +243,8 @@ Why record-only payments are allowed (amber, not red): a shop inside a game has 
 | `sub` | `to <record.display_name>` when the record is valid (`verdict.record_ok`: check 5 passed, so REVOKED, EXPIRED, STALE and WRONG RECIPIENT show the name; OVER LIMIT fails before the record is looked at and does not); else `to unverified recipient`; empty if not decoded |
 | line `Account` | the destination token account, base58, shortened to first 4 + `..` + last 4 |
 | line `Kind` | `merchant` or `person` (only with a valid record) |
+| line `Today` | only for `DAILY_LIMIT`: `<spent> of <limit> <symbol>` (`40.00 of 50.00 HACK`); `total unknown` when the log could not be read; `day_limit unreadable` when the key does not parse |
+| line `Request` | only for `WRONG_MEMO`: the request id the memo must carry, 16 hex characters |
 | line `Requested` | the request's amount and currency (only for `WRONG_AMOUNT`). The decimals are those of the provisioned token whose symbol equals the request's currency; a currency the badge has no token for is shown in raw units |
 | line `Expected` | the record's token account, shortened (only for `WRONG_RECIPIENT`); `none` when the record has no token account |
 | line `Memo` | first 35 characters of the memo (only when present), counted in UTF-8 characters; each non-ASCII or control character becomes one `?`. The screen's row shows as much of it as fits (about 17 characters, then `..`) |
@@ -227,7 +253,9 @@ Why record-only payments are allowed (amber, not red): a shop inside a game has 
 | `recipient`, `recipient_name` | `record.device_pubkey`, `record.display_name` when valid; else the destination and empty |
 | `amount`, `decimals`, `symbol` | from the decoded bytes and the token table |
 
-At most four lines are shown; when more apply, the order of priority is `Requested`, `Expected`, `Limit`, `Account`, `Kind`, `Memo`.
+At most four lines are shown; when more apply, the order of priority is `Today`, `Request`, `Requested`, `Expected`, `Limit`, `Account`, `Kind`, `Memo`.
+
+`recipient` and the payment fields go to the history; so does the request id: when the request verified (check 11) the request sets `has_req_id` and `req_id` ([approval](approval.md#the-request)).
 
 `big` holds 23 characters. The digits of an amount are never cut; an amount near the top of the 64-bit range loses part of its symbol.
 
@@ -258,6 +286,6 @@ With its prefix the payload is about 360 bytes, so **the bank rail cannot be sig
 
 ## Tests
 
-Host suite `test_checks`: a fixed issuer key pair and device key pair (test vectors, generated by `vectors.mjs`), a valid record, a valid request, and one test per row of both tables above: each failure produces exactly its headline and reason; each amber condition; the cap; green. Plus `test_record`: the parser accepts the canonical record and refuses each mutated copy (reordered key, extra line, upper-case hex, trailing newline, 33-character name, non-numeric expiry).
+Host suite `test_checks`: a fixed issuer key pair and device key pair (test vectors, generated by `vectors.mjs`), a valid record, a valid request, and one test per row of both tables above: each failure produces exactly its headline and reason; each amber condition; the cap; green. The honest payment is the vector transfer rebuilt with the vector request's memo; `V_LEGACY` (no memo) with the request is the WRONG MEMO case. Check 3a: exactly at the limit, one unit over, already over, unknown total, unreadable key, u64 overflow, its place before check 4 and after check 3, per token. The parser and the window are in `test_payment`; the total from the log in `test_stores`. Plus `test_record`: the parser accepts the canonical record and refuses each mutated copy (reordered key, extra line, upper-case hex, trailing newline, 33-character name, non-numeric expiry).
 
 Device: T-CHK1 to T-CHK9 in [../testing/testing.md](../testing/testing.md#acceptance-tests).

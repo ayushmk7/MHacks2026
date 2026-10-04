@@ -14,11 +14,9 @@ constexpr int kStep = 8;
 void pageValue(char *out, size_t cap) { snprintf(out, cap, "%d%%", (settings::ledBrightness() * 100) / 255); }
 
 void pageUpdate() {
-  // CANCEL stops the preview and turns the LEDs off before leaving, as upstream does.
-  if (buttons::pressed(BTN_B)) {
-    ::leds::stopAnimation();
-    ::leds::off();
-  }
+  // CANCEL leaves the LEDs alone. Upstream stopped its boot-animation preview here; the preview is
+  // now a pulse that ends by itself and hands back to the idle animation, and stopping it on the way
+  // out killed the idle animation until an app was opened and closed.
   if (back()) return;
 
   const int before = settings::ledBrightness();

@@ -9,6 +9,9 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <string>
+#include <vector>
+
 #include "../../src/vk/wallet/signer.h"
 #include "../../src/vk/wallet/signer_internal.h"
 #include "host_ed25519.h"
@@ -39,6 +42,7 @@ static const DomainRow kShipped[] = {
     {"pay-proof", "pay-proof:", false, false, true},
     {"contact", "contact:", false, false, true},
     {"store-reg", "", false, false, true},
+    {"selftest", "selftest:", true, true, false},
 };
 static const size_t kShippedCount = sizeof kShipped / sizeof kShipped[0];
 
@@ -316,6 +320,53 @@ static void testSignForApproval() {
   CHECK(sSignedLen == 1232);
 }
 
+// Every signature reaches the sign listeners from signRaw(), the one path: auto and button domains,
+// signed and refused by the key; nothing for a request refused before the key was asked.
+struct SeenSign { const SignDomain *domain; std::string bytes; bool hasSig; Reason result; };
+static std::vector<SeenSign> sSeen;
+static void recordSign(const SignEvent &e) {
+  sSeen.push_back(SeenSign{e.domain, std::string((const char *)e.signed_bytes, e.signed_len), e.sig != nullptr, e.result});
+}
+VK_ON_SIGN(t_listener, recordSign);
+
+static void testSignListener() {
+  resetHooks();
+  sSeen.clear();
+  uint8_t proof[56];
+  for (size_t i = 0; i < sizeof proof; ++i) proof[i] = (uint8_t)(i + 9);
+  uint8_t sig[64];
+
+  CHECK(signAuto("pay-proof", proof, sizeof proof, sig) == VK_OK);
+  CHECK(sSeen.size() == 1);
+  if (sSeen.size() == 1) {
+    CHECK(sSeen[0].domain == findDomain("pay-proof") && sSeen[0].result == VK_OK && sSeen[0].hasSig);
+    CHECK(sSeen[0].bytes == std::string("pay-proof:") + std::string((const char *)proof, sizeof proof));
+  }
+  uint8_t msg[214];
+  memset(msg, 3, sizeof msg);
+  CHECK(signForApproval(findDomain("solana"), msg, sizeof msg, sig) == VK_OK);
+  CHECK(sSeen.size() == 2 && sSeen.back().domain == findDomain("solana") && sSeen.back().bytes.size() == sizeof msg);
+
+  // The key refuses: reported, with no signature.
+  hostHooks.sign = hookSignRefuses;
+  CHECK(signAuto("pay-proof", proof, sizeof proof, sig) == VK_SIGN_FAILED);
+  CHECK(sSeen.size() == 3 && sSeen.back().result == VK_SIGN_FAILED && !sSeen.back().hasSig);
+  hostHooks.sign = hookSign;
+
+  // Refused before the key was asked: nothing to log.
+  CHECK(signAuto("pay-proof", proof, 55, sig) == VK_BAD_ARG);
+  hostHooks.max_sign_bytes = 60;
+  CHECK(signAuto("pay-proof", proof, sizeof proof, sig) == VK_TOO_LONG);
+  hostHooks.max_sign_bytes = 1248;
+  CHECK(signAuto("nope", proof, sizeof proof, sig) == VK_UNSUPPORTED);
+  CHECK(sSeen.size() == 3);
+
+  // The store-reg path (hook H10) goes through it too.
+  const size_t before = sSeen.size();
+  (void)signStoreRegistration(String("not a registration"));
+  CHECK(sSeen.size() == before);                                           // refused by its validator
+}
+
 static void testBegin() {
   resetHooks();
   static uint8_t msg[1300];
@@ -496,6 +547,7 @@ int main() {
   testSignForApproval();
   testBegin();
   testStoreReg();
+  testSignListener();
   testInvalidTableStopsSigning();
 
   if (sFailures) {
