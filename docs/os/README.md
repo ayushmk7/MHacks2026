@@ -77,6 +77,7 @@ As of 2026-10-04, on one development badge (software key, no network, no second 
 | [apps/apps.md](apps/apps.md) | every shipped app |
 | [integration/backend.md](integration/backend.md) | what the badge needs from the laptop |
 | [guides/build-flash-provision.md](guides/build-flash-provision.md) | toolchain, build profiles, flashing, four badges |
+| [guides/flash-another-badge.md](guides/flash-another-badge.md) | the short path for putting BadgeOS on another badge: flash, power-cycle, apps, provision, check |
 | [guides/extending.md](guides/extending.md) | how to add or remove anything |
 | [testing/testing.md](testing/testing.md) | host tests, dev hooks, acceptance tests, measurements |
 | [roadmap/implementation-plan.md](roadmap/implementation-plan.md) | the work packages, in order, with gates |
