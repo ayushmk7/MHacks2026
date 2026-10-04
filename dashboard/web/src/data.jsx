@@ -106,9 +106,6 @@ export function DataProvider({ children }) {
       // Every cached approvals list (any ?limit) gets the row; the same id again (pending -> approved) replaces it in place.
       setStore(s => upsert(s, 'approvals', 'approvals', data, 'id'));
       refetch('badges'); // bank balances moved
-    } else if (type === 'route') {
-      setStore(s => upsert(s, 'routes', 'routes', data, 'txSig'));
-      refetch('relays/leaderboard', 'badges'); // relay rewards moved HACK
     } else if (type === 'settlement') {
       setStore(s => upsert(s, 'settlements', 'settlements', data, 'txSig'));
       refetch('badges'); // a deposit moved the payee's bank balance
@@ -191,7 +188,7 @@ export function useStatus() {
 }
 
 /**
- * Gaps from /api/status that the page `page` ('feed'|'routes'|'badges'|'registry'|'attack') must render itself.
+ * Gaps from /api/status that the page `page` ('feed'|'badges'|'registry'|'attack') must render itself.
  * App-wide blockers (database, RPC) are left out: the shell already shows those under the top bar.
  */
 export function useGaps(page) {
@@ -201,7 +198,7 @@ export function useGaps(page) {
 export const isGlobalGap = g => g.severity === 'blocker' && (g.pages?.length ?? 0) >= 4;
 
 /**
- * GET a resource: 'payments' | 'stats' | 'stats/db' | 'badges' | 'attestations' | 'attacks' | 'approvals' | 'routes' | 'relays/leaderboard'
+ * GET a resource: 'payments' | 'stats' | 'stats/db' | 'badges' | 'attestations' | 'attacks' | 'approvals'
  * | 'settlements' | 'topups' (params become the query string).
  * Returns { data, loading, error, refetch }. `data` is the response body exactly as in the API contract.
  * loading = nothing to show yet (render skeletons). error with data = stale data, keep rendering it.

@@ -1,4 +1,4 @@
-// Feed: stat tiles, the block-chain strip (one payment = one block), block detail, Capital One settlements, bank-rail approvals,
+// Feed: stat tiles, the block-chain strip (one payment = one block), block detail, Capital One settlements, badge decisions,
 // minute bars, Tiger Data card, ledger. Settlements join the chain rows by txSig.
 import { useLayoutEffect, useRef, useState } from 'react';
 import { useApi, useData, useGaps, useMode, useStatus } from '../data.jsx';
@@ -146,13 +146,13 @@ const REASON = {
   expired: 'Payee attestation expired', payee_mismatch: 'Payee does not match the attested record', bad_proof: 'Presence proof failed (payee not in the room)',
   amount_not_whole_dollars: 'Amount is not whole dollars', not_enrolled: 'Payer is not enrolled at the bank', stale: 'Approval too old (stale)',
   unverified: 'Payee not verified', mismatch: 'Amount or payee mismatch', cancelled: 'Cancelled on the badge', timeout: 'Timed out on the badge',
-  undecodable: 'Request could not be decoded', unverified_hop: 'Unverified relay on the route', route_dropped: 'Route dropped by a relay',
+  undecodable: 'Request could not be decoded', wrong_recipient: 'Paid to the wrong account', amount_mismatch: 'Amount differs from the request',
+  bad_req_sig: 'Request not signed by the payee', tx_not_found: 'Transaction not found on chain',
   nessie_error: 'Bank call failed', insufficient_funds: 'Insufficient funds',
 };
 const SETTLE_REASON = { amount_not_whole_dollars: 'Not whole dollars: Nessie only takes whole dollars', nessie_error: 'Bank deposit failed' };
 const reasonText = r => (r ? REASON[r] ?? r.replace(/_/g, ' ') : null);
 const settleReason = r => (r ? SETTLE_REASON[r] ?? reasonText(r) : null);
-const RAIL = { nessie: 'NESSIE', solana: 'SOLANA' };
 // HACK has 2 decimals, so on the Solana rail amountCents is raw base units: 1200 -> 12 HACK.
 const money = (a, symbol) => (a.rail === 'solana' ? `${fmt(a.amountCents / 100)} ${symbol}` : usd(a.amountCents));
 // nessieIds: the contract names it but not its shape; take an array, an object of ids or one string.
@@ -165,31 +165,30 @@ function Approvals({ symbol }) {
   const blocked = rows.filter(a => a.status === 'blocked' || a.status === 'failed').length;
   // An older backend has no /api/approvals yet: say so quietly instead of raising an error card.
   if (notBuilt(ap.error) && !ap.data) return (
-    <section className="card" aria-label="Bank rail approvals">
-      <div className="card-head"><h2>Approvals</h2><span className="chip">bank rail</span></div>
-      <p className="muted">This backend has no <code>/api/approvals</code> yet. Bank-rail payments and blocked attempts appear here once it ships.</p>
+    <section className="card" aria-label="Badge decisions">
+      <div className="card-head"><h2>Badge decisions</h2></div>
+      <p className="muted">This backend has no <code>/api/approvals</code> yet. Confirmed badge payments and refused attempts appear here once it ships.</p>
     </section>
   );
   return (
-    <section className="card" aria-label="Bank rail approvals">
+    <section className="card" aria-label="Badge decisions">
       <div className="card-head">
-        <h2>Approvals</h2>
-        <span className="muted">{ap.loading ? '' : `${fmt(rows.length - blocked)} through · ${fmt(blocked)} blocked`}</span>
+        <h2>Badge decisions</h2>
+        <span className="muted">{ap.loading ? '' : `${fmt(rows.length - blocked)} confirmed · ${fmt(blocked)} refused`}</span>
       </div>
       {ap.loading ? <Skeleton variant="row" lines={5} />
         : !rows.length ? (ap.error ? <Empty icon="×" title={ap.error.code === 'offline' ? 'Backend offline' : 'Approvals unavailable'} hint={ap.error.message} />
-          : <Empty icon="∅" title="No approvals yet" hint="Every bank-rail payment, and every attempt the backend or a badge refused, lands here." />)
+          : <Empty icon="∅" title="No decisions yet" hint="Every payment a badge signed and the backend confirmed on chain, and every attempt a badge refused (impostor, tampered amount, revoked payee), lands here." />)
         : (
           <div className="table-wrap">
             <table className="table">
-              <thead><tr><th>Time</th><th>Rail</th><th>From</th><th>To</th><th>Status</th><th className="r">Amount</th><th>Links</th></tr></thead>
+              <thead><tr><th>Time</th><th>From</th><th>To</th><th>Status</th><th className="r">Amount</th><th>Links</th></tr></thead>
               <tbody>
                 {rows.map(a => {
-                  const ids = idsOf(a.nessieIds), memo = a.links?.memo;
+                  const ids = idsOf(a.nessieIds), memo = a.links?.memo, tx = a.links?.solana ?? null;
                   return (
                     <tr key={a.id}>
                       <td className="num" title={a.time}>{clock(a.time)}</td>
-                      <td><span className="chip">{RAIL[a.rail] ?? a.rail ?? '—'}</span></td>
                       <td>{labelOf(a.payer?.pubkey)}</td>
                       <td>{a.payee?.name ?? <span className="muted">{labelOf(a.payee?.pubkey)} · unverified</span>}</td>
                       <td>
@@ -199,10 +198,11 @@ function Approvals({ symbol }) {
                       </td>
                       <td className="r num">{money(a, symbol)}</td>
                       <td>
-                        {memo ? <a className="ext-link" href={memo} target="_blank" rel="noreferrer" title={a.memoSig ?? memo}>memo<span aria-hidden="true"> ↗</span></a>
-                          : a.memoSig ? <ExplorerLink sig={a.memoSig}>memo</ExplorerLink> : null}
-                        {ids.map((id, i) => <span key={id} className="hash small" title={`Nessie id ${id}`}>{i || memo || a.memoSig ? ' · ' : ''}nessie {short(id, 4)}</span>)}
-                        {!memo && !a.memoSig && !ids.length && <span className="hash">—</span>}
+                        {tx ? <a className="ext-link" href={tx} target="_blank" rel="noreferrer" title={a.solanaSig ?? tx}>tx<span aria-hidden="true"> ↗</span></a>
+                          : a.solanaSig ? <ExplorerLink sig={a.solanaSig}>tx</ExplorerLink> : null}
+                        {memo && <> · <a className="ext-link" href={memo} target="_blank" rel="noreferrer">memo<span aria-hidden="true"> ↗</span></a></>}
+                        {ids.map(id => <span key={id} className="hash small" title={`Nessie id ${id}`}> · nessie {short(id, 4)}</span>)}
+                        {!tx && !a.solanaSig && !memo && !ids.length && <span className="hash">—</span>}
                       </td>
                     </tr>
                   );
@@ -319,7 +319,7 @@ export default function Feed() {
   const inspect = p => { setSel(p); detail.current?.scrollIntoView({ block: 'nearest' }); };
 
   return (
-    <Page title="Payments" subtitle={`Every ${symbol} transfer is a block. Capital One settlements, bank-rail approvals and blocked attempts are listed under the chain.`}>
+    <Page title="Payments" subtitle={`Every ${symbol} transfer is a block. Capital One settlements and every badge decision (confirmed or refused) are listed under the chain.`}>
       <section className="tiles" aria-label="Last 24 hours">
         {stats.loading ? [0, 1, 2, 3].map(i => <Skeleton key={i} variant="card" />) : <>
           <StatTile label="Payments · 24h" value={fmt(s?.payments)} sub={!s ? 'unavailable' : s.seedRows ? `includes ${fmt(s.seedRows)} seeded rows` : 'confirmed on devnet'} />

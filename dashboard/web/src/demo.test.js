@@ -15,36 +15,23 @@ const ATTESTATION = ['subject', 'badgeId', 'label', 'name', 'kind', 'status', 'p
 const ATTEMPT = ['id', 'createdAt', 'expiresAt', 'victim', 'attacker', 'displayAmount', 'actualAmount', 'symbol', 'decimals',
   'txBase64', 'messageBase64', 'txBytes', 'txVersion', 'blockhash', 'lastValidBlockHeight', 'decoded', 'outcome', 'signature',
   'deliveredAt', 'resolvedAt', 'warnings'];
-const ROUTE = ['txSig', 'time', 'payer', 'payee', 'amount', 'amountRaw', 'hops', 'e2eProof', 'gateway', 'links'];
-const HOP = ['position', 'pubkey', 'label', 'verified', 'reward', 'rewardState', 'rewardSig'];
 const SETTLEMENT = ['txSig', 'time', 'payee', 'amount', 'status', 'reason', 'nessieDepositId', 'attempts'];
 const TOPUP = ['id', 'time', 'pubkey', 'amount', 'status', 'reason', 'nessieWithdrawalId', 'hackSig', 'links'];
 const txUrl = sig => `https://explorer.solana.com/tx/${sig}?cluster=devnet`;
-const APPROVAL = ['id', 'time', 'rail', 'source', 'payer', 'payee', 'amountCents', 'status', 'reason', 'nessieIds', 'memoSig', 'links'];
+const APPROVAL = ['id', 'time', 'rail', 'source', 'payer', 'payee', 'amountCents', 'status', 'reason', 'nessieIds', 'memoSig', 'solanaSig', 'links'];
 
 function checkApproval(a) {
-  same(a, APPROVAL); same(a.payer, ['pubkey']); same(a.payee, ['pubkey', 'name']); same(a.links, ['memo']);
+  same(a, APPROVAL); same(a.payer, ['pubkey']); same(a.payee, ['pubkey', 'name']); same(a.links, ['memo', 'solana']);
   assert.match(a.time, ISO); assert.match(a.payer.pubkey, B58);
-  assert.ok(['nessie', 'solana'].includes(a.rail)); assert.ok(['backend', 'badge_report'].includes(a.source));
+  assert.equal(a.rail, 'solana'); assert.ok(['backend', 'badge_report'].includes(a.source));
   assert.ok(['pending', 'approved', 'blocked', 'failed'].includes(a.status));
   assert.ok(Number.isInteger(a.amountCents) && a.amountCents > 0);
   assert.equal(a.reason == null, a.status === 'approved' || a.status === 'pending');
   assert.ok(Array.isArray(a.nessieIds));
-  if (a.memoSig) assert.equal(a.links.memo, `https://explorer.solana.com/tx/${a.memoSig}?cluster=devnet`);
+  assert.equal(a.solanaSig != null, a.status === 'approved');
+  if (a.solanaSig) assert.equal(a.links.solana, txUrl(a.solanaSig));
 }
 
-function checkRoute(r) {
-  same(r, ROUTE); same(r.payer, ['pubkey', 'label']); same(r.payee, ['pubkey', 'name', 'label']); same(r.links, ['tx']);
-  assert.match(r.txSig, B58); assert.match(r.time, ISO); assert.equal(r.links.tx, txUrl(r.txSig));
-  assert.equal(Number(r.amountRaw), r.amount * 100); assert.equal(typeof r.e2eProof, 'boolean');
-  assert.ok(r.hops.length >= 1); assert.equal(r.gateway, r.hops.at(-1).pubkey);
-  r.hops.forEach((h, i) => {
-    same(h, HOP); assert.equal(h.position, i + 1); assert.match(h.pubkey, B58);
-    assert.ok(['none', 'pending', 'paid', 'failed'].includes(h.rewardState));
-    assert.equal(h.rewardState === 'none', !h.verified); assert.equal(h.reward, h.verified ? 0.01 : 0);
-    assert.equal(h.rewardSig != null, h.rewardState === 'paid');
-  });
-}
 function checkSettlement(s) {
   same(s, SETTLEMENT); same(s.payee, ['pubkey', 'name', 'label']);
   assert.match(s.txSig, B58); assert.match(s.time, ISO); assert.equal(typeof s.amount, 'number'); assert.ok(Number.isInteger(s.attempts));
@@ -123,9 +110,9 @@ test('badges, attestations, attacks', () => {
   }
   assert.deepEqual([badges[0].attestation.status, badges[0].attestation.name, badges[1].attestation.status], ['verified', 'MHacks Merch', 'unverified']);
   const { attestations } = demoGet('attestations');
-  attestations.forEach(a => { same(a, ATTESTATION); assert.ok(['merchant', 'person', 'relay'].includes(a.kind)); });
+  attestations.forEach(a => { same(a, ATTESTATION); assert.ok(['merchant', 'person'].includes(a.kind)); });
   for (const s of ['verified', 'revoked', 'expired']) assert.ok(attestations.some(a => a.status === s), s);
-  for (const k of ['merchant', 'person', 'relay']) assert.ok(attestations.some(a => a.kind === k), k);
+  for (const k of ['merchant', 'person']) assert.ok(attestations.some(a => a.kind === k), k);
   assert.deepEqual(badges.map(b => b.nessie == null), [false, true, false, true]);
   const { attempts } = demoGet('attacks');
   attempts.forEach(a => {
@@ -137,13 +124,13 @@ test('badges, attestations, attacks', () => {
   assert.equal(demoGet('payments').payments.find(p => p.attackId === signed.id).signature, signed.signature);
 });
 
-test('approvals: shape, newest first, every blocked reason, ticker', () => {
+test('badge decisions: shape, newest first, every refusal the demo shows, ticker', () => {
   const { approvals } = demoGet('approvals');
   approvals.forEach(checkApproval);
   for (let i = 1; i < approvals.length; i++) assert.ok(approvals[i - 1].time > approvals[i].time);
   const reasons = new Set(approvals.map(a => a.reason));
-  for (const r of ['replay', 'bad_sig', 'revoked', 'expired', 'payee_mismatch', 'bad_proof', 'amount_not_whole_dollars', 'not_enrolled', 'stale']) assert.ok(reasons.has(r), r);
-  for (const k of ['solana', 'badge_report', 'approved', 'pending', 'failed']) assert.ok(approvals.some(a => [a.rail, a.source, a.status].includes(k)), k);
+  for (const r of ['unverified', 'revoked', 'mismatch', 'bad_proof', 'expired', 'wrong_recipient', 'amount_mismatch', 'cancelled']) assert.ok(reasons.has(r), r);
+  for (const k of ['backend', 'badge_report', 'approved', 'blocked']) assert.ok(approvals.some(a => [a.source, a.status].includes(k)), k);
   assert.equal(demoGet('approvals', { limit: 3 }).approvals.length, 3);
   const a = mintDemoApproval();
   checkApproval(a);
@@ -181,13 +168,9 @@ test('POST flows work in memory with contract shapes and error codes', () => {
   assert.throws(() => demoPost('/api/attestations', { pubkey: impostor.pubkey, name: 'café', kind: 'person' }), { code: 'invalid_name' });
   assert.throws(() => demoPost('/api/attestations', { pubkey: impostor.pubkey, name: 'x'.repeat(33), kind: 'person' }), { code: 'invalid_name' });
   assert.throws(() => demoPost('/api/attestations', { pubkey: impostor.pubkey, name: 'x' }), { code: 'invalid_kind' });
-  assert.throws(() => demoPost('/api/attestations', { pubkey: impostor.pubkey, name: 'x', kind: 'relay', nessieRef: 'c' }), { code: 'invalid_param' });
+  assert.throws(() => demoPost('/api/attestations', { pubkey: impostor.pubkey, name: 'x', kind: 'relay', nessieRef: 'c' }), { code: 'invalid_kind' }); // no relays in the final demo
   assert.equal(issued.attestation.settleMode, 'hack'); // default for a merchant or person
 
-  // relays: one live relay attestation per operator id
-  const relay = demoPost('/api/attestations', { pubkey: judgeB.pubkey, name: 'Relay B', kind: 'relay', operatorId: 'op-b' });
-  assert.equal(relay.attestation.kind, 'relay'); assert.ok(!('operatorId' in relay.attestation));
-  assert.throws(() => demoPost('/api/attestations', { pubkey: impostor.pubkey, name: 'Relay C', kind: 'relay', operatorId: 'op-b' }), { code: 'conflict', status: 409 });
 
   // enroll: opens (or links) a Nessie account and the badge reports it
   const e = demoPost('/api/enroll', { pubkey: judgeB.pubkey });
@@ -206,26 +189,6 @@ test('POST flows work in memory with contract shapes and error codes', () => {
   const r = demoPost('/api/attacks/outcome', { id: a.id, outcome: 'rejected' });
   same(r, ATTEMPT); assert.equal(r.outcome, 'rejected'); assert.match(r.resolvedAt, ISO);
   assert.throws(() => demoPost('/api/attacks/outcome', { id: a.id, outcome: 'rejected' }), { code: 'conflict', status: 409 });
-});
-
-test('routes and relay leaderboard: shape, newest first, an unverified hop, every reward state', () => {
-  const { routes } = demoGet('routes');
-  assert.ok(routes.length >= 3);
-  routes.forEach(checkRoute);
-  for (let i = 1; i < routes.length; i++) assert.ok(routes[i - 1].time >= routes[i].time);
-  assert.ok(routes.some(r => r.hops.length === 2 && r.hops.some(h => !h.verified)), 'a route with an unverified hop');
-  for (const st of ['none', 'pending', 'paid', 'failed']) assert.ok(routes.some(r => r.hops.some(h => h.rewardState === st)), st);
-  assert.ok(routes.some(r => r.e2eProof) && routes.some(r => !r.e2eProof));
-  const sigs = new Set(demoGet('payments', { limit: 200 }).payments.map(p => p.signature));
-  for (const r of routes) assert.ok(sigs.has(r.txSig), 'every route is a payment on the chain');
-  assert.equal(demoGet('routes', { limit: 2 }).routes.length, 2);
-
-  const { relays } = demoGet('relays/leaderboard');
-  assert.ok(relays.length >= 3);
-  for (const x of relays) { same(x, ['pubkey', 'label', 'routes', 'earned']); assert.ok(x.routes >= 1); assert.equal(typeof x.earned, 'number'); }
-  for (let i = 1; i < relays.length; i++) assert.ok(relays[i - 1].earned >= relays[i].earned);
-  const paid = routes.flatMap(r => r.hops).filter(h => h.rewardState === 'paid').reduce((a, h) => a + h.reward, 0);
-  assert.ok(Math.abs(relays.reduce((a, x) => a + x.earned, 0) - paid) < 1e-9);
 });
 
 test('settlements: shape, newest first, every status, joined to payments by txSig', () => {
@@ -269,33 +232,24 @@ test('top-ups: seed shape, POST validation, pending then done or failed', () => 
 test('attestations: settle mode and the Capital One account rules', () => {
   const [, , , judgeB] = demoGet('badges').badges;
   const { attestations } = demoGet('attestations');
-  for (const a of attestations) assert.ok(a.kind === 'relay' ? a.settleMode === null : ['hack', 'bank'].includes(a.settleMode));
+  for (const a of attestations) assert.ok(['hack', 'bank'].includes(a.settleMode));
   assert.equal(attestations.find(a => a.name === 'MHacks Merch').settleMode, 'bank');
   const base = { pubkey: judgeB.pubkey, name: 'Judge B', kind: 'person' };
   assert.throws(() => demoPost('/api/attestations', base), { code: 'invalid_param', message: /Capital One account holders/ });
   assert.throws(() => demoPost('/api/attestations', { ...base, nessieRef: '   ' }), { code: 'invalid_param' });
   assert.throws(() => demoPost('/api/attestations', { ...base, nessieRef: 'c', settleMode: 'bank' }), { code: 'invalid_param', message: /nessieAccountId/ });
   assert.throws(() => demoPost('/api/attestations', { ...base, nessieRef: 'c', settleMode: 'usd' }), { code: 'invalid_param' });
-  assert.throws(() => demoPost('/api/attestations', { ...base, kind: 'relay', settleMode: 'hack' }), { code: 'invalid_param' });
+  assert.throws(() => demoPost('/api/attestations', { ...base, kind: 'relay', settleMode: 'hack' }), { code: 'invalid_kind' });
   const a = demoPost('/api/attestations', { ...base, kind: 'merchant', nessieRef: 'c', settleMode: 'bank', nessieAccountId: 'a'.repeat(24) }).attestation;
   same(a, ATTESTATION); assert.equal(a.settleMode, 'bank'); assert.ok(!('nessieAccountId' in a));
-  assert.equal(demoPost('/api/attestations', { ...base, kind: 'relay' }).attestation.settleMode, null);
 });
 
-test('follow-ups: pending work lands, a merchant payment can route and settle', () => {
-  const pendingRoute = demoGet('routes').routes.find(r => r.hops.some(h => h.rewardState === 'pending'));
+test('follow-ups: pending settlements land, a merchant payment settles to Capital One', () => {
   const pendingSettlement = demoGet('settlements').settlements.find(s => s.status === 'pending');
-  let events = [];
-  for (let i = 0; i < 40 && !(events.some(e => e.type === 'route' && e.data.txSig !== pendingRoute?.txSig)); i++) events.push(...mintDemoFollowUps(mintDemoPayment()));
-  for (const e of events) {
-    assert.ok(['route', 'settlement'].includes(e.type));
-    if (e.type === 'route') checkRoute(e.data); else checkSettlement(e.data);
-  }
-  if (pendingRoute) {
-    const r = demoGet('routes', { limit: 200 }).routes.find(x => x.txSig === pendingRoute.txSig);
-    assert.ok(r.hops.every(h => h.rewardState === 'paid' || h.rewardState === 'none'));
-  }
+  const events = [];
+  for (let i = 0; i < 40 && !events.some(e => e.type === 'settlement' && e.data.status === 'pending'); i++) events.push(...mintDemoFollowUps(mintDemoPayment()));
+  for (const e of events) { assert.equal(e.type, 'settlement'); checkSettlement(e.data); }
   if (pendingSettlement) assert.equal(demoGet('settlements', { limit: 200 }).settlements.find(s => s.txSig === pendingSettlement.txSig).status, 'settled');
-  assert.ok(events.some(e => e.type === 'route'), 'a new route within 40 payments');
-  demoGet('routes').routes.forEach(checkRoute); demoGet('settlements').settlements.forEach(checkSettlement);
+  assert.ok(events.some(e => e.data.status === 'pending'), 'a new settlement within 40 payments');
+  demoGet('settlements').settlements.forEach(checkSettlement);
 });
