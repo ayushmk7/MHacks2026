@@ -24,7 +24,7 @@ Honesty rule: the UI and the Lua API always report the true key location. A soft
 
 - The only file that calls `identity::sign` or `identity::signBase64` is `src/vk/wallet/signer.cpp`.
 - `signer.cpp` calls it from exactly one static function, `signRaw`, which every signature goes through.
-- `scripts/preflash-check.sh` fails if `identity::sign`, `signBase64`, `se050_apdu::signEd25519`, `ed25519::sign` or `crypto_sign(` appears anywhere outside `src/identity/`, `src/hal/se050_apdu.cpp` and `src/vk/wallet/signer.cpp`.
+- `scripts/preflash-check.sh` fails if `identity::sign`, `signBase64`, `se050_apdu::signEd25519`, `ed25519::sign`, `crypto_sign(`, or Monocypher's `crypto_ed25519_sign(` or `crypto_eddsa_sign(` appears anywhere outside `src/identity/`, `src/hal/se050_apdu.cpp` and `src/vk/wallet/signer.cpp`. The vendored library itself (`src/vk/wallet/vendor/`), which defines the last two, is not searched.
 
 ## Reason codes
 
@@ -208,7 +208,13 @@ void randomBytes(uint8_t *out, size_t len);        // esp_fill_random
 extern "C" int vk_verify_c(const uint8_t *msg, size_t len, const uint8_t *sig, const uint8_t *pubkey);
 ```
 
-`VK_ED25519_BACKEND 0` (default) calls upstream's `ed25519::verify` (TweetNaCl). `VK_ED25519_BACKEND 1` calls Monocypher 4.0.2 (`crypto_ed25519_check`), vendored as `src/vk/wallet/vendor/monocypher.{c,h}` and `monocypher-ed25519.{c,h}`; signatures are interchangeable. The backend is switched only if measurement M2 ([testing](../testing/testing.md#measurements)) shows verification is too slow for the presence deadline.
+`VK_ED25519_BACKEND 0` calls upstream's `ed25519::verify` (TweetNaCl). `VK_ED25519_BACKEND 1` calls Monocypher 4.0.2 (`crypto_ed25519_check`), vendored unmodified as `src/vk/wallet/vendor/monocypher.{c,h}` and `monocypher-ed25519.{c,h}` (`vendor/README` has the source, the checksums and the licence); signatures are interchangeable.
+
+**The build uses backend 1 since Batch 4.** Measurement M2 ([testing](../testing/testing.md#measurements)) gave 419 ms per verification with TweetNaCl, above the 400 ms limit; with Monocypher it is 18 ms on the badge. Only verification changed: signing still goes through upstream's `identity::sign` (TweetNaCl for a software key, 211 ms), and nothing calls Monocypher's signing functions (the pre-flash check fails if anything does).
+
+- "Interchangeable" holds for honest signatures. The two differ on a malleated one: TweetNaCl accepts a signature whose `S` has the group order added, Monocypher rejects it. Backend 1 is the stricter, so nothing honest breaks.
+- Monocypher's verification needs about 1.6 KB of stack (`crypto_eddsa_check_equation` alone has a 1,104-byte frame); it counts toward measurement M6.
+- Host suite `test_mono`: the record and request vectors verify, every single-bit flip of signature, key and message is rejected, and 50 random messages agree with TweetNaCl.
 
 Verification inside a Lua callback is preceded by `runtime::extendDeadline(2500)`.
 

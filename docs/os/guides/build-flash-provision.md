@@ -136,7 +136,7 @@ arduino-cli upload  --fqbn "$UPLOAD_FQBN" --build-path "$FW/build/<profile>" -p 
 | # | Check | Meaning of a failure |
 |---|---|---|
 | 1 | hook ids found in upstream files equal the hook table in `UPSTREAM-HOOKS.md`; every path in its replaced-files table marked `deleted` does not exist, and every path marked `rewritten` or `edited` exists | an untracked edit to an upstream file; a replaced upstream file that came back (a merge from upstream restored `src/ui/shell.cpp`, the splash images or a sample app) |
-| 2 | `identity::sign`, `signBase64`, `se050_apdu::signEd25519`, `ed25519::sign`, `crypto_sign(` appear only in `src/identity/`, `src/hal/se050_apdu.cpp`, `src/vk/wallet/signer.cpp` | something can sign around the wallet core |
+| 2 | `identity::sign`, `signBase64`, `se050_apdu::signEd25519`, `ed25519::sign`, `crypto_sign(`, `crypto_ed25519_sign(`, `crypto_eddsa_sign(` appear only in `src/identity/`, `src/hal/se050_apdu.cpp`, `src/vk/wallet/signer.cpp` (the vendored Monocypher in `src/vk/wallet/vendor/`, which defines the last two, is not searched) | something can sign around the wallet core |
 | 3 | `VK_SIGN_DOMAIN(` appears only in `src/vk/features/*/domain_*.cpp` | a signing domain defined outside a feature's domain file |
 | 4 | no file under `src/native_apps/` or `src/vk/features/` includes anything from `src/identity/` (the badge's own key comes from `vk::wallet::publicKey()`) | a feature or native app reaching for the key |
 | 5 | `test/host/run.sh` passes | the pure code changed behaviour |
@@ -161,7 +161,9 @@ scripts/push-apps.sh --host 192.168.4.31 --token 123456 release   # over Wi-Fi, 
 
 For each app folder under `apps/` the script: copies `lib/vk.lua` into a temporary copy of the folder; for `evilgame`, also copies `apps/game/*.lua` except `config.lua`; then pushes it, over serial with `vkdev.py push` (upstream's `AUTH`/`BEGIN`/`DATA`/`END` line protocol) or over Wi-Fi with `tools/badge-push.py --id <id>` (the tool otherwise takes the id from the folder name, which is a temporary one here). `apps/` holds only BadgeOS's apps: upstream's six samples are deleted. The `release` set leaves out the dev-only test apps `signtest`, `checktest`, `vktest` and `reqtest`; it **includes** `evilgame`, which the demo needs.
 
-The pairing code is on the badge under Settings → App push. In the dev profile `vkdev.py` reads it itself (`VKPAIR`).
+The pairing code is on the badge under Settings → App push. In the dev profile `vkdev.py` reads it itself (`VKPAIR`). A release build has no `VKPAIR`, so over serial it needs the code too: `--token <code>` is accepted with `--port` and passed to `vkdev.py --code`. With `--host` the code may also come from the environment variable `BADGE_TOKEN`. `--dry-run` lists what would be pushed and pushes nothing. The script exits 0 when every app was pushed, 1 when any push failed, 2 for a usage error.
+
+`vk.lua` (44 KB) goes into every app folder, whether or not the app requires it. `vkdev.py push` sends every file of a folder.
 
 ### Names on the network
 

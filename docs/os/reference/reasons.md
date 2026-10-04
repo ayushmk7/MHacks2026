@@ -21,9 +21,9 @@ One list for every refusal in BadgeOS. In C it is `vk_reason_t` (`src/vk/wallet/
 | 12 | `VK_DENIED` | `denied` | the app lacks the permission | `begin` (native apps; Lua apps get a Lua error instead) |
 | 13 | `VK_NOT_PROVISIONED` | `not_provisioned` | the badge has not been provisioned; a balance fetch has no token table, `rpc_url` or key | `begin`; `request_open`; `refresh_balance` |
 | 14 | `VK_TOO_LONG` | `too_long` | the bytes exceed the domain's limit or what the key can sign (242 bytes with an SE050 key) | `begin` |
-| 15 | `VK_SIGN_FAILED` | `sign_failed` | the key refused, the badge has no key, or the domain table failed its self-check | `poll`; `request_open`; `challenge`; `contact_card` |
+| 15 | `VK_SIGN_FAILED` | `sign_failed` | the key refused, the badge has no key, or the domain table failed its self-check | `poll`; `request_open`; `challenge`; `contact_hello`; `contact_card` |
 | 16 | `VK_BAD_ARG` | `bad_arg` | an argument has the right type but an invalid value | any function |
-| 17 | `VK_UNSUPPORTED` | `unsupported` | the domain or feature is not in this firmware; a default could not be resolved; the node's reply to a balance fetch held no usable account or was not status 200 | `begin`; `build_transfer`; `refresh_balance` |
+| 17 | `VK_UNSUPPORTED` | `unsupported` | the domain or feature is not in this firmware; a default could not be resolved; the node's reply to a balance fetch held no usable account or was not status 200 | `begin`; `build_transfer`; `refresh_balance`; `contact_accept` (the card is valid but the contacts file could not be written) |
 | 18 | `VK_IDLE` | `idle` | `poll` was called with nothing begun | `poll` |
 
 Rules: a red approval always reports its own cause (`red_reason`), however it was closed. An app decides what to tell the user from the reason; `vk.report` forwards `unverified`, `revoked`, `expired`, `mismatch` and `bad_proof` to the dashboard feed.

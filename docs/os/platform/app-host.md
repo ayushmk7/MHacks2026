@@ -34,7 +34,7 @@ Holding CANCEL for 1.5 s force-quits any app (upstream `APP_ESCAPE_HOLD_MS`).
 
 | Key | Form | Default | Meaning |
 |---|---|---|---|
-| `permissions` | comma-separated permission names, no spaces | (empty) | what the app may use |
+| `permissions` | comma-separated permission names | (empty) | what the app may use |
 | `min_api` | integer | 1 | lowest `badge.api_version` the app works with |
 
 ```ini
@@ -51,8 +51,15 @@ min_api=2
 namespace vk::host::manifest {
 struct Extra { String permissions; uint32_t min_api = 1; };
 bool load(const String &appId, Extra &out);     // reads /apps/<id>/app.ini via app_store::readFile
+bool parse(const String &iniText, Extra &out);  // the pure parser behind load(); what the host suite tests
 }
 ```
+
+How the two keys are read:
+
+- A missing `app.ini` is not an error: the app gets the defaults (no permissions, `min_api` 1) and `load()` returns true.
+- Comment lines, unknown keys and spaces around keys and values are ignored. Spaces around a permission name and empty items in the list (`sign,,net`) are dropped; a name listed twice counts once.
+- A `min_api` that is not decimal digits makes `load()` return false, and the launch is refused with `bad min_api in app.ini`.
 
 ## Permissions
 
@@ -89,11 +96,15 @@ void promotePending();                                 // pending grant slot -> 
 | `mic` | use the microphone | no | upstream `badge.mic` | `host/permissions.cpp` |
 | `storage` | store files | no | upstream `badge.storage` | `host/permissions.cpp` |
 
-Always available without a permission: `badge.gfx`, `badge.input`, `badge.led`, `badge.system`, `badge.battery`, `badge.se050`, `badge.codec`, and the identity functions of `badge.wallet` (`pubkey`, `address`, `key_location`, `time_ok`, `provisioned`, `tokens`, `config`, `balance`, `token_account`).
+Always available without a permission: `badge.gfx`, `badge.input`, `badge.led`, `badge.system`, `badge.battery`, `badge.se050`, `badge.codec`, `badge.theme`, and the identity functions of `badge.wallet` (`pubkey`, `address`, `key_location`, `time_ok`, `time`, `provisioned`, `tokens`, `config`, `balance`, `token_account`).
 
 How it is enforced:
 
-1. `preLaunch(appId)` reads the manifest. An unknown permission name refuses the launch with `unknown permission: <name>` (a typo must not silently grant nothing). It also refuses an id longer than 32 characters and a Lua folder whose id equals a native app's id. The granted set goes into a **pending** slot. Upstream's `launch()` then stops the old app (which clears the **active** slot), and only then builds the new Lua state: `vk::lua::open` (or `native::start`) promotes pending to active. `granted()` reads the active slot and never asks upstream which app is current (upstream sets that after the bindings are opened). A `preLaunch` that is not followed by a launch just leaves a pending slot that the next `preLaunch` overwrites.
+1. `preLaunch(appId)` reads the manifest: `app.ini` for a Lua app, the `BADGE_APP` line for a native app. An unknown permission name refuses the launch with `unknown permission: <name>` (a typo must not silently grant nothing), in a `BADGE_APP` list too. It also refuses an id longer than 32 characters. The granted set goes into a **pending** slot. Upstream's `launch()` then stops the old app (which clears the **active** slot), and only then builds the new Lua state: `vk::lua::open` (or `native::start`) promotes pending to active. `granted()` reads the active slot and never asks upstream which app is current (upstream sets that after the bindings are opened). A `preLaunch` that is not followed by a launch just leaves a pending slot that the next `preLaunch` overwrites.
+   - **A built-in app always wins.** If a pushed folder `/apps/<id>` has the id of a native app, the native app is launched and the folder is ignored: `preLaunch` logs `[vk] ignoring pushed app '<id>': the id belongs to a built-in app`. A pushed folder can therefore never replace or block `inbox`, `wallet_settings` or any other built-in app. The folder still shows as a second entry in the app list until it is deleted (`DEL <id>` removes the folder and leaves the native app).
+   - **While a native app object exists** (`native::active()`: from before its `on_start` until after its destructor), `granted()` answers from that app's `BADGE_APP` permissions, plus `espnow`, which native apps always have, whatever the slot holds. Hook H8b calls the stop listeners, which clear the active slot, before the app's `on_stop` and destructor run; without this rule those two would count as "no app" and be granted everything.
+   - The refusals, in the order they are checked: `app id is longer than 32 characters`; `bad min_api in app.ini`; `needs a newer BadgeOS (API <n>)`; `unknown permission: <name>`; `this app needs approval, and the approval screen is busy` (the consent confirmation could not be opened). `min_api` is checked before the permission names, so an app written for a newer OS gets the "newer" message and not a complaint about a permission this build does not know.
+   - Every refusal is logged as `[vk] launch of '<id>' refused: <error>`. Hook H8a shows the error on the error screen only when no app is running, and logs it only when one is, so without this line a test could not read it.
 2. `vk::lua::open(L)` (hook H7) builds the `badge` table for that app: a registered Lua function is installed only if its permission is granted; otherwise a stub is installed that raises `permission '<name>' not granted (add it to permissions= in app.ini)`. An upstream module table that is not granted is replaced by a table whose every access raises the same message.
 3. The router delivers `on_espnow` only with `espnow` ([protocol](../protocol/espnow.md#router)).
 4. The wallet core checks `granted(domain->permission)` again inside `begin()`; that check also covers native apps.
@@ -107,8 +118,11 @@ An app with no `permissions=` line gets none. Upstream's sample apps are not shi
 A permission marked "consent" needs the user's approval the first time an app that requests it is launched, and again whenever the app's permission list changes.
 
 - Store: `/vk/consent.bin`, up to 32 entries of `app_id[33]` + `hash u32` (FNV-1a of the sorted permission list); format in [stores](../wallet/stores.md#consent). The oldest entry is replaced when full. It registers a `VK_ON_RESET` listener that erases it.
-- `preLaunch` finds no matching entry → raises a confirmation ([approval](../wallet/approval.md)): title `Allow app`, headline `NEW PERMISSIONS`, big = the app's name, one line per consent permission (`May` / the label), amber, hold. It returns false with an empty error, so no error screen is shown. Upstream's main loop still runs its "app stopped" branch for a failed launch: the shell returns to the launcher (its cursor stays where it was) and any open push session is reset.
+- The hash is taken over the granted set (every registered name the app lists, each once, sorted, comma-joined), not only over the consent permissions: adding `net` to an app that already had `sign` asks again.
+- `preLaunch` finds no matching entry → raises a confirmation ([approval](../wallet/approval.md)): title `Allow app`, headline `NEW PERMISSIONS`, big = the app's name, one line per consent permission (`May` / the label) in `app.ini` order, at most four, amber, hold. It returns false with an empty error, so no error screen is shown. Upstream's main loop still runs its "app stopped" branch for a failed launch: the shell returns to the launcher (its cursor stays where it was) and any open push session is reset.
 - Approved → the entry is saved and the app is launched with `runtime::requestLaunch`. Rejected → nothing happens.
+- Approved but the file could not be written → that one launch is still allowed (the approval is kept in RAM for it), `[vk] consent for '<id>' could not be stored; allowed for this launch only` is logged, and the next launch asks again.
+- When a consent prompt is raised while another app is running, H8a logs an empty `[lua] ` line (the error is empty by design). Harmless.
 
 This covers every install path (push, serial, BLE, store) with no change to any of them. Native apps skip consent: they were reviewed and compiled in.
 
@@ -123,6 +137,8 @@ size_t count();
 bool at(size_t index, String &appIdOut, uint32_t &hashOut);   // count() and at() let the Wallet app list stored consent
 }
 ```
+
+The file is read once and kept in RAM (the Wallet app calls `count()` and `at()` on every repaint). Under `VK_HOST_TEST` the header also declares `hostReboot()`, which drops that copy so a suite can read the file again.
 
 ## Lifecycle events
 
@@ -141,6 +157,8 @@ bool luaPaused();                                // hook H19: true while the app
 ```
 
 Listeners: the approval engine (drops an approval or result owned by that app), the permissions module (clears the active grant slot), the requests feature (closes that app's open requests). A feature that holds anything on behalf of an app registers one.
+
+The listeners run **before** the app's own `on_stop` (hook H8b calls `onAppStopping` first), so whatever a listener releases is already gone while `on_stop` runs. Permissions are the one thing that must outlive it for a native app: see "How it is enforced", step 1.
 
 ## API version
 
@@ -186,6 +204,10 @@ const char *permissions();        // of the active app; "" when none
 }
 ```
 
+- Native apps are listed sorted by id (the registry's own order is link order, which is not defined).
+- `start()` logs `[vk] native app '<id>' started` before `on_start()`; `stop()` logs `[vk] native app '<id>' stopped` after the destructor. `active()` and `permissions()` stay valid until then.
+- If the create function returns null, `start()` calls `onAppStopping(id)` before it returns false: H8a does not call `stop()` on that path, and the grant slot just promoted would otherwise stay held for an app that never ran.
+
 Details, the SDK and the rules for native code: [native-apps.md](native-apps.md).
 
 ## Notifications
@@ -205,6 +227,7 @@ void clear();
 ```
 
 - Eight notes, in RAM, oldest dropped. Nothing is persisted.
+- The 10 s rule compares a post with every stored note and with the last accepted post, so dismissing a note does not let the same text straight back in; an ignored post does not restart the 10 s. A post with an empty title and an empty body is dropped. Title and body are cut to the field sizes.
 - Shown by: the launcher's `inbox` cell and the Settings list's Inbox row, whose value is the waiting count ([shell](../ui/shell.md#launcher)); the `notify` LED pattern while a note is waiting and the badge is idle (`vk::host::idle()`, [ui](../ui/ui.md#launcher-and-settings)), and the **Inbox** native app, which lists the notes; SELECT launches `app_id`, RIGHT dismisses.
 - Posted by firmware features only (a payment request seen, a contact saved). Apps cannot post.
 
@@ -230,4 +253,4 @@ The launcher and the settings are the shell, not apps ([shell](../ui/shell.md)).
 
 ## Tests
 
-Host: `test_manifest` (parser), `test_consent` (hash, store round trip with an in-memory file). Device: T-APP1 to T-APP7 in [../testing/testing.md](../testing/testing.md#acceptance-tests).
+Host: `test_manifest` (parser), `test_consent` (hash, store round trip with an in-memory file). Device: T-APP1 to T-APP7 in [../testing/testing.md](../testing/testing.md#acceptance-tests) (`t_app.py`, `t_native.py`), plus `t_notify.py` (notes and the Inbox) and `t_wallet_app.py`. `t_native.py` also pushes a folder named `hello_native` and checks that the native app still starts, and checks that `begin` from a native app's `on_stop` is refused like `begin` from its `on_start`.

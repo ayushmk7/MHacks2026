@@ -22,11 +22,14 @@
 --   ST sent <base58>                 the RPC node accepted the transaction
 --   ST refused <reason>
 --
--- The JSON field extraction and the RPC call below are temporary: lib/vk.lua replaces them
--- (vk.json, vk.send_tx) when it exists.
+-- JSON, the RPC call and the look come from lib/vk.lua (pushed into this folder as vk.lua by
+-- scripts/push-apps.sh).
 
 local cfg = require("config")
-local gfx, wallet, codec, http = badge.gfx, badge.wallet, badge.codec, badge.http
+local vk = require("vk")
+local wallet, codec, http = badge.wallet, badge.codec, badge.http
+
+vk.timeout_ms = cfg.http_timeout_ms
 
 local status = ""
 local state = "waiting"      -- waiting -> approving -> sending | reporting -> waiting
@@ -44,67 +47,11 @@ local function set_status(text)
   end
 end
 
-local function short(text)
-  if #text <= 10 then return text end
-  return text:sub(1, 4) .. ".." .. text:sub(-4)
-end
-
--- The value of the first "key": in a JSON text. A string value is returned unescaped; a number,
--- true, false or null is returned as its text. Enough for the flat replies read here.
-local function json_field(text, key)
-  local _, last = text:find('"' .. key .. '"%s*:%s*')
-  if not last then return nil end
-  local at = last + 1
-  if text:sub(at, at) ~= '"' then
-    return text:match("^[^,}%]%s]+", at)
-  end
-  local out = {}
-  at = at + 1
-  while at <= #text do
-    local stop = text:find('["\\]', at)
-    if not stop then return nil end
-    out[#out + 1] = text:sub(at, stop - 1)
-    if text:sub(stop, stop) == '"' then return table.concat(out) end
-    local escaped = text:sub(stop + 1, stop + 1)
-    if escaped == "n" then
-      out[#out + 1] = "\n"
-    elseif escaped == "t" then
-      out[#out + 1] = "\t"
-    elseif escaped == "u" then
-      out[#out + 1] = "?"
-      stop = stop + 4
-    else
-      out[#out + 1] = escaped
-    end
-    at = stop + 2
-  end
-  return nil
-end
-
-local function json_string(text)
-  return '"' .. text:gsub('[\\"]', "\\%0") .. '"'
-end
-
-local function base_url(name)
-  local url = wallet.config(name)
+-- The listener's address, without a trailing slash, or nil when it is not provisioned.
+local function listener_url()
+  local url = wallet.config("listener_url")
   if not url or url == "" then return nil end
   return (url:gsub("/+$", ""))
-end
-
--- One JSON-RPC call. Returns the "result" string, or nil and a message.
-local function rpc_string(method, params_json)
-  local url = base_url("rpc_url")
-  if not url then return nil, "rpc_url not set" end
-  local body = '{"jsonrpc":"2.0","id":1,"method":' .. json_string(method) .. ',"params":' .. params_json .. "}"
-  local code, reply = http.post(url, body, "application/json", cfg.http_timeout_ms)
-  if not code then return nil, tostring(reply) end
-  if code ~= 200 then return nil, "rpc http " .. tostring(code) end
-  if reply:find('"error"%s*:') then
-    return nil, json_field(reply, "message") or "rpc error"
-  end
-  local result = json_field(reply, "result")
-  if not result then return nil, "rpc reply not understood" end
-  return result
 end
 
 local function later(ms)
@@ -134,7 +81,7 @@ end
 
 -- Step 1 and 2: ask for a transfer; open the approval for a new one.
 local function ask()
-  local listener = base_url("listener_url")
+  local listener = listener_url()
   if not listener then
     set_status("listener_url not set")
     return later(cfg.retry_ms)
@@ -157,32 +104,35 @@ local function ask()
     return later(cfg.poll_ms)
   end
 
-  local id = json_field(body, "id")
-  local encoded = json_field(body, "messageBase64")
-  if not id or handled[id] then
+  -- `id` goes back to the laptop as it came; `key` names the attempt here and in the log.
+  local reply = vk.json.decode(body)
+  local id = type(reply) == "table" and reply.id or nil
+  local key = id ~= nil and tostring(id) or nil
+  if not key or handled[key] then
     show_waiting()
     return later(cfg.poll_ms)
   end
-  local msg = encoded and codec.b64dec(encoded)
+  local encoded = reply.messageBase64
+  local msg = type(encoded) == "string" and codec.b64dec(encoded)
   if not msg or #msg == 0 then
-    handled[id] = true
+    handled[key] = true
     set_status("laptop sent no message")
     return later(cfg.poll_ms)
   end
 
   local ok, why = wallet.begin_solana(msg)
   if ok then
-    handled[id] = true
+    handled[key] = true
     attempt = {id = id, msg = msg}
     state = "approving"
-    badge.log("ST begin " .. id)
+    badge.log("ST begin " .. key)
     set_status("approving")
   elseif why == "busy" then
     set_status("wallet busy")
     later(cfg.retry_ms)
   else
     -- Refused before any screen (not provisioned, too long for this key, ...).
-    handled[id] = true
+    handled[key] = true
     attempt = {id = id, msg = msg}
     refuse(tostring(why))
   end
@@ -207,10 +157,10 @@ end
 -- Step 3, signed: submit the transaction.
 local function send()
   tries = tries + 1
-  local sig, why = rpc_string("sendTransaction", "[" .. json_string(wire) .. ',{"encoding":"base64"}]')
+  local sig, why = vk.send_tx(wire)
   if sig then
     badge.log("ST sent " .. sig)
-    set_status("sent " .. short(sig))
+    set_status("sent " .. vk.short(sig))
     return back_to_waiting()
   end
   if tries >= cfg.send_tries then
@@ -224,10 +174,10 @@ end
 -- Step 3, refused: tell the laptop. The status line keeps saying why.
 local function report()
   tries = tries + 1
-  local listener = base_url("listener_url")
+  local listener = listener_url()
   local code = nil
   if listener and badge.wifi.connected() then
-    local body = '{"id":' .. json_string(attempt.id) .. ',"outcome":"rejected"}'
+    local body = vk.json.encode({id = attempt.id, outcome = "rejected"})
     code = http.post(listener .. "/badge/outcome", body, "application/json", cfg.http_timeout_ms)
   end
   -- 200: recorded. 4xx: the laptop will never take it (already resolved, or expired).
@@ -254,11 +204,13 @@ function on_update(dt)
 end
 
 function on_draw()
-  local cx = gfx.width() // 2
-  gfx.clear()
-  gfx.text_center("Sign test", cx, 50, gfx.WHITE, 2)
-  gfx.text_center(status, cx, 110, gfx.SOLANA_GREEN, 1)
-  gfx.text_center("CANCEL to quit", cx, 205, gfx.MUTED, 1)
+  local ui = vk.ui
+  ui.page()
+  ui.header("SIGN TEST")
+  ui.title("SIGN TEST", ui.TITLE_Y)
+  -- One status line; a long one (an error from the laptop or the node) is cut by the row.
+  ui.row(100, "STATUS", status)
+  ui.footer("", "CANCEL quit")
 end
 
 function on_button(key, pressed)

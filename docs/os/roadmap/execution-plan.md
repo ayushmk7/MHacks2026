@@ -242,6 +242,20 @@ As built in Batch 3 (integrator I3, confirmed on the badge):
 - The device tests leave about 55 history records per full run; a history append then costs about 145 ms (stores.md).
 - `checktest`, `reqtest` and `hello` stay installed on the badge after the tests.
 
+As built in Batch 4 (integrator I4, confirmed on the badge):
+
+- Boot line: `[vk] registries: services=8 commands=16 lua=37 status=4 domains=5 routes=3 permissions=9 patterns=6 native=3 config=17`. The three native apps are `hello_native`, `inbox` and `wallet_settings`.
+- `VK_ED25519_BACKEND` is 1 (Monocypher). One verification is 18 ms (it was 419 ms); one signature is still 211 ms. Image 1,998,531 bytes.
+- Permissions are enforced. A test launches an app with `common.launch`, which answers the consent prompt; `badge.run` is for launches that are expected to be refused or that end at once. Consent is erased by `provision_test` (through `VKRESET`).
+- A refused launch logs `[vk] launch of '<id>' refused: <error>`; a test reads that line, not the error screen.
+- A pushed folder with a native app's id is ignored and the native app launches (`[vk] ignoring pushed app '<id>': the id belongs to a built-in app`). While a native app object exists, `granted()` answers from its `BADGE_APP` line, `on_stop` included.
+- `wallet.time()` exists (unix seconds or nil); `vk.ui.status()` uses it.
+- An app that requires `vk` is pushed with `extra={"vk.lua": <lib/vk.lua>}` (`t_vk.py`, `t_sign_net.py`) or with `scripts/push-apps.sh`.
+- `test/device/fixtures/` (app folders pushed by `t_app.py`) sits beside `fixtures.py`. `from fixtures import …` resolves to the module as long as nobody adds an `__init__.py` to the folder.
+- `t_notify.py` resets the badge first, so the clock is unset afterwards. `t_con_single.py` and `t_con.py` push their own helper app `contest`, which stays installed, as do `vktest` and the four fixtures of `t_app.py` (`noperm`, `needsign`, `minapi99`, `nonet`).
+- `rename` over an existing file works on the badge's LittleFS (`t_con_single.py`).
+- The Batch 4 integration ran a reduced device-test set by the product owner's decision: `t_sto.py`, `t_req_single.py` and `t_clock.py` were not rerun against this build and are left to the final regression (I6).
+
 As changed by the Batch 5 design change (specified; integrator I5 confirms on the badge):
 
 - `VKSTATE` has a field `screen`: the shell's current screen (`launcher`, `app_delete`, `settings`, `wifi`, `bluetooth`, `espnow`, `push`, `store`, `identity`, `identity_new`, `display`, `leds`, `info`, `console`, `app_error`, `offer`, `installing`), or `""` while an app runs. Tests use it instead of comparing screenshots to know where they are. "The launcher" is `app == ""` and `screen == "launcher"`; there is no launcher app.
@@ -259,7 +273,7 @@ As changed by the Batch 5 design change (specified; integrator I5 confirms on th
 | Serial commands | `VKHELP`, `VKINFO` → `core/serial.cpp` · `VKKEYS`, `VKGET`, `VKSET`, `VKCOMMIT`, `VKRESET`, `VKWIFI`, `VKAUTOSTART` → `core/config.cpp` · `VKSTATE`, `VKBTN`, `VKSHOT`, `VKTIME`, `VKPAIR`, `VKNOTE` → `features/devtools/devtools.cpp` · `VKDEMOAPPROVE` → `features/devtools/demo_approve.cpp` |
 | Info fields | `profile`, `api` → `serial.cpp` · `provisioned`, `wifi` → `config.cpp` · `pubkey`, `key`, `selfcheck` → `signer.cpp` · `time` → `clock.cpp` |
 | Signing domains | `store-reg` → `features/store_reg/domain_store_reg.cpp` · `solana` → `features/solana_pay/domain_solana.cpp` · `pay-req`, `pay-proof` → `features/requests/domain_pay_*.cpp` · `contact` → `features/contacts/domain_contact.cpp` · `bank` → `features/bank/domain_bank.cpp` |
-| Lua functions | `wallet.pubkey/address/key_location/provisioned/time_ok/tokens/config/begin/poll`, `codec.*` → `wallet/lua_wallet.cpp` · `wallet.check_record/build_transfer/begin_solana/wire_tx` → `features/solana_pay/lua_solana.cpp` · `wallet.request_open/request_close/request_status/requests/challenge/presence` → `features/requests/lua_requests.cpp` · `wallet.history` → `features/history/lua_history.cpp` · `wallet.balance/token_account/refresh_balance` → `features/balance/lua_balance.cpp` · `wallet.contact_hello/contact_card/contact_accept/contacts/contact_remove` → `features/contacts/lua_contacts.cpp` · `theme.name/color` → `ui/lua_theme.cpp` · `wallet.begin_bank` → `features/bank/` |
+| Lua functions | `wallet.pubkey/address/key_location/provisioned/time_ok/time/tokens/config/begin/poll`, `codec.*` → `wallet/lua_wallet.cpp` · `wallet.check_record/build_transfer/begin_solana/wire_tx` → `features/solana_pay/lua_solana.cpp` · `wallet.request_open/request_close/request_status/requests/challenge/presence` → `features/requests/lua_requests.cpp` · `wallet.history` → `features/history/lua_history.cpp` · `wallet.balance/token_account/refresh_balance` → `features/balance/lua_balance.cpp` · `wallet.contact_hello/contact_card/contact_accept/contacts/contact_remove` → `features/contacts/lua_contacts.cpp` · `theme.name/color` → `ui/lua_theme.cpp` · `wallet.begin_bank` → `features/bank/` |
 | Permissions | `sign`, `net`, `espnow`, `ble`, `mic`, `storage` → `host/permissions.cpp` · `request` → `features/requests/` · `history` → `features/history/` · `contacts` → `features/contacts/` |
 | Settings pages (id, order → file under `shell/pages/`) | 5F: `theme` 10 → `page_theme.cpp` · `wifi` 20 → `page_wifi.cpp` · `bluetooth` 30 → `page_bluetooth.cpp` · `espnow` 40 → `page_espnow.cpp` · `push` 50 → `page_push.cpp` · 5G: `store` 60 → `page_store.cpp` · `identity` 70 → `page_identity.cpp` (also the screen `identity_new`) · `display` 80 → `page_display.cpp` · `leds` 90 → `page_leds.cpp` · `wallet` 100 → `page_wallet.cpp` · `inbox` 110 → `page_inbox.cpp` · `info` 120 → `page_info.cpp` · `console` 130 → `page_console.cpp`. `theme`, `wallet` and `inbox` are action rows (`VK_SETTINGS_ACTION`) and never become a screen |
 | Shell screens that are not pages | `launcher` → `shell/launcher.cpp` · `settings` → `shell/settings_list.cpp` · `app_delete`, `app_error`, `offer`, `installing` → `shell/dialogs.cpp` (all 5A) |
@@ -1238,7 +1252,7 @@ Code for everything below is written and compiled; only verification waits. Each
 - Settings → ESP-NOW: the peer list with a real peer. Both badges must run BadgeOS: the ESP-NOW magic is `BDOS`, so a badge on upstream firmware or on a build older than Batch 5 is not heard.
 - T-REQ1–4: request listed, presence present, replay stays pending, proof cap (`t_req.py`).
 - T-CHK1: green VERIFIED - PRESENT.
-- T-REQ5: a request raises a notification and the Inbox opens Pay.
+- T-REQ5: a request raises a notification and the Inbox opens Pay (no script yet: `t_notify_2.py`, steps in the WP32 tracking row).
 - T-CON1, T-CON2: contact swap and card replay (`t_con.py`).
 - Pay ↔ Request end to end (`t_pay_2.py`); Duel (`t_duel_2.py`).
 - M1 (CHAL→PROOF latency), which sets `presence_ms`; U7 and U12 (frame loss while a signature blocks the loop).
@@ -1261,6 +1275,7 @@ Code for everything below is written and compiled; only verification waits. Each
 
 **Needs a person**
 
+- The `notify` LED pattern (a dim breathe while a note waits and the badge is idle).
 - T-LED1, T-LED2: LED boot bar and severity colours. Boot screen appearance (it cannot be captured over serial), and that power-on shows no splash.
 - Settings → Identity → New identity, SELECT: it replaces the badge's key and address, so it is never scripted.
 - T-CFG4: `VKINFO` over BLE or HTTP is not recognised.

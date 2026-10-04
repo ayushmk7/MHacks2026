@@ -45,6 +45,7 @@ NEEDS = "network"
 _HERE = os.path.dirname(os.path.abspath(__file__))
 SIGNTEST_DIR = os.path.normpath(os.path.join(_HERE, "..", "..", "apps", "signtest"))
 SIGNTEST = "signtest"
+VK_LUA = os.path.normpath(os.path.join(_HERE, "..", "..", "lib", "vk.lua"))
 
 API = os.environ.get("VK_DASHBOARD_API", "http://127.0.0.1:8787").rstrip("/")
 AMOUNT = 1.0                 # display units; small, and under any sensible cap
@@ -137,7 +138,9 @@ def run(badge):
     hold = hold_ms(badge) + HOLD_MARGIN_MS
 
     to_launcher(badge)
-    badge.push(SIGNTEST_DIR, SIGNTEST)
+    with open(VK_LUA, "rb") as handle:       # signtest requires the shared library (lua-api.md, "lib/vk.lua")
+        library = handle.read()
+    badge.push(SIGNTEST_DIR, SIGNTEST, extra={"vk.lua": library})
     badge.clear_log()
     launch(badge, SIGNTEST)
     try:

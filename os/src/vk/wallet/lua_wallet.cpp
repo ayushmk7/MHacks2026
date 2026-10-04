@@ -174,6 +174,21 @@ int l_time_ok(lua_State *L) {
   return 1;
 }
 
+// wallet.time() -> unix seconds from the firmware clock, or nil when the clock has no trusted
+// source (the same clock the header and the checks read; os.time() is the raw system time).
+// Unix seconds are 32 bits unsigned and a Lua integer here is 32 bits signed: a value past 2038
+// is pushed as a float.
+int l_time(lua_State *L) {
+  if (!vk::clock::ok()) {
+    lua_pushnil(L);
+    return 1;
+  }
+  const uint32_t seconds = vk::clock::now();
+  if (seconds <= (uint32_t)LUA_MAXINTEGER) lua_pushinteger(L, (lua_Integer)seconds);
+  else lua_pushnumber(L, (lua_Number)seconds);
+  return 1;
+}
+
 // wallet.tokens() -> array of {symbol, mint, decimals, cap, max}; mint base58, cap and max strings
 // in display units ("100.00"; a cap or max of zero, meaning none, reads "0.00").
 int l_tokens(lua_State *L) {
@@ -436,6 +451,7 @@ VK_LUA_FUNCTION(address, "wallet", "address", nullptr, l_address);
 VK_LUA_FUNCTION(key_location, "wallet", "key_location", nullptr, l_key_location);
 VK_LUA_FUNCTION(provisioned, "wallet", "provisioned", nullptr, l_provisioned);
 VK_LUA_FUNCTION(time_ok, "wallet", "time_ok", nullptr, l_time_ok);
+VK_LUA_FUNCTION(time, "wallet", "time", nullptr, l_time);
 VK_LUA_FUNCTION(tokens, "wallet", "tokens", nullptr, l_tokens);
 VK_LUA_FUNCTION(config, "wallet", "config", nullptr, l_config);
 

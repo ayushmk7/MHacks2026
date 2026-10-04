@@ -195,7 +195,9 @@ H8e, H8f, first line of `dispatchButton`, `dispatchEspnow`:
 
 `dispatchBle` is not hooked: its only caller is the handler that Lua's `badge.ble.listen()` installs, so it never runs for a native app. Native apps have no `on_ble` callback.
 
-When a launch is refused while another app is running, the error is logged instead of stored: otherwise it would be shown later, when the running app exits normally, as if that app had failed.
+When a launch is refused while another app is running, the error is logged instead of stored: otherwise it would be shown later, when the running app exits normally, as if that app had failed. `preLaunch` itself logs every refusal as `[vk] launch of '<id>' refused: <error>`, whether or not an app is running.
+
+H8b calls `onAppStopping` before `native::stop()`, so the stop listeners (the permissions module's among them) have run by the time a native app's `on_stop` and destructor do. `vk::host::granted()` therefore answers from the native app's own `BADGE_APP` permissions for as long as `native::active()` is true, not from the grant slot ([app host](../platform/app-host.md#permissions)). If `native::start()` cannot create the app object it calls `onAppStopping(id)` itself, because `launch()` does not call `stop()` on that path.
 
 A launch that returns false still makes upstream's loop run its "app stopped" branch: the push session is reset (a serial or BLE pusher must `AUTH` again), the app list is rescanned (`shell::onAppStopped()` calls `app_store::refresh()`), the shell returns to the launcher, which keeps its cursor (clamped to the new app count), and the idle LED animation restarts.
 
@@ -232,7 +234,11 @@ In `src/apps/app_store.cpp`, with `#include "../vk/host/native.h"` (tagged). Nat
 
 `<existing count>` is upstream's `sCount`. `exists()` in upstream checks the filesystem, not the cached list. `infoAt` and `infoById` must fill every field of `Info` (`sizeBytes = 0`, `entry = ""`): the struct has no initialisers.
 
-`removeApp()` is not hooked: it finds no folder for a native id and returns false. The launcher never offers delete for a native app ([shell](../ui/shell.md#launcher)), so that path is reached only by a push. Known consequences, accepted: a pushed `DEL <native id>` stops that app if it is running and then answers "delete failed"; pushing a Lua app whose id equals a native id would create a second list entry, so `preLaunch` refuses to launch a Lua folder whose id is also a native id and logs it.
+`removeApp()` is not hooked: it finds no folder for a native id and returns false. The launcher never offers delete for a native app ([shell](../ui/shell.md#launcher)), so that path is reached only by a push. Known consequences, accepted: a pushed `DEL <native id>` stops that app if it is running and then answers "delete failed"; pushing a Lua app whose id equals a native id creates a second list entry (the folder's) until the folder is deleted.
+
+**The native app always wins.** `byId()` and `exists()` answer for the native app first, and H8a starts the native app for that id whatever is on the filesystem, so a pushed folder with a native id can never run in its place and can never stop it from running: `preLaunch` logs `[vk] ignoring pushed app '<id>': the id belongs to a built-in app` and lets the launch through. (Refusing the launch instead, as first written, would let anyone who can push a folder named `inbox` or `wallet_settings` make that system app unlaunchable.) `DEL <id>` then removes the pushed folder, answers `OK deleted`, and leaves the native app in the list. Checked on the badge by `t_native.py`.
+
+Native apps are listed in id order.
 
 ### H12 — SE050 message limit
 

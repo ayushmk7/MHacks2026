@@ -296,18 +296,18 @@ Stub behaviour (must equal upstream behaviour) is the last column of that table.
 **Read:** [app host](../platform/app-host.md) (Manifest, Permissions, Consent, API version, Lua function registry).
 **Files:** Fill `src/vk/host/permissions.{h,cpp}`, `lua_registry.cpp` (filtering, stubs); fill `host/manifest.cpp`, `host/consent.cpp`; `test/host/test_manifest.cpp`, `test_consent.cpp`; `test/device/t_app.py`. Add `permissions=` lines to upstream's sample apps and to `signtest`, `checktest`.
 
-- [ ] Host tests first: manifest parser; permission-list hash is order-independent; consent store round trip.
-- [ ] `preLaunch`: unknown permission, id length, native-id collision, `min_api`, consent confirmation and relaunch; the pending and active grant slots exactly as specified (a `VK_ON_APP_STOP` listener clears the active slot).
-- [ ] `vk::lua::open` filtering: stubs for ungranted functions; error tables for ungranted upstream modules.
-- [ ] Device: T-APP1 to T-APP4, T-APP7.
+- [x] Host tests first: manifest parser; permission-list hash is order-independent; consent store round trip.
+- [x] `preLaunch`: unknown permission, id length, native-id collision (the native app wins and the pushed folder is ignored and logged; it is not refused), `min_api`, consent confirmation and relaunch; the pending and active grant slots exactly as specified (a `VK_ON_APP_STOP` listener clears the active slot; while a native app object exists `granted()` answers from its `BADGE_APP` line).
+- [x] `vk::lua::open` filtering: stubs for ungranted functions; error tables for ungranted upstream modules.
+- [x] Device: T-APP1 to T-APP4, T-APP7.
 
 ### WP31: Native runtime and SDK
 
 **Read:** [native apps](../platform/native-apps.md), [app host](../platform/app-host.md#native-runtime).
 **Files:** Fill `src/vk/host/native.{h,cpp}`; create `src/native_apps/hello_native/hello_native.cpp`.
 
-- [ ] Registry lookup, `infoAt`/`infoById`, start/stop with `new`/`delete`, dispatch, `badge::exit`, permission list for `granted()`.
-- [ ] Device: T-APP5, T-APP6 (a second tiny native test app without `sign`, removed afterwards); the launcher lists it after the Lua apps; RIGHT (delete) on it shows upstream's failure message and removes nothing.
+- [x] Registry lookup, `infoAt`/`infoById`, start/stop with `new`/`delete`, dispatch, `badge::exit`, permission list for `granted()`.
+- [x] Device: T-APP5, T-APP6 (a second tiny native test app without `sign`, removed afterwards); the app list (`LIST`) has it after the Lua apps; a pushed `DEL` of it answers `ERR delete failed` and removes nothing. The launcher's own RIGHT (delete) on a native app was not pressed: that launcher is replaced in WP37.
 
 ### WP32: Notifications, status items, Inbox
 
@@ -316,7 +316,8 @@ Stub behaviour (must equal upstream behaviour) is the last column of that table.
 **Read:** [app host](../platform/app-host.md#notifications), [ui](../ui/ui.md#status-bar-removed).
 **Files:** Fill `src/vk/host/notify.{h,cpp}` (with status item `inbox`, LED pattern `notify`); create `src/vk/ui/status_dev.cpp` (status item `dev`), `src/native_apps/inbox/inbox.cpp`. No other package's file is edited: the requests feature already calls `notify::post`.
 
-- [ ] Device: T-REQ5; `VKNOTE` posts; the bar shows `[1]`; Inbox opens the named app.
+- [x] Device: `VKNOTE` posts; the launcher's picture changes (the bar shows `[1]`); Inbox opens the named app (`t_notify.py`).
+- [ ] Device: T-REQ5 (deferred: second badge; no test file yet, the steps are in the tracking row).
 
 ### WP33: Balance
 
@@ -331,22 +332,25 @@ Stub behaviour (must equal upstream behaviour) is the last column of that table.
 **Read:** [protocol](../protocol/espnow.md) (CONTACT frames), [stores](../wallet/stores.md#contacts), [Lua API](../platform/lua-api.md#badgewallet-contacts).
 **Files:** Create `src/vk/features/contacts/domain_contact.cpp`, `contacts.{h,cpp}`, `lua_contacts.cpp`; `test/host/test_contacts.cpp`. Permission `contacts`.
 
-- [ ] Host tests first: store; card signed bytes; accept refuses wrong nonce, wrong addressee, bad signature.
-- [ ] Nonce lifetime and rotation; upsert; notification "Saved `<name>`".
+- [x] Host tests first: store; card signed bytes; accept refuses wrong nonce, wrong addressee, bad signature.
+- [x] Nonce lifetime and rotation; upsert; notification "Saved `<name>`". On one badge: `t_con_single.py`.
+- [ ] Device: T-CON1, T-CON2 (`t_con.py`; deferred: second badge).
 
 ### WP35: `lib/vk.lua`
 
 **Read:** [Lua API](../platform/lua-api.md#libvklua).
 **Files:** Create `lib/vk.lua`, `scripts/push-apps.sh`, `test/device/t_vk.py` with a test app `apps/vktest/`.
 
-- [ ] JSON decode/encode with a test table run on the laptop under stock `lua5.4` if installed, and on the badge by `vktest`.
-- [ ] `vk.ui` (the receipt look for Lua; needs `badge.theme` from WP37, falling back to the light colours when that module is absent). RPC helpers; `vk.record`; `vk.feed`; frame helpers including `vk.result_parse` and `vk.hello_parse`; `vk.pay` state machine. Every network helper returns `nil, message` on failure and `vk.pay` ends in `failed` (review focus 4): test with Wi-Fi off.
-- [ ] Replace Sign test's private JSON code with `vk`.
+- [x] JSON decode/encode with a test table run on the laptop (`test_vk.lua`, the laptop's Lua 5.5 and the vendored 5.4 with 32-bit integers), and on the badge by `vktest`.
+- [x] `vk.ui` (the receipt look for Lua; `badge.theme` was written in this package, `src/vk/ui/lua_theme.cpp`, and `vk.ui` falls back to the light colours when that module is absent). RPC helpers; `vk.record`; `vk.feed`; frame helpers including `vk.result_parse` and `vk.hello_parse`; `vk.pay` state machine. Every network helper returns `nil, message` on failure and `vk.pay` ends in `failed` (review focus 4): tested on the badge with Wi-Fi off (`t_vk.py`). Against a real node: deferred (network).
+- [x] Replace Sign test's private JSON code with `vk`.
 
 ### WP36: Wallet settings app
 
 **Read:** [apps](../apps/apps.md#wallet-native).
-**Files:** Create `src/native_apps/wallet_settings/wallet_settings.cpp`.
+**Files:** Create `src/native_apps/wallet_settings/wallet_settings.cpp`; `test/device/t_wallet_app.py`.
+
+- [x] Five pages, the reset confirmation, exit (`t_wallet_app.py`).
 
 ### WP37: BadgeOS shell rewrite and rebrand
 
@@ -443,13 +447,13 @@ Each app is one folder under `apps/` with `app.ini`, `main.lua`, `config.lua`, w
 | 22 | Batch 2: 2E; integrator I2 | 2026-10-03 | on the badge: `hello` launches, runs and stops with the router's handler installed (`t_clock.py`, `t_apr.py`); `whosnear` launched from the real keys comes up on channel 1 | code complete; device verification deferred (second badge: T-HOOK1 and `whosnear` between two badges, `t_hook.py`). `routes=0` until WP23 |
 | 23 | Batch 3: 3D; integrator I3 | 2026-10-03 | host suite `requests`; on the badge `t_req_single.py`: `no_time` with the clock unset, two requests open after `VKTIME` (one `[vk] sign pay-req` each, 210 and 211 ms), status `open 0`, stopping the app closes them, a third open is `busy`, `10.001` and `0.00` are `bad_arg` | code complete; device verification of everything over the air deferred (second badge): T-REQ1 to T-REQ4 and T-CHK1 (`t_req.py`), M1, T-REQ5 (also needs the Inbox of WP32; `notify::post` is still the WP01 stub, so the "Payment request" note is dropped until then). **Gate 2 is met only in its offline half**: on one badge with prepared inputs, an unregistered payee is red (T-CHK3, T-CHK4), a request with no presence is amber (the replay case), a wrong account or amount is red (T-CHK6, T-CHK7). Missing half: an honest request green (T-CHK1) and the replay and wrong-payment cases between two real badges. Registries: services +2, routes +3, domains +2, lua +6, permissions +1, config +6 |
 | 24 | Batch 3: 3E (history), 3C (`t_sto.py`); integrator I3 | 2026-10-03 | host suite `stores`; on the badge `t_sto.py`: T-STO1 (a refused then a signed payment; `signed 10.00 HACK` before and after a reset), T-STO2 (both paths fail); also run once with the ring full (128 records, wrap path) | One append costs 22 to 75 ms on a nearly empty file and 245 to 320 ms on a full ring, not "a few milliseconds" (table in stores.md); the dev profile logs `[vk] history write <ms> ms`. `fileio` `renameFile` over an existing file is still not exercised on the badge (only the bad-magic path uses it) |
-| 30 | | | | |
-| 31 | | | | |
-| 32 | | | | |
+| 30 | Batch 4: 4A; integrator I4 | 2026-10-03 | host suites `manifest`, `consent` (fourteen suites in all: `checks frames mono record sol approval config consent contacts domains manifest requests stores vk`); on the badge `t_app.py`: T-APP1, T-APP2 (also: CANCEL stores nothing, a tap does not approve), T-APP3, T-APP4, T-APP7. Still passing with permissions enforced and the consent prompt answered by `common.launch`: `t_boot.py`, `t_cfg.py`, `t_apr.py`, `t_sign.py`, `t_chk.py`; upstream samples `hello` and `dice` launch with no permissions | The first Batch 4 build compiled with no error and every device test passed on the first flash. Boot line (final image): `[vk] registries: services=8 commands=16 lua=37 status=4 domains=5 routes=3 permissions=9 patterns=6 native=3 config=17`. Image 1,998,531 bytes (59.8 % of the slot); launcher heap 181 KB free. Three orchestrator decisions applied by the integrator: (1) a pushed folder with a native id no longer refuses the launch, the native app wins and the folder is ignored and logged (`t_native.py` checks it with a pushed `hello_native`); (2) while a native app object exists `granted()` answers from its `BADGE_APP` line, so `begin` from `on_stop` is refused (seen: `[deny] stop=denied`); (3) `wallet.time()` added. The refusal text still reads `needs a newer Badge OS (API <n>)` in the code and in `t_app.py`; WP37 (5R) renames that one string. Skipped in this batch by the product owner's reduced test scope, left to the final regression: `t_sto.py` (T-STO1, T-STO2 with the `storage` permission), `t_req_single.py`, `t_clock.py` |
+| 31 | Batch 4: 4B; integrator I4 | 2026-10-03 | on the badge `t_native.py`: T-APP5 (listed after the Lua apps, launches, `native` true, draws, CANCEL exits, a second launch is a new object, `DEL` answers `ERR delete failed`, `STOP` stops it); the pushed-folder check; T-APP6 with the temporary `zz_denytest`: `[deny] begin=denied` and `[deny] stop=denied` | `native=3` in the committed build (`hello_native`, `inbox`, `wallet_settings`); it read `native=4` with `zz_denytest`, which was deleted before the commit, so `t_native.py` now prints "T-APP6 not run" and passes on T-APP5. The brief's `native>=4` counted on that temporary app |
+| 32 | Batch 4: 4B; integrator I4 | 2026-10-03 | on the badge `t_notify.py`: `VKNOTE` gives `notes` 1 and a changed launcher picture; the same note again is ignored; Inbox SELECT launches `hello_native` and the note is gone; RIGHT dismisses; a note for an app that is not installed is removed and nothing launches; nine posts leave eight | code complete; device verification of T-REQ5 deferred (second badge). No `t_notify_2.py` exists yet; its steps: provision both badges and set the time; badge 1 on the launcher with ESP-NOW on, badge 2 runs `reqtest`; on badge 1 wait up to 5 s for `notes >= 1`; launch `inbox`, press `a`, assert `VKSTATE.app` equals `VKGET pay_app` and `notes` dropped by one (needs the Pay app of Batch 5). The `notify` LED pattern cannot be seen over serial (hands). This batch still has the status items `dev` (order 20, upstream's `WARN`) and `inbox` (order 30, `[n]`, upstream's `TEXT`); WP37 removes them |
 | 33 | Batch 3: 3E; integrator I3 | 2026-10-03 | compiles and registers (service, status item `balance`, `balance_poll_s`, three Lua functions); the reply scanner is covered by host suite `stores` | code complete; device verification deferred (network): status item shows the balance within one poll, `wallet.token_account()` equals the funded account, `[bal] fetch` (M5), `refresh_balance` with Wi-Fi off returns `nil, "timeout"`. No test file exists for it yet (3E described the test; write `t_bal_net.py` with `NEEDS = "network"`). The device tests run with Wi-Fi off (`VKINFO wifi=0`), so the idle poll never fired and `balance_poll_s 0` was not needed in the test provisioning |
-| 34 | | | | |
-| 35 | | | | |
-| 36 | | | | |
+| 34 | Batch 4: 4C; integrator I4 | 2026-10-03 | host suite `contacts`; on the badge `t_con_single.py` (one badge accepting a card it made for its own HELLO): saved, the same card again `expired`, the nonce rotated, renamed over the existing file with `added` unchanged, kept over a reset, removed | code complete; device verification of T-CON1 and T-CON2 deferred (second badge, `t_con.py`). `fileio` `renameFile` over an existing file works on the badge's LittleFS (first exercised here). Registers domain `contact`, five Lua functions, permission `contacts` |
+| 35 | Batch 4: 4D; integrator I4 | 2026-10-03 | host suite `vk` (2,156 checks; also passes on the vendored Lua 5.4.8 with 32-bit integers); on the badge `t_vk.py`: `VT json ok`, `VT frames ok`, `VT theme ok`, every network helper `nil <message>`, `VT pay failed <reason>`, `VT done`, the app still running, the screen differs between the two themes | code complete; every network path of `vk.lua` beyond "returns nil, message" deferred (network), as are `push-apps.sh --host` and `t_sign_net.py` (which now pushes `signtest` with `vk.lua`). `wallet.time()` added by the integrator (in `wallet/lua_wallet.cpp`; `vk.ui.status()` uses it), so `lua=37`: 29 + 5 contacts + 2 theme + 1 |
+| 36 | Batch 4: 4E; integrator I4 | 2026-10-03 | on the badge `t_wallet_app.py`: five pages, each drawn and all different (`shots/wallet_1.png` to `wallet_5.png`); DOWN and UP scroll the Config page; SELECT on Reset opens `ERASE WALLET CONFIG` (amber, hold), CANCEL closes it with `provisioned` still true and the page redrawn; CANCEL exits | The release branch of the BUILD row (`VK_PROFILE_DEV 0`) has not been compiled yet (first release build: Batch 6). No auto-repeat on a held UP or DOWN |
 | 37 | Batch 5: 5A (shell framework, launcher, dialogs, boot), 5F and 5G (settings pages), 5R (rebrand, test tooling); integrator I5 | | Gate 3 | redefined 2026-10-03 as "BadgeOS shell rewrite and rebrand" (specification: `ui/shell.md`); the earlier launcher app, settings app and home service are cancelled; not started |
 | 40 | | | | |
 | 41 | | | | |
@@ -458,6 +462,6 @@ Each app is one folder under `apps/` with `app.ini`, `main.lua`, `config.lua`, w
 | 44 | | | | |
 | 45 | | | Gate 4 | |
 | 50 | | | | |
-| 51 | | | | |
+| 51 | Batch 4: 4F (Monocypher vendored); integrator I4 (switch, M2) | 2026-10-03 | host suite `mono`; on the badge `t_chk.py` with `VK_ED25519_BACKEND 1` | M2 with Monocypher: **verify 18 ms** (12 samples of one `t_chk.py` run, eleven of them 18 or 19 ms; TweetNaCl was 419 ms). Sign is unchanged at 211 ms (upstream's TweetNaCl through `identity::sign`). `begin_solana` to first draw: 12 ms with no record, 15 to 33 ms with one verification, 50 ms with two. Pre-flash check 2 now also looks for Monocypher's signing functions. Still open: M1, M5, M6 (Monocypher's verification needs about 1.6 KB of stack), SE050 figures |
 | 52 | | | Release | |
 | 54 | | | optional | |

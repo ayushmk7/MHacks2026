@@ -1,0 +1,46 @@
+Monocypher, vendored for Ed25519 verification (VK_ED25519_BACKEND 1)
+====================================================================
+
+Version   4.0.2
+Source    https://monocypher.org/download/monocypher-4.0.2.tar.gz
+Fetched   2026-10-03
+
+Tarball checksums
+  SHA-256  38d07179738c0c90677dba3ceb7a7b8496bcfea758ba1a53e803fed30ae0879c
+  SHA-512  bf275d4c53ff94af6cdc723a4e002e9f080f4d1436c86c76bb37870b34807f1d
+           7b32331d8ff8a1aeb369e946f3769021e03e63efac25b82efc5abf54dc084714
+  The SHA-512 equals the one the project publishes at
+  https://monocypher.org/download/monocypher-4.0.2.tar.gz.sha512
+
+Files (unmodified copies; path in the tarball, then SHA-256)
+  monocypher.c           monocypher-4.0.2/src/monocypher.c
+                         afe2b098c8569577a84488e0b98d276d1fba6506adea68bb9241a52111734c59
+  monocypher.h           monocypher-4.0.2/src/monocypher.h
+                         f78bb31255cfb7beba66afd2137f5194c8a025cf40488b6cc1e295234d43f374
+  monocypher-ed25519.c   monocypher-4.0.2/src/optional/monocypher-ed25519.c
+                         7c9b16056cbd27521919e8a6f56a228808b9e718afc42e3d33f28c08e5abdee2
+  monocypher-ed25519.h   monocypher-4.0.2/src/optional/monocypher-ed25519.h
+                         bd546edcd468d64e28caa3dbf4b1d6bfad7435c0ce994723fd81aae26405121b
+
+Licence
+  Dual-licensed, at the user's choice: BSD-2-Clause OR CC0-1.0
+  (SPDX-License-Identifier: BSD-2-Clause OR CC0-1.0).
+  Copyright (c) 2017-2023 Loup Vaillant, 2017-2019 Michael Savage, 2017-2023 Fabio Scotoni.
+  The full text of both licences is at the top of each of the four files and in LICENCE.md of
+  the tarball.
+
+Use in Badge OS
+  Only src/vk/wallet/crypto.cpp includes these files, and only when VK_ED25519_BACKEND is 1
+  (src/vk/vk_build.h; docs/os/wallet/signing.md, "Crypto backend"). It calls one function:
+
+    int crypto_ed25519_check(const uint8_t signature[64], const uint8_t public_key[32],
+                             const uint8_t *message, size_t message_size);   // 0 = valid, -1 = not
+
+  Nothing in the firmware may call the signing functions in these files (crypto_ed25519_sign,
+  crypto_eddsa_sign and the rest): the one signing path is signRaw() in src/vk/wallet/signer.cpp.
+
+  Do not edit these files. To update, replace all four from one release tarball, update the
+  checksums above and run test/host/run.sh test_mono.
+
+Host test
+  test/host/test_mono.c

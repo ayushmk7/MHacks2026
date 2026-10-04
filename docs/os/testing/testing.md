@@ -25,6 +25,8 @@ cd os && test/host/run.sh        # builds and runs every suite; non-zero exit on
 | `test_config` | config text parsers (tokens, keys, ranges) | [config](../platform/config.md#tests) |
 | `test_manifest`, `test_consent` | manifest parser, consent hash and store | [app host](../platform/app-host.md#tests) |
 | `test_stores`, `test_contacts` | history ring, bad-magic recovery; contacts store and card acceptance | [stores](../wallet/stores.md#tests) |
+| `test_mono` (C) | Monocypher's `crypto_ed25519_check` against the vectors, every single-bit flip, and TweetNaCl on 50 random messages; links the two vendored `.c` files | [signing](../wallet/signing.md#crypto-backend) |
+| `test_vk.lua` | `lib/vk.lua` with a stubbed `badge` table: JSON, frames, every network helper against scripted replies, the `vk.pay` state machine, `vk.ui` geometry. Run by `run.sh` only when a `lua` binary exists (the laptop's 5.5; it also passes on the vendored 5.4 with 32-bit integers) | [Lua API](../platform/lua-api.md#libvklua) |
 
 What the runner and the shim do, beyond the above (fixed in WP02; later suites rely on it):
 
@@ -194,7 +196,7 @@ T-CHK2 to T-CHK9 run offline on one badge (`t_chk.py`): `checktest` passes a pre
 | T-APP3 | change that app's permissions line, push, launch | consent asked again | auto |
 | T-APP4 | app with `min_api=99` | refused with `needs a newer BadgeOS`; `screen` is `app_error` | auto |
 | T-APP5 | launch `hello_native`, CANCEL, launch again | draws, exits, fresh state | auto |
-| T-APP6 | native app without `sign` calls `vk::wallet::begin` | `denied` | auto |
+| T-APP6 | native app without `sign` calls `vk::wallet::begin`, in `on_start` and in `on_stop` (the temporary app `zz_denytest` of the Batch 4 integration; `t_native.py` skips this half when the build does not contain it) | `denied` both times | auto |
 | T-APP7 | app with `permissions=` empty uses `badge.http.get` | Lua error naming `net` | auto |
 
 ### Stores, contacts, LEDs
@@ -205,6 +207,11 @@ T-CHK2 to T-CHK9 run offline on one badge (`t_chk.py`): `checktest` passes a pre
 | T-STO2 | Lua app tries `badge.storage.read("../../vk/history.bin")` and `"/vk/history.bin"` | both fail (upstream raises a Lua error for a path outside the app folder; `checktest` wraps the call in `pcall`, and an error or `nil` both count as failing) | auto |
 | T-CON1 | two badges swap contacts | each lists the other's name and address | 2 |
 | T-CON2 | replay a captured CARD after the swap | `expired` | 2 |
+| (no id) | `t_con_single.py`: one badge accepts a card it made for its own HELLO | saved; the same card again is `expired`; the nonce rotated; a rename is written over the existing file and `added` stays; the contact survives a reset | auto |
+| (no id) | `t_notify.py`: `VKNOTE Test\|hello\|hello_native`, then the Inbox | `notes` 1; SELECT launches `hello_native` and removes the note; RIGHT dismisses; nine posts leave eight | auto |
+| (no id) | `t_vk.py`: `vktest` with no network | every `VT` line of [apps](../apps/apps.md#library-test); the app still running | auto |
+| (no id) | `t_wallet_app.py` | five different pages; the reset confirmation opens and CANCEL leaves the badge provisioned | auto |
+| (no id) | `t_native.py`: a folder named `hello_native` is pushed | the native app still launches; the log says the folder is ignored; `DEL` removes the folder only | auto |
 | T-LED2 | open green, amber and red approvals | LED colours match; red is solid | hands |
 
 ### Secure element
@@ -229,9 +236,9 @@ Fill in on hardware; these numbers set config values and decide fallbacks.
 | Id | What | How | Result | Decides |
 |---|---|---|---|---|
 | M1 | CHAL → PROOF round trip, 50 samples | log line `[req] proof <ms> ms` on the payer | p50 = , p95 = | `presence_ms` = p95 × 1.5 |
-| M2 | one Ed25519 verify; one sign (software key; SE050 key) | log lines `[vk] verify <ms> ms`, `[vk] sign <domain> <n> bytes <ms> ms` | Batch 3 (2026-10-03, software key, TweetNaCl): **verify 419 ms** (median of 45 samples over three runs of `t_chk.py`, every sample 418 to 420). **Sign 211 ms** (`[vk] sign solana 214 bytes 211 ms`; `pay-req` 210 and 211 ms). SE050: not measurable on this badge | verify is above 400 ms: the Monocypher backend (`VK_ED25519_BACKEND 1`) is called for |
-| M3 | `begin_solana` → approval visible | timestamp in the log at `begin` and at first draw | Batch 3, from the app's call (`CT call <ms>`) to `[vk] approval first draw at <ms>`: **12 ms** with no record, **434 ms** with a record (one verification), **854 ms** with a record and a request (two). Before the duplicate record check was removed ([checks](../wallet/checks.md#verdict-to-screen)) the last two were 853 and 1273 ms. Engine part alone (WP12): 11 ms | target under 2 s: met |
-| M4 | image size; free heap and free PSRAM in the launcher and during an approval | compile output; `VKSTATE.heap`; upstream heartbeat line | WP01 dev build (2026-10-03): 1,882,539 bytes, 56 % of the slot (unmodified upstream: 1,871,707); globals 77,504 bytes. Launcher: heap 197 to 202 KB free, PSRAM 7,971 KB free. Batch 3 dev build: 1,961,263 bytes, 59 % of the slot; launcher heap 186 KB free, PSRAM 7,971 KB; during a payment approval opened by a Lua app `VKSTATE.heap` is 189,568 | slot is 3,342,336 bytes |
+| M2 | one Ed25519 verify; one sign (software key; SE050 key) | log lines `[vk] verify <ms> ms`, `[vk] sign <domain> <n> bytes <ms> ms` | Batch 3 (2026-10-03, software key, TweetNaCl): **verify 419 ms** (median of 45 samples over three runs of `t_chk.py`, every sample 418 to 420). **Sign 211 ms** (`[vk] sign solana 214 bytes 211 ms`; `pay-req` 210 and 211 ms). SE050: not measurable on this badge. Batch 4 (software key, **Monocypher**, `VK_ED25519_BACKEND 1`): **verify 18 ms** (12 samples of one `t_chk.py` run: eleven at 18 or 19 ms, one at 2 ms). Sign unchanged, **211 ms** (signing is still upstream's TweetNaCl) | verify was above 400 ms with TweetNaCl, so the Monocypher backend is on; at 18 ms verification no longer limits the presence deadline |
+| M3 | `begin_solana` → approval visible | timestamp in the log at `begin` and at first draw | Batch 3, from the app's call (`CT call <ms>`) to `[vk] approval first draw at <ms>`: **12 ms** with no record, **434 ms** with a record (one verification), **854 ms** with a record and a request (two). Before the duplicate record check was removed ([checks](../wallet/checks.md#verdict-to-screen)) the last two were 853 and 1273 ms. Engine part alone (WP12): 11 ms. Batch 4, Monocypher: 12 ms, 15 to 33 ms, 50 ms | target under 2 s: met |
+| M4 | image size; free heap and free PSRAM in the launcher and during an approval | compile output; `VKSTATE.heap`; upstream heartbeat line | WP01 dev build (2026-10-03): 1,882,539 bytes, 56 % of the slot (unmodified upstream: 1,871,707); globals 77,504 bytes. Launcher: heap 197 to 202 KB free, PSRAM 7,971 KB free. Batch 3 dev build: 1,961,263 bytes, 59 % of the slot; launcher heap 186 KB free, PSRAM 7,971 KB; during a payment approval opened by a Lua app `VKSTATE.heap` is 189,568. Batch 4 dev build: 1,998,531 bytes, 59.8 % of the slot (Monocypher included); launcher heap 181 KB free | slot is 3,342,336 bytes |
 | M5 | one RPC request over the hotspot | `[bal] fetch <ms> ms` | | `balance_poll_s`, HTTP timeouts |
 | M6 | loop-task stack high-water mark during a signature and during an HTTPS request | `uxTaskGetStackHighWaterMark(NULL)` logged once a minute in the dev profile | | if under 1 KB free, raise the loop stack with `SET_LOOP_TASK_STACK_SIZE(16 * 1024)` in `os.ino` (a new hook) |
 

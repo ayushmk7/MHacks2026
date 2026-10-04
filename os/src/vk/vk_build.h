@@ -26,7 +26,7 @@
 #define VK_TEST_HOOKS VK_PROFILE_DEV
 
 // 0 = TweetNaCl (upstream), 1 = Monocypher (wallet/signing.md, Crypto backend).
-#define VK_ED25519_BACKEND 0
+#define VK_ED25519_BACKEND 1
 
 // 1 = never use the SE050 for the key (wallet/signing.md, Key). Needs hook H18.
 #define VK_FORCE_SOFTWARE_KEY 0

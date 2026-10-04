@@ -104,6 +104,8 @@ Type 17. A signed card, unicast in answer to a HELLO.
 
 Total 150–181 bytes. The receiver checks, in this order: `peer_pubkey` is its own key (else `mismatch`); `peer_nonce` is its current, unexpired swap nonce (else `expired`); the signature verifies with `pubkey` (else `bad_proof`). Because the signature covers the receiver's nonce and key, a card is valid for one receiver and one swap. A recorded card replayed later, or to someone else, fails.
 
+The swap nonce: 16 random bytes, drawn by `wallet.contact_hello()` and returned unchanged for 60 s (a nonce exactly 60,000 ms old has expired). A successful accept invalidates it; the next `contact_hello()` draws a new one, and until then every card is `expired`. A failed accept, a write failure included, keeps it. Nothing forbids a badge accepting a card it made for its own HELLO; the one-badge test (`t_con_single.py`) relies on that.
+
 ## Codec
 
 ```c

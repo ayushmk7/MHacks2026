@@ -38,6 +38,8 @@ A service calls the current pattern's `frame` and then `::leds::show()`, at most
 | `refused` | approval result: cancelled, timeout, blocked, failed | one red blink (on for 250 ms) | after 400 ms |
 | `notify` | a notification is waiting and the badge is idle (`vk::host::idle()`) | dim breathe in the active theme's `LED` colour, 3 s period | when the inbox is empty or an app starts |
 
+`leds.h` has no way to ask which pattern is playing, so `notify` ends itself: its frame returns false when no note waits, the badge is not idle, or an approval is open, and its service (in `host/notify.cpp`) starts it only when nothing is playing. It never calls `leds::stop()`, so it cannot stop an approval's pattern. "When an app starts" is therefore one LED frame after the app's `on_start`: an app that sets its LEDs once in `on_start` while a note is waiting loses them on that frame (accepted; apps set LEDs from `on_update` or `on_draw`).
+
 Colours are the approval's fixed severity colours ([approval](../wallet/approval.md#screen)) and the active theme's `LED` token. No pattern uses upstream's brand purple or green.
 
 ### Boot bar
@@ -230,7 +232,7 @@ The battery figure is the measured one. The badge has no fuel gauge, so the only
 | Launcher | [shell: Launcher](shell.md#launcher). Header; title `MENU`; apps in a 2-column grid of rows `NN NAME`, selected row inverted with `◂` (the `inbox` row shows the number of waiting notifications as its value when there are any); rule; row `BALANCE … 142.50 HACK`, or `SETUP NEEDED` while the badge is unprovisioned; barcode; footer `SELECT open` / `CANCEL settings` |
 | Settings list, every settings page, delete confirmation, app-store offer, installing, app error | [shell](shell.md#settings-list): each is a receipt list or ticket drawn with the kit |
 | Home | left stub: `BALANCE` amount, barcode; body: rows ADDRESS, KEY, CLOCK, INBOX; a rule; `THANK YOU FOR HACKING` |
-| Any list (Pay, History, Contacts, Inbox, Wallet, shop) | header; title; rows with optional sublines (5 rows with sublines or 9 without); footer with the action and `CANCEL back` |
+| Any list (Pay, History, Contacts, Inbox, Wallet, shop) | header; title at y = 26; rows from y = 46 with optional sublines: pitch 18 without sublines (9 rows, the last at y = 190) or 31 with them (5 rows, ending at y = 196); the line shown when the list is empty is centred at y = 112 in `SUB`; footer with the action and `CANCEL back`. The native Inbox and Wallet and `vk.ui.list` all use these positions |
 | Approval | [approval](../wallet/approval.md#screen) |
 | Request | left stub: amount with label `PAY ME`, `WAITING` or `RECEIVED`, barcode; body: title `REQUEST`, three rows. When the payment is confirmed the left stub's label reads `PAID`, drawn in the `STAMP_OK` colour |
 

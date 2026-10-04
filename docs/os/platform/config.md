@@ -60,7 +60,7 @@ Details of the store, as built (WP10):
 - **Empty values** can be stored (a key with a non-empty default, such as `pay_app`'s, can be replaced by any allowed value, and a key whose range starts at 0 can be set to empty). `Preferences::putString` reports 0 bytes for an empty string whether or not it was written, so an empty value is checked by reading it back.
 - **The provisioned flag** is the NVS key `_provisioned` (one byte) in `vkconf`. `commit()` returns false with `missing` empty when writing it fails.
 - **`set()` on a provisioned badge, secure key:** `UNAVAILABLE` while `confirmChange` is null, and also when `confirmChange` returns false because another approval is on screen (a change already waiting for its confirmation is kept). Otherwise `PENDING`.
-- **`requestReset()`** uses the same pointer, called as `confirmChange("(reset)", "", "", done)`, so `core/` includes no wallet header. The confirmation is raised whether or not the badge is provisioned.
+- **`requestReset()`** uses the same pointer, called as `confirmChange("(reset)", "", "", done)`, so `core/` includes no wallet header. The confirmation is raised whether or not the badge is provisioned. `requestReset()` returns nothing: a caller that needs to know whether the confirmation opened (the Wallet app's Reset page) looks at `vk::wallet::approval::active()` straight after the call.
 - **Parsers.** `parseStr`, `parseU32`, `parseKey32`, `parseTokens` and `validate` are pure functions declared in `config.h` and covered by `test_config`. `find(name)` returns the registered key.
 - **Cache.** 32 slots; keys beyond that still work but are read from NVS on every call.
 - Avoid `CHANGE`, `RISING`, `FALLING` and `DISABLED` as enumerator names anywhere: the Arduino core defines them as macros.

@@ -6,6 +6,8 @@
 #
 #   1  hook ids found in upstream files equal the table in UPSTREAM-HOOKS.md
 #   2  the signing calls appear only in src/identity/, src/hal/se050_apdu.cpp, src/vk/wallet/signer.cpp
+#      (Monocypher's own signing functions count as signing calls; the vendored library in
+#      src/vk/wallet/vendor/ defines them and is not searched)
 #   3  VK_SIGN_DOMAIN( appears only in src/vk/features/*/domain_*.cpp
 #   4  nothing under src/native_apps/ or src/vk/features/ includes anything from src/identity/
 #   5  test/host/run.sh passes (skipped while that file does not exist)
@@ -100,10 +102,11 @@ check_hooks() {
 # --- 2: one signing path ----------------------------------------------------------------------
 check_signing_calls() {
   sources | grep -v -e '^src/identity/' -e '^src/hal/se050_apdu\.cpp$' -e '^src/vk/wallet/signer\.cpp$' \
+      -e '^src/vk/wallet/vendor/' \
     | tr '\n' '\0' | xargs -0 awk '
       {
         code = $0; sub(/\/\/.*/, "", code)
-        if (code ~ /identity::sign|signBase64|se050_apdu::signEd25519|ed25519::sign|crypto_sign\(/)
+        if (code ~ /identity::sign|signBase64|se050_apdu::signEd25519|ed25519::sign|crypto_sign\(|crypto_ed25519_sign\(|crypto_eddsa_sign\(/)
           printf "%s:%d: %s\n", FILENAME, FNR, $0
       }' > "$TMP/signing"
   if [ -s "$TMP/signing" ]; then

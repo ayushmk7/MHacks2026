@@ -14,6 +14,11 @@ LittleFS, directory `/vk/` (C path `FS_ROOT "/vk/"`, that is `/littlefs/vk/`). U
 
 Common rules: little-endian; an 8-byte header `magic[4]`, `version u16`, `count u16`; a file with a wrong magic or version is renamed to `<name>.bad` and a new empty file is started; writes go to `<name>.tmp` and are renamed over the original, except the history ring, which rewrites one record in place.
 
+How the three stores apply them (the same in each):
+
+- A bad file (wrong magic or version, a count above the capacity or above what the file's size holds) reads as empty and is left alone by readers; the next write renames it to `<name>.bad` and starts a new file.
+- The rename of `<name>.tmp` over an existing `<name>` relies on `fileio`'s `renameFile` replacing its target. It does on the badge's LittleFS (checked by `t_con_single.py`: a contact renamed, so written over an existing file, and read back after a reset).
+
 The three stores have three owners that may not include each other, so they share one file layer, `src/vk/core/fileio.{h,cpp}`. A store never calls the filesystem directly: every read, write, rename and remove goes through `vk::fileio::ops`. The host tests install an in-memory implementation behind the same pointer ([testing](../testing/testing.md#host-tests)).
 
 ```cpp
@@ -107,6 +112,8 @@ Header magic `VKC1`. Up to 64 records of 72 bytes; when full, the oldest is repl
 
 A contact is written only by `wallet.contact_accept` after the card's signature, nonce and addressee were verified ([protocol](../protocol/espnow.md#contact_card)). A second card from the same key updates the name. Contact names are self-chosen and are never used by the approval screen.
 
+Order: records are kept in insertion order, index 0 the oldest (the header has no head index and `added` can be 0 when the clock had no source, so "oldest" is the position in the file). The 65th contact drops record 0. An upsert of a known key changes only the name; its place and its `added` stay. `wallet.contacts()` is therefore oldest first. If the file cannot be written the contact is not saved, `[contact] write failed (…)` is logged and `contact_accept` returns `unsupported`.
+
 ```cpp
 // src/vk/features/contacts/contacts.h
 namespace vk::contacts {
@@ -118,9 +125,13 @@ bool remove(const uint8_t pubkey[32]);
 }
 ```
 
+The header also declares, for the feature's own bindings and its host suite: `Cursor` / `open` / `at(cursor, …)` (several reads of one file), `hooks` (time, random bytes, sign and verify as function pointers), `hello`, `card`, `accept`, `validCardBytes` (the `contact` domain's validator), `cleanName`, `reset`, and the path and size constants. `contacts.cpp` holds one static 4,616-byte buffer, the whole file image, used for writes.
+
 ## Consent
 
 Header magic `VKP1`. Up to 32 records of 40 bytes: `app_id[33]`, 3 bytes of padding, `hash u32` (FNV-1a over the app's sorted, comma-joined permission list). The id is stored in full (upstream ids are up to 32 characters) because consent must not be shared between two apps with a common prefix. See [app host](../platform/app-host.md#consent). Erased by `VKRESET` through a `VK_ON_RESET` listener.
+
+"Oldest" is file order: a new entry is appended and, at 32, the first is dropped; approving an app again (its permissions changed) removes its old entry and appends the new one. The file is read once and kept in RAM. If the rename of `.tmp` over the file is refused, the file is written in place.
 
 ## Adding a store
 
@@ -128,4 +139,4 @@ Create it inside the feature that owns it, following the common rules above, and
 
 ## Tests
 
-Host: `test_stores` runs the three formats against an in-memory file: round trip, ring wrap-around at 128, oldest-replaced at capacity, bad magic recovery; for the history also a failed record write, a failed header write, a missing `/vk/`, the listener for all six outcome codes, and the balance reply scanner. Device: T-STO1 (history survives a reboot), T-STO2 (an app cannot open `/vk/history.bin` through `badge.storage`).
+Host: `test_stores` runs the three formats against an in-memory file: round trip, ring wrap-around at 128, oldest-replaced at capacity, bad magic recovery; for the history also a failed record write, a failed header write, a missing `/vk/`, the listener for all six outcome codes, and the balance reply scanner. `test_contacts` and `test_consent` do the same for their stores (exact file bytes, failing writes and renames, order at capacity). Device: `t_con_single.py` (one badge: a contact saved, renamed over the existing file, kept over a reset, removed), T-STO1 (history survives a reboot), T-STO2 (an app cannot open `/vk/history.bin` through `badge.storage`).

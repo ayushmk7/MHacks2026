@@ -42,7 +42,7 @@ class HelloNative final : public badge::App {
 BADGE_APP(HelloNative, "hello_native", "Hello (C++)", "1.0.0", "");
 ```
 
-Build and flash; it appears in the launcher after the Lua apps.
+Build and flash; it appears in the launcher after the Lua apps (native apps are listed in id order). The id belongs to the firmware: a pushed Lua folder with the same id is ignored, and the native app is the one that launches ([app host](app-host.md#permissions)).
 
 ## The SDK header
 
@@ -108,8 +108,9 @@ The app object is created with `new` when the app starts and deleted when it sto
 4. **No signing except `vk::wallet::begin`.** No includes from `src/identity/`.
 5. **No exceptions, no RTTI** (the Arduino core builds without them). `new` can return memory from the internal heap; for anything over a few kilobytes use `heap_caps_malloc(size, MALLOC_CAP_SPIRAM)`.
 6. **Release what you take** in `on_stop` or the destructor: LEDs (`leds::off()`), the microphone, any ESP-NOW state.
-7. **Declare permissions truthfully** in `BADGE_APP`. They are shown in the Wallet app and enforced at the wallet API.
-8. Our own state (config, stores, notifications) is reached through the `vk::` headers the SDK includes, never by opening `/vk/` files directly, and never by including a feature's header: a native app that needs the balance uses `vk::wallet::tokenInfoLookup`, and must work when it is null.
+7. **Declare permissions truthfully** in `BADGE_APP`. They are shown in the Wallet app and enforced at the wallet API, from the constructor to the destructor (`on_stop` included). A name no feature registered refuses the launch with `unknown permission: <name>`, as it does in `app.ini`.
+8. **Redraw after a pause.** A native app gets no callback when an approval closes over it, and the approval's picture is still on the canvas. An app that draws only when something changed must also redraw when `on_update`'s `dt` is large (the first frame after the pause; the Wallet app uses 0.25 s).
+9. Our own state (config, stores, notifications) is reached through the `vk::` headers the SDK includes, never by opening `/vk/` files directly, and never by including a feature's header: a native app that needs the balance uses `vk::wallet::tokenInfoLookup`, and must work when it is null.
 
 ## Paying from a native app
 
@@ -136,4 +137,4 @@ Delete its folder and reflash. Nothing else references it.
 
 ## Tests
 
-Device: T-APP5 (a native app launches, draws, exits with CANCEL, and relaunches with fresh state) and T-APP6 (a native app without `sign` in its permissions gets `denied` from `begin`), in [../testing/testing.md](../testing/testing.md#acceptance-tests).
+Device: T-APP5 (a native app launches, draws, exits with CANCEL, and relaunches with fresh state) and T-APP6 (a native app without `sign` in its permissions gets `denied` from `begin`, in `on_start` and in `on_stop`; run with the temporary app `zz_denytest`, which is not kept in the tree), in [../testing/testing.md](../testing/testing.md#acceptance-tests).

@@ -41,13 +41,17 @@ The first app, used to reach gate 1 and by the unattended test loop. Dev profile
 3. On a signature: `vk.send_tx(wallet.wire_tx(sig, msg))`. The dashboard detects a signed transaction from the chain; nothing is posted. On refusal: `POST <listener_url>/badge/outcome` with `{id, outcome="rejected"}`.
 4. Screen: one status line (`waiting`, `approving`, `sent <short sig>`, `refused: <reason>`).
 
-As built (WP13): the listener serves a pending attempt for 90 s, so `signtest` remembers every attempt id it has taken and never opens the same attempt twice. Until `lib/vk.lua` exists (WP35) it carries its own minimal JSON field extraction and RPC call, marked temporary; WP35 replaces them with `require("vk")`. A network call that returns nil shows a status line and retries. Its on-chain path has not run yet (`t_sign_net.py`, deferred: network).
+As built (WP13): the listener serves a pending attempt for 90 s, so `signtest` remembers every attempt id it has taken and never opens the same attempt twice. Since WP35 it uses `require("vk")` for JSON and RPC (its own temporary code is gone), draws with `vk.ui`, and sends with `vk.commitment` as the preflight commitment; its log lines are unchanged. Whoever pushes it must add `lib/vk.lua` as `vk.lua` (`push-apps.sh` does; `t_sign_net.py` does). A network call that returns nil shows a status line and retries. Its on-chain path has not run yet (`t_sign_net.py`, deferred: network).
 
 ## Check test
 
 A test fixture, not an app for people. On start it requires `case` (a file `case.lua` that the test pushes into the app folder; without it the app logs `CT nocase` and idles). Case fields: `msg_hex` or `transfer` (a table passed to `wallet.build_transfer`), `record_hex`, `sig_hex`, `req_hex`, `delay_ms` (default 1500 in the tests: `common.launch()` must first see the app running with no approval open), `flush_draw` (draw and call `badge.gfx.flush()` every frame), `history` (log the newest `wallet.history` entry), `storage_probe` (try `badge.storage.read` on `"../../vk/history.bin"` and `"/vk/history.bin"`, each inside `pcall`).
 
 It logs with `badge.log`, one line each: `CT tick <n>` once a second from `on_update`; `CT call <ms>` just before `begin_solana` (for measurement M3); `CT begin ok` or `CT begin err <reason>`; `CT poll sig <hex>` or `CT poll err <reason>`; `CT hist <outcome> <amount> <symbol>` or `CT hist none`; `CT storage <ok|fail> <ok|fail>`; `CT case error: …` when `case.lua` exists but does not load. CANCEL exits.
+
+## Library test
+
+`vktest`, a test fixture for `lib/vk.lua` on the badge's own Lua (`t_vk.py`). It runs the JSON table of its `config.lua` (the same table `test_vk.lua` runs on the laptop), the frame helpers and `badge.theme`, then every network helper and the payer flow with no network. It logs `VT json ok`, `VT frames ok`, `VT theme ok <name>`, `VT <helper> nil <message>` for rpc, blockhash, confirm, record, send_tx, report and feed, `VT pay failed <reason>`, and `VT done`. If the badge has a route it logs `VT net up` and skips the posting steps and the payment, and the test fails with a message saying to turn Wi-Fi off.
 
 ## Request test
 
@@ -126,6 +130,8 @@ Limits to state honestly: there is no escrow (the loser can press CANCEL), and r
 
 Reached from the launcher (its cell shows the waiting count) and from Settings → Inbox ([shell](../ui/shell.md#wallet-and-inbox)). Lists `vk::host::notify` notes, newest first: title, body, age. SELECT launches the note's `app_id` and removes the note; RIGHT dismisses; CANCEL exits. Empty: "Nothing new".
 
+As built (WP32): a row's label is the note's title in capitals, its value the age (`now`, `3m`, `2h`, `1d`), its subline the body; five rows are visible. SELECT on a note whose `app_id` is empty or not installed removes the note and stays in the Inbox (no launch into an error screen). The footer reads `SELECT open · RIGHT dismiss` / `CANCEL back`, because nothing else tells the user about RIGHT. It redraws on every key and four times a second.
+
 ## Wallet (native)
 
 Reached from the launcher and from Settings → Wallet. Read-only pages, LEFT/RIGHT to change page:
@@ -136,7 +142,17 @@ Reached from the launcher and from Settings → Wallet. Read-only pages, LEFT/RI
 4. **Apps**: native apps and their declared permissions; Lua apps with stored consent.
 5. **Reset**: "Reset wallet config" → `vk::config::requestReset()`.
 
-Balances come from `vk::wallet::tokenInfoLookup`; the page shows "—" when the balance feature is absent.
+Balances come from `vk::wallet::tokenInfoLookup`; the page shows `--` when the balance feature is absent or the balance is not known (the kit draws an em dash as `?`, so the two hyphens the launcher's balance row uses stand in for it). The lookup answers only for the default token, so every other token's balance shows `--`.
+
+As built (WP36):
+
+- The title is the page's name (`STATUS`, `TOKENS`, `CONFIG`, `APPS`, `RESET`) and the footer's left text is `◂ WALLET n/5 ▸` plus a key hint; LEFT and RIGHT wrap; UP and DOWN scroll one row per press (nine rows per page, no auto-repeat); SELECT acts only on the Reset page.
+- Status: `sntp, synced` / `floor, unsynced` / `none` for the clock; key location `se050` reads `secure element`.
+- Tokens: four rows per token (`<SYM> MINT` short, `CAP`, `MAX`, `BALANCE`); a cap or max of 0 reads `none`.
+- Config: every registered key sorted by name; an empty value reads `(none)`; a value that does not fit beside its key is written in full on sublines. Key names and app ids are not put in capitals: they are identifiers a person types.
+- Apps: native apps sorted by id with their declared permissions, then the Lua app ids in the consent store, each with `allowed` (the store keeps a hash, not the list, so the permissions themselves cannot be shown).
+- Reset: `requestReset()` returns nothing, so the app looks at `vk::wallet::approval::active()` straight after the call; if no confirmation opened, a row `CONFIRMATION … unavailable` appears.
+- It repaints after a key, once a second (every 5 s on Apps), and when a frame arrives more than 0.25 s late: a native app gets no callback when an approval closes over it, and the late frame (hook H8d's `dt`) is how it knows to redraw.
 
 ## Hello (native)
 

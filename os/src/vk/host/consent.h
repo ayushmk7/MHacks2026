@@ -1,5 +1,4 @@
 // First-run consent store (app-host.md, "Consent").
-// Header only until consent.cpp is written (WP30).
 #pragma once
 
 #include <Arduino.h>
@@ -11,4 +10,14 @@ bool save(const String &appId, uint32_t hash);
 void eraseAll();                                       // the VK_ON_RESET listener
 size_t count();
 bool at(size_t index, String &appIdOut, uint32_t &hashOut);   // count() and at() let the Wallet app list stored consent
+
+// ---- Added with consent.cpp (WP30). Nothing above this line was changed. ----
+// The file is read once and kept in RAM: has(), count() and at() cost no file access after the
+// first call. at() lists the entries oldest first. save() refuses an empty id and one longer than
+// 32 characters.
+
+#ifdef VK_HOST_TEST
+// Host-test seam. Forgets the copy in RAM, as a reboot does: the next call reads the file again.
+void hostReboot();
+#endif
 }

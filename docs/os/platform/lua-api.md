@@ -21,6 +21,7 @@ No permission needed.
 | `wallet.key_location()` | `"se050"`, `"software"` or `"none"` |
 | `wallet.provisioned()` | boolean |
 | `wallet.time_ok()` | boolean: the clock has a trusted source |
+| `wallet.time()` | unix seconds from the firmware clock (`vk::clock::now()`), or `nil` when the clock has no trusted source. This is the clock the header and the checks read, whether it was set by SNTP, raised by a verified record or set with `VKTIME`; Lua's `os.time()` is the raw system time and is not. A float above 2^31−1, like every other time |
 | `wallet.tokens()` | array of `{symbol, mint, decimals, cap, max}` (`mint` base58; `cap`, `max` strings in display units; a `cap` or `max` of zero, meaning none, reads `"0.00"` with the token's decimals) |
 | `wallet.config(name)` | the text value of a config key, or `nil` if the key is not registered. A registered key with no value and no default returns `""`. All config values are public |
 | `wallet.balance([symbol])` | last known balance of the default token as a string; `nil` if not fetched yet or if `symbol` is not the default token (feature `balance`) |
@@ -67,7 +68,7 @@ int vk::wallet::luaBegin(lua_State *L, const char *domain, int bytesIndex, int c
 
 `bytesIndex` and `ctxIndex` are the Lua stack positions of the bytes and of the optional `ctx` table. It pushes `true` or `nil, reason` and returns the number of Lua results, so `begin_solana` is `return luaBegin(L, "solana", 1, 2);`.
 
-Before calling `begin` it extends the callback deadline by 2500 ms once, once more when both `record` and `record_sig` are present, and once more when `req` is present (7500 ms for a full `ctx`; the two verifications it covers take about 0.85 s together with TweetNaCl).
+Before calling `begin` it extends the callback deadline by 2500 ms once, once more when both `record` and `record_sig` are present, and once more when `req` is present (7500 ms for a full `ctx`; the two verifications it covers took about 0.85 s together with TweetNaCl and take about 40 ms with Monocypher, the backend since Batch 4).
 
 The same header declares three helpers for bindings in feature folders: `int luaRefuse(lua_State *, Reason)` (pushes `nil, reason` and returns 2), `size_t base64Length(size_t)` and `void base64Encode(const uint8_t *, size_t, char *out)`. Base64 is implemented in `lua_wallet.cpp` because upstream's is in `src/identity/`, which features may not include.
 
@@ -93,11 +94,13 @@ Permission `contacts`. Feature `contacts`. Frames are sent and received by the a
 
 | Function | Returns | Notes |
 |---|---|---|
-| `wallet.contact_hello()` | HELLO frame bytes | Carries this badge's swap nonce (valid 60 s; the same frame is returned until it expires). Broadcast it about once a second |
+| `wallet.contact_hello()` | HELLO frame bytes | Carries this badge's swap nonce (valid 60 s; the same frame is returned until it expires). Broadcast it about once a second. `nil, "sign_failed"` when the badge has no identity |
 | `wallet.contact_card(hello_frame)` | CARD frame bytes | A card signed for the badge that sent that HELLO. Send it unicast to that badge. Reasons: `bad_arg`, `sign_failed` |
-| `wallet.contact_accept(card_frame)` | `{name, address}` | Verifies the card against this badge's current nonce and key, saves the contact, rotates the nonce. Reasons: `bad_arg`, `bad_proof` (signature), `expired` (nonce no longer current), `mismatch` (card made for another badge) |
-| `wallet.contacts()` | array of `{name, address, added}` | `added` is unix seconds |
+| `wallet.contact_accept(card_frame)` | `{name, address}` | Verifies the card against this badge's current nonce and key, saves the contact, rotates the nonce. Reasons: `bad_arg`, `mismatch` (card made for another badge), `expired` (nonce no longer current), `bad_proof` (signature), checked in that order; `unsupported` when the card is valid but the contacts file could not be written (the nonce is kept, so the same card can be tried again, and no note is posted) |
+| `wallet.contacts()` | array of `{name, address, added}` | Oldest first. `added` is unix seconds, 0 when the clock had no source |
 | `wallet.contact_remove(address)` | boolean | |
+
+After a successful accept the nonce is invalid until the next `contact_hello()` draws a new one; every card in between is `expired`. A successful accept posts the note `Contact saved` / `Saved <name>` for app `contacts`, whichever app is running. The name in HELLO and CARD is config `display_name`, or upstream's device name when that is empty.
 
 A contact's name is what its owner chose to call themselves. It is **never** shown on the approval screen; only an issuer-signed record's name is.
 
@@ -122,7 +125,7 @@ No permission needed. Lets an app match the active theme (light or dark).
 | Function | Returns |
 |---|---|
 | `theme.name()` | `"receipt-light"` or `"receipt-dark"` (or another registered theme) |
-| `theme.color(token)` | the RGB565 colour for `"paper"`, `"ink"`, `"faint"`, `"sub"`, `"stamp_ok"`, `"stamp_warn"`, `"stamp_bad"` (the status inks for signed, warning and blocked text; nothing draws a stamp), `"led"`; also the fixed `"green"`, `"amber"`, `"red"` |
+| `theme.color(token)` | the RGB565 colour for `"paper"`, `"ink"`, `"faint"`, `"sub"`, `"stamp_ok"`, `"stamp_warn"`, `"stamp_bad"` (the status inks for signed, warning and blocked text; nothing draws a stamp), `"led"`; also the fixed `"green"`, `"amber"`, `"red"`. `nil` for any other name |
 
 ## `badge.codec`
 
@@ -142,14 +145,14 @@ Shared, pure Lua. Source: `os/lib/vk.lua`. Upstream's push can write only under 
 
 | Function | Permission the app needs | Does |
 |---|---|---|
-| `vk.json.decode(text)` | — | JSON text → Lua tables. Numbers become Lua numbers (do not rely on them for amounts; RPC amounts are strings) |
-| `vk.json.encode(value)` | — | Lua value → JSON text |
+| `vk.json.decode(text)` | — | JSON text → Lua tables, or `nil, message` for malformed text. Numbers become Lua numbers (do not rely on them for amounts; RPC amounts are strings). A `null` object field is left out (so `reply.error` is nil); a `null` array element is `vk.json.null`, so arrays have no holes |
+| `vk.json.encode(value)` | — | Lua value → JSON text, or `nil, message` for a value JSON cannot hold. A plain empty table encodes as `{}`; `vk.json.array(t)` marks a table as an array, so an empty one encodes as `[]` (decoded arrays are marked the same way) |
 | `vk.rpc(method, params)` | `net` | POSTs a JSON-RPC 2.0 call to `wallet.config("rpc_url")`; returns the `result` table, or `nil, message` |
-| `vk.blockhash()` | `net` | recent blockhash, base58 (`getLatestBlockhash`) |
-| `vk.send_tx(wire_b64)` | `net` | `sendTransaction` with base64 encoding; returns the signature (base58) |
-| `vk.confirm(sig_b58)` | `net` | `"confirmed"`, `"pending"` or `"failed"` (`getSignatureStatuses`) |
+| `vk.blockhash()` | `net` | recent blockhash, base58 (`getLatestBlockhash`, commitment `vk.commitment`) |
+| `vk.send_tx(wire_b64)` | `net` | `sendTransaction` with base64 encoding and `vk.commitment` as the preflight commitment (so the preflight knows the blockhash `vk.blockhash` returned); returns the signature (base58) |
+| `vk.confirm(sig)` | `net` | `"confirmed"`, `"pending"` or `"failed"` (`getSignatureStatuses`). `sig` is base58, or the 64 raw bytes a RESULT frame's `ref` carries |
 | `vk.record(address)` | `net` | `GET <listener_url>/registry/<address>`; returns `record, sig` (bytes), or `nil, "unverified"` on 404 |
-| `vk.report(event_table)` | `net` | `POST <listener_url>/feed/event` (a badge-side refusal for the dashboard feed) |
+| `vk.report{payee=, reason=, [req=], [payer=]}` | `net` | `POST <listener_url>/feed/event` (a badge-side refusal for the dashboard feed). `payer` defaults to `wallet.address()`; a raw REQ frame in `req` is sent as base64. Only `unverified`, `revoked`, `expired`, `mismatch` and `bad_proof` are posted ([reasons](../reference/reasons.md)); any other reason gives `nil, "not reported"` and no request |
 | `vk.frame_type(data)` | — | the VK frame type of an ESP-NOW payload, or `nil` |
 | `vk.result_frame(req_id_hex, status, sig_bytes)` | — | RESULT frame bytes |
 | `vk.result_parse(data)` | — | `{req_id, status, ref}` (`req_id` hex, `ref` bytes), or `nil` if not a RESULT frame |
@@ -158,6 +161,17 @@ Shared, pure Lua. Source: `os/lib/vk.lua`. Upstream's push can write only under 
 | `vk.app_frame(type, body)` / `vk.app_body(data, type)` | — | build / match an app-range frame |
 | `vk.pay.start(opts)` | `sign`, `net`, `espnow` | starts the whole payer flow; returns a flow object (below) |
 | `vk.ui.page()`, `vk.ui.header(left, right)`, `vk.ui.title(text, y)`, `vk.ui.rule(y)`, `vk.ui.row(y, label, value, selected)`, `vk.ui.subline(y, text, selected)`, `vk.ui.amount(cx, y, label, value, unit)`, `vk.ui.footer(left, right)`, `vk.ui.list(model)` | — | the receipt look for Lua apps, drawn with `badge.gfx` in the active theme's colours; same geometry as the firmware's receipt kit ([ui](../ui/ui.md#the-receipt-kit)). `vk.ui.list{title=, rows={{l=, r=, sub=, tone=}}, sel=, hint=}` draws a whole list screen |
+| `vk.short(text)`, `vk.timeout_ms`, `vk.commitment`, `vk.RESULT_OK` / `RESULT_REJECTED` / `RESULT_FAILED` | — | first 4 + `..` + last 4 of an address; the timeout of one HTTP request (4000); the commitment used for the blockhash, the send preflight and the confirmation (`"confirmed"`); RESULT status 0, 1, 2 |
+
+Every network helper returns `nil, message` on any failure; nothing loops or raises.
+
+`vk.ui`, beyond the table:
+
+- `row` takes optional `value_color, x0, x1` after `selected`; `subline` takes optional `x0, x1`; `title` takes an optional centre `cx`; `rule` takes optional `x0, x1`.
+- `header(left)` with no right text shows `vk.ui.status()`: the time and the battery, as the firmware's `receipt::statusRight` builds it. The time comes from `wallet.time()`, so it is left out exactly when the firmware's own header leaves it out.
+- Also: `ui.perforation(x, y0, y1)`, `ui.barcode(x, y, w, h, [seed])` (the kit's bars; the seed defaults to `wallet.pubkey()`), `ui.color(token)` (`badge.theme.color` with the Receipt-light values as the fallback when `badge.theme` is absent), `ui.text`, `ui.text_center`, and the layout constants `ui.W`, `MARGIN`, `CONTENT_Y`, `ROW_PITCH`, `SUB_PITCH`, `SPLIT_X`, `STUB_CX`, `TITLE_Y`, `LIST_Y`.
+- `list` draws the title and the labels in capitals, takes a 1-based `sel` (nil selects none) and scrolls to keep it in view, and also reads `header` (left header text), `back` (right footer text, default `CANCEL back`) and `empty` (a line shown when there are no rows). `tone` is `"ok"`, `"warn"`, `"bad"` or `"mut"`. Geometry is the native lists' ([ui](../ui/ui.md#screens)).
+- A title is the built-in font at size 2 (13 px per character, 14 px capitals; the kit's serif title has 11 px capitals): Lua has no access to the kit's fonts.
 
 ### `vk.pay`
 
@@ -176,6 +190,18 @@ end
 ```
 
 `flow:update()` does at most one blocking step per call. During `"approve"` the app is paused by the firmware and resumes when the user has decided. If `wallet.token_account()` is nil the flow first calls `wallet.refresh_balance()`. After `"confirm"` succeeds it calls `vk.feed` (failures there are ignored) and, when paying a request, sends the RESULT frame.
+
+As built (WP35):
+
+- `pay.start` with bad options returns a flow that is already `"failed"` with `bad_arg` (`unsupported` for a request on the bank rail); it never raises.
+- `refresh_balance` runs in the first `update()`, before presence or record.
+- Presence: at most 2 challenges, each waited `presence_ms` + 300 ms; with no proof the flow goes on and the approval is amber.
+- No record (404): the flow continues with no record and builds the transfer to the address itself, so the firmware shows red UNVERIFIED RECIPIENT, as the attack table in [protocol](../protocol/espnow.md) describes. With a record the destination is the record's `solana_ata`, read from the record text; `wallet.check_record` is not called (the approval verifies the record itself, and one verification is saved).
+- `begin` answering `busy` is retried 10 times, 300 ms apart; send is tried twice; confirm polls every 2 s for 30 s. The tunables are fields of `vk.pay` (`presence_tries`, `presence_margin_ms`, `begin_tries`, `begin_retry_ms`, `send_tries`, `send_retry_ms`, `confirm_every_ms`, `confirm_for_ms`).
+- On `"failed"` the detail is a reason code, or the message of the network call that failed (`"transaction failed"` and `"not confirmed"` for the chain outcomes). The flow also has `flow.state`, `flow.detail`, `flow.signature` and `flow.failed_in` (the state it failed in).
+- When paying a request, RESULT is also sent on failure: status 1 (rejected) when the approval did not sign, 2 (failed) when send or the chain failed, and 0 with the signature when the node accepted the transaction but it was not seen confirmed within 30 s (the payee confirms on chain itself).
+- Option `destination` overrides the token account the transfer is built to (the evil game's WRONG RECIPIENT demo).
+- A shop payment (`to=`) never touches `badge.espnow`, so it works for an app without the `espnow` permission.
 
 ## The smallest paying app
 
