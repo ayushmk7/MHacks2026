@@ -5,7 +5,7 @@ import { Empty, GapCard, Toggle } from './ui.jsx';
 
 // Eager glob: a page file that does not exist yet is simply absent from this map, so the app still boots.
 const Pages = import.meta.glob('./pages/*.jsx', { eager: true });
-const ROUTES = [['feed', 'FEED', 'Feed'], ['badges', 'BADGES', 'Badges'], ['registry', 'REGISTRY', 'Registry'], ['attack', 'ATTACK', 'Attack']];
+const ROUTES = [['feed', 'FEED', 'Feed'], ['badges', 'BADGES', 'Badges'], ['registry', 'ISSUER', 'Registry'], ['attack', 'ATTACK', 'Attack']];
 const routeOf = () => {
   const r = location.hash.replace(/^#\/?/, '');
   return ROUTES.some(([id]) => id === r) ? r : 'feed';

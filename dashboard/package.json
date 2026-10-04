@@ -13,6 +13,7 @@
     "db:reset": "node --env-file-if-exists=.env scripts/db.mjs reset --yes",
     "devnet:setup": "node --env-file-if-exists=.env scripts/devnet-setup.mjs",
     "pay": "node --env-file-if-exists=.env scripts/simulate-payment.mjs",
+    "nessie:seed": "node --env-file-if-exists=.env scripts/seed-nessie.mjs",
     "server": "node --env-file-if-exists=.env server/src/index.js",
     "web": "npm run dev --prefix web",
     "dev": "npm run server & npm run web & wait",

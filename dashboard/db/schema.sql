@@ -157,3 +157,65 @@ CREATE TRIGGER attack_attempts_notify AFTER INSERT OR UPDATE ON attack_attempts
 DROP TRIGGER IF EXISTS attestations_notify ON attestations;
 CREATE TRIGGER attestations_notify AFTER INSERT OR UPDATE ON attestations
   FOR EACH ROW EXECUTE FUNCTION notify_feed('attestation', 'subject');
+
+-- ── Bank rail (P2-U §3.1). Plain relational tables: approvals is small and updated in place (pending -> approved). ──
+
+-- Payee secrets the on-chain record must not carry: bank_ref_hash = sha256(salt || nessie_ref) is public, the
+-- plaintext Nessie id (merchant id for a merchant, account id for a person) and its salt live only here.
+CREATE TABLE IF NOT EXISTS payees (
+  pubkey        text PRIMARY KEY,
+  kind          text NOT NULL CHECK (kind IN ('merchant', 'person', 'relay')),
+  display_name  text NOT NULL,
+  nessie_ref    text,
+  salt          bytea,
+  bank_ref_hash bytea,
+  solana_wallet text,
+  attestation   text,
+  operator_id   text,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now()
+);
+
+-- Payer badge -> its Nessie checking account (the payload's from_acct).
+CREATE TABLE IF NOT EXISTS enrollments (
+  badge_pubkey       text PRIMARY KEY,
+  nessie_customer_id text NOT NULL,
+  nessie_account_id  text NOT NULL,
+  enrolled_at        timestamptz NOT NULL DEFAULT now()
+);
+
+-- One row per bank authorization attempt, approved or not, plus refusals reported by badges.
+-- Approved rows also drive the displayed balance: Nessie never moves a balance when money is recorded.
+CREATE TABLE IF NOT EXISTS approvals (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  rail         text NOT NULL,
+  source       text NOT NULL DEFAULT 'backend' CHECK (source IN ('backend', 'badge_report')),
+  payer        text,
+  payee        text,
+  payee_name   text,
+  amount_cents bigint,
+  status       text NOT NULL CHECK (status IN ('pending', 'approved', 'blocked', 'failed')),
+  reason       text,
+  req_id       text,
+  payload_hash text,
+  nessie_ids   jsonb,
+  solana_sig   text,
+  memo_sig     text
+);
+
+CREATE INDEX IF NOT EXISTS approvals_created_at_idx ON approvals (created_at DESC);
+
+-- Replay guard: a (payer, req_id) or (payer, proof_nonce) pair authorizes money once.
+CREATE TABLE IF NOT EXISTS nonces (
+  payer      text NOT NULL,
+  req_id     text NOT NULL,
+  nonce      text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (payer, req_id),
+  UNIQUE (payer, nonce)
+);
+
+DROP TRIGGER IF EXISTS approvals_notify ON approvals;
+CREATE TRIGGER approvals_notify AFTER INSERT OR UPDATE ON approvals
+  FOR EACH ROW EXECUTE FUNCTION notify_feed('approval', 'id');

@@ -2,3 +2,5 @@
 server/.keys/
 node_modules
 web/dist
+# Plaintext Nessie IDs stay server-side (on chain they appear only as salted hashes)
+server/config/nessie.json

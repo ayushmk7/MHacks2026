@@ -4,12 +4,15 @@ import { isAddress } from '@solana/kit';
 import { env, token } from './config.js';
 import { Q, q, timed, queryMs, toPayment, toBadge, toAttestation, toAttack } from './db.js';
 import { rpc, getBalances, buildTamperedTx, ensureAta, ataOf, errMsg } from './solana.js';
-import { registryState, issue, revoke } from './registry.js';
+import { registryState, issue, revoke, recordFields } from './registry.js';
+import { getSignedRecord } from './records.js';
+import { enroll, balance, authorize, listApprovals, recordBadgeEvent } from './bank.js';
+import { confirmSolana } from './feed.js';
 
 const STATUS = {
   bad_json: 400, invalid_pubkey: 400, invalid_name: 400, invalid_amount: 400, invalid_param: 400,
   unknown_badge: 404, not_found: 404, forbidden_origin: 403, too_large: 413, unsupported_media_type: 415,
-  conflict: 409, chain_error: 502, not_configured: 503, db_error: 503, internal: 500,
+  conflict: 409, chain_error: 502, nessie_error: 502, not_configured: 503, db_error: 503, internal: 500,
 };
 const MAX_BODY = 16 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -163,7 +166,10 @@ const routes = {
 
   'GET /api/badges': async ({ ctx }) => {
     const [{ rows }, balances] = await Promise.all([q(Q.badges), getBalances(ctx.badges)]);
-    return { badges: rows.map(r => toBadge(r, balances.get(r.pubkey))) };
+    // Bank balance per badge: null = not enrolled; omitted when Nessie can't be reached (the UI shows "unknown").
+    const bank = await Promise.all(rows.map(r => balance(r.pubkey).then(
+      b => ({ accountId: b.account_id, usdCents: b.usd_cents }), err => (err.code === 'not_found' ? null : undefined))));
+    return { badges: rows.map((r, i) => ({ ...toBadge(r, balances.get(r.pubkey)), ...(bank[i] === undefined ? {} : { nessie: bank[i] }) })) };
   },
 
   'GET /api/attestations': async () => ({ attestations: (await q(Q.attestations, [null])).rows.map(toAttestation) }),
@@ -171,8 +177,11 @@ const routes = {
   'POST /api/attestations': async ({ body, ctx }) => {
     const pubkey = validate.pubkey(body.pubkey), name = validate.name(body.name);
     await requireFundedAuthority(ctx.authority);
-    const { signature, pda, expiresAt } = await chain(issue(pubkey, name));
-    return [201, await attestationResult(ctx, pubkey, signature, { name, status: 'verified', attestation_pda: pda,
+    // issue() validates kind, wallet and the relay-per-operator rule itself (invalid_param / conflict).
+    const { kind, solanaWallet, nessieRef, operatorId } = body;
+    const { signature, pda, expiresAt } = await chain(issue(pubkey, { name, kind, solanaWallet: solanaWallet || pubkey,
+      nessieRef: nessieRef || null, operatorId: operatorId || null }));
+    return [201, await attestationResult(ctx, pubkey, signature, { name, kind, status: 'verified', attestation_pda: pda,
       issued_sig: signature, issued_at: new Date(), revoked_sig: null, revoked_at: null, expires_at: expiresAt })];
   },
 
@@ -183,6 +192,15 @@ const routes = {
     return attestationResult(ctx, pubkey, signature, { name, status: 'revoked', attestation_pda: pda,
       issued_sig: null, issued_at: null, revoked_sig: signature, revoked_at: new Date(), expires_at: expiresAt });
   },
+
+  // Binds a badge key to a Nessie customer + account (creates both when no ids are given).
+  'POST /api/enroll': async ({ body }) => {
+    const r = await enroll({ pubkey: validate.pubkey(body.pubkey), nessieCustomerId: body.nessieCustomerId || undefined,
+                             nessieAccountId: body.nessieAccountId || undefined });
+    return { customerId: r.customer_id, accountId: r.account_id };
+  },
+
+  'GET /api/approvals': async ({ query }) => ({ approvals: await listApprovals(validate.limit(query.get('limit'), 40)) }),
 
   'GET /api/attacks': async ({ query }) =>
     ({ attempts: (await q(Q.attacks, [validate.limit(query.get('limit'), 20), null])).rows.map(r => toAttack(r)) }),
@@ -221,7 +239,8 @@ async function handle(req, res, ctx) {
   if (Array.isArray(out)) send(res, out[0], out[1]); else send(res, 200, out);
 }
 
-// ── Badge LAN listener: two routes, nothing else. Closed unless BADGE_LISTEN_HOST is set. ──
+// ── Badge LAN listener (00 §8.1): badge routes only, never admin. Closed unless BADGE_LISTEN_HOST is set. ──
+// No authentication: acceptable on devnet and stated as a limitation. Everything a badge sends is re-verified.
 // BADGE-GAP(attack-delivery): stub transport = badge polls this over hotspot Wi-Fi. BLE is the alternative.
 // BADGE-GAP(attack-outcome): badge may report 'rejected' here; 'signed' is only trusted from chain.
 export const badgeListener = { open: false, url: null };
@@ -240,6 +259,20 @@ async function handleBadge(req, res, ctx) {
     await rejectAttack(await readJson(req, false));
     return send(res, 200, { ok: true });
   }
+  if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { ok: true });
+  const [, route, arg] = url.pathname.split('/');
+  if (req.method === 'GET' && route === 'registry' && arg) {
+    // Signed fresh on every request (RECORD_TTL_S = 30 on the badge). Unknown key -> 404 = unverified.
+    const r = await getSignedRecord(ctx.authority, validate.pubkey(arg), url.searchParams.get('format') === 'compact' ? 'compact' : 'full');
+    return r.status === 200 ? send(res, 200, r.body) : fail('not_found', 'no registry record for this key');
+  }
+  if (req.method === 'GET' && route === 'balance' && arg) return send(res, 200, await balance(validate.pubkey(arg)));
+  if (req.method === 'POST' && url.pathname === '/bank/authorize')
+    return send(res, 200, await authorize(await readJson(req, false), { recordFields, authority: ctx.authority }));
+  if (req.method === 'POST' && url.pathname === '/feed/solana')
+    return send(res, 200, await confirmSolana(await readJson(req, false), { recordFields }));
+  if (req.method === 'POST' && url.pathname === '/feed/event')
+    return send(res, 200, await recordBadgeEvent(await readJson(req, false)));
   fail('not_found', 'no such route');
 }
 
