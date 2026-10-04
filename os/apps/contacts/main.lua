@@ -52,7 +52,7 @@ local message, message_tone, message_until = nil, nil, 0
 -- "Oct 3" for unix seconds; the configured blank when the clock had no source.
 local function date_text(added)
   if type(added) ~= "number" or added <= 0 then return text.no_date end
-  local ok, t = pcall(os.date, "!*t", math.floor(added))
+  local ok, t = pcall(os.date, "!*t", vk.local_time(math.floor(added)))
   if not ok or type(t) ~= "table" then return text.no_date end
   return (cfg.months[t.month] or "?") .. " " .. t.day
 end

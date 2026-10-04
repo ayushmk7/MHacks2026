@@ -39,7 +39,7 @@ def test_config(vectors=None):
         "approval_tmo_s": "10",
         "hold_ms": "1000",
         "record_ttl_s": "3600",
-        # A public value: the link Settings > About and Home show as a QR code (t_about.py reads it back).
+        # A public value: the link the launcher shows as a QR code (t_barcode.py reads it back).
         "repo_url": "https://github.com/ayushmk7/MHacks2026",
     }
 

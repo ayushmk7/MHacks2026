@@ -27,8 +27,7 @@ return {
     address = "ADDRESS",
     key = "KEY",
     clock = "CLOCK",
-    clock_ok = "synced",
-    clock_unset = "clock not set",
+    clock_unset = "--:--",    -- shown while the clock is still syncing
     no_identity = "none",                -- the ADDRESS row on a badge with no key
     no_apps = "no other apps installed",
     thanks = "THANK YOU FOR HACKING",
@@ -36,7 +35,7 @@ return {
     back = "CANCEL back",
   },
 
-  -- The line under the barcode (or the QR code) after a balance fetch that did not work. A reason that is not
+  -- The line under the amount after a balance fetch that did not work. A reason that is not
   -- listed shows nothing.
   fetch_text = {
     no_network = "no Wi-Fi: Settings > Wi-Fi",

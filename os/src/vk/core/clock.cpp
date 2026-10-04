@@ -16,6 +16,7 @@
 
 #ifndef VK_HOST_TEST
 #include <esp_sntp.h>
+#include <stdlib.h>
 #include <sys/time.h>
 
 #include "../../badge_log.h"
@@ -75,6 +76,8 @@ namespace {
 
 VK_CONFIG_KEY(ntp_server, "ntp_server", vk::config::Type::STR, "pool.ntp.org", vk::config::F_NONE, 3, 64,
               "SNTP host");
+VK_CONFIG_KEY(utc_offset_min, "utc_offset_min", vk::config::Type::STR, "0", vk::config::F_NONE, 1, 4,
+              "minutes added to UTC for every time shown (-240 is US Eastern daylight time)");
 
 constexpr uint32_t TICK_MS = 1000;          // the sync-status poll and the rebase run once a second
 constexpr uint32_t REBASE_MS = 3600000UL;   // fold elapsed time into the base hourly, long before millis() wraps
@@ -195,6 +198,12 @@ VK_SERVICE(clock, nullptr, serviceUpdate);
 VK_INFO_FIELD(time, "time", infoTime);
 
 }  // namespace
+
+uint32_t local(uint32_t unix_s) {
+  const long minutes = strtol(vk::config::text("utc_offset_min").c_str(), nullptr, 10);
+  if (minutes < -720 || minutes > 840) return unix_s;
+  return (uint32_t)((int64_t)unix_s + minutes * 60);
+}
 #endif  // VK_HOST_TEST
 
 }  // namespace vk::clock

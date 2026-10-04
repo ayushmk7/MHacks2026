@@ -592,7 +592,6 @@ local function screen(title, hint, back)
   if round > 0 then
     ui.text_center(string.format("YOU %d \xC2\xB7 %d THEM", wins_me, wins_them), ui.STUB_CX, 124)
   end
-  ui.barcode(20, 170, 106, 30)
   ui.footer(hint, back)
 end
 

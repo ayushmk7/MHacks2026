@@ -44,6 +44,7 @@ local EARLY = {presence = true, record = true, blockhash = true}
 local view = "list"        -- "list", "paying" or "result"
 local requests = {}        -- wallet.requests(), sorted
 local selected_id = nil    -- req_id of the selected row: the cursor follows the request, not the slot
+local heard_at = {}        -- req_id -> "14:20", wall-clock time the request was first heard (clock synced only)
 local listed = nil         -- the count last logged
 local refreshed_at = nil
 local flow = nil           -- the running payment
@@ -67,6 +68,12 @@ local function refresh()
     return a.req_id < b.req_id
   end)
   requests = heard
+  if wallet.time_ok() then
+    for i = 1, #heard do
+      local id = heard[i].req_id
+      if not heard_at[id] then heard_at[id] = os.date("!%H:%M", math.floor(vk.local_time(wallet.time()))) end
+    end
+  end
   if #heard ~= listed then
     listed = #heard
     badge.log("PAY list " .. listed)
@@ -196,7 +203,7 @@ local function draw_list()
     rows[i] = {
       l = r.name,
       r = money(r),
-      sub = vk.short(r.payee) .. " \xC2\xB7 name is a claim \xC2\xB7 signal " .. bars(r.rssi),
+      sub = (heard_at[r.req_id] and heard_at[r.req_id] .. " \xC2\xB7 " or "") .. vk.short(r.payee) .. " \xC2\xB7 name is a claim \xC2\xB7 signal " .. bars(r.rssi),
     }
   end
   local hint = #rows > 0 and "SELECT pay" or ""

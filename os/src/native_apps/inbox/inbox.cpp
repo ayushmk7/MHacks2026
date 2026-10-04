@@ -8,6 +8,7 @@
 
 #include "../../apps/app_store.h"
 #include "../../lua_sdk/lua_runtime.h"
+#include "../../vk/core/clock.h"
 #include "../../vk/ui/receipt.h"
 
 namespace {
@@ -23,11 +24,17 @@ constexpr int SUBLINE_DY = 13;           // its subline owns the 13 px below tha
 constexpr int ROW_PITCH = 31;            // row + subline
 constexpr size_t VISIBLE_ROWS = 5;
 constexpr int EMPTY_Y = 112;
-constexpr uint32_t REDRAW_MS = 250;      // the ages and the clock in the header move on their own
+constexpr uint32_t REDRAW_MS = 250;      // the clock in the header (and the ages, with no clock) move on their own
 
-// "now", then minutes, hours, days.
+// When the note came in, "14:20" in the wall-clock time of the header. With no clock source, how
+// long ago instead: "now", then minutes, hours, days.
 void ageText(uint32_t age_ms, char *out, size_t cap) {
   const uint32_t seconds = age_ms / 1000;
+  if (vk::clock::ok() && vk::clock::now() > seconds) {
+    const uint32_t t = vk::clock::local(vk::clock::now() - seconds);
+    snprintf(out, cap, "%02u:%02u", (unsigned)((t / 3600) % 24), (unsigned)((t / 60) % 60));
+    return;
+  }
   if (seconds < 60) snprintf(out, cap, "now");
   else if (seconds < 3600) snprintf(out, cap, "%um", (unsigned)(seconds / 60));
   else if (seconds < 86400) snprintf(out, cap, "%uh", (unsigned)(seconds / 3600));

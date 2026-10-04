@@ -7,6 +7,11 @@ return {
 
   start = 1000,                  -- the amount shown when the app opens
   step = 50,                     -- UP and DOWN change the amount by this; LEFT and RIGHT by ten times it
+  repeat_delay_ms = 400,         -- an arrow held this long starts repeating
+  repeat_ms = 90,                -- and then steps again this often
+  fast_after_ms = 1000,          -- held this long, each repeat is ten steps
+  faster_after_ms = 3000,        -- and from here a hundred (always kept within min and max)
+  keypad_hold_ms = 700,          -- SELECT held this long opens the keypad; a shorter press opens the request
   min = 50,                      -- the amount never goes below this (a request for zero is refused)
   max = 100000,                  -- or above this (keep it under 2147483647: Lua integers are 32-bit)
   decimals = 2,                  -- used only while the badge has no token table (not set up yet)

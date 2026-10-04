@@ -1,6 +1,6 @@
-// Settings page `about` (shell.md, "About"): what this badge runs, and a QR code a phone can scan to
-// open the project's repository. The link is the config key `repo_url`: no address is compiled in.
-// Deleting this file removes the page, the row and the key.
+// Settings page `about` (shell.md, "About"): what this badge runs, and the link to the project's
+// repository as text. The link is the config key `repo_url`: no address is compiled in. The launcher
+// shows it as a QR code. Deleting this file removes the page, the row and the key (and the launcher's code).
 
 #include "../page.h"
 
@@ -14,7 +14,7 @@ namespace receipt = vk::ui::receipt;
 namespace th = vk::ui::theme;
 
 VK_CONFIG_KEY(repo_url, "repo_url", vk::config::Type::STR, "", vk::config::F_NONE, 0, 120,
-              "link shown as a QR code on Settings > About and in Home (the project's repository)");
+              "link shown as a QR code on the launcher and as text on Settings > About (the project's repository)");
 
 constexpr int URL_CAP = 121;       // the key's longest value and its terminator
 
@@ -22,9 +22,7 @@ constexpr int URL_CAP = 121;       // the key's longest value and its terminator
 constexpr int STUB_CX = 73, STUB_X0 = 10, STUB_X1 = 136;
 constexpr int SPLIT_X = 146, BODY_CX = 233;
 constexpr int NAME_Y = 36, NAME_RULE_Y = 56, ROWS_Y = 70;
-constexpr int QR_SIZE = 148;       // 4 px modules and a 4-module quiet zone up to 53 characters (29 modules)
-constexpr int QR_X = BODY_CX - QR_SIZE / 2, QR_Y = 26;
-constexpr int URL_Y = 181, URL_PITCH = 11, URL_LINES = 3, URL_COLS = 26;
+constexpr int URL_Y = 104, URL_PITCH = 11, URL_LINES = 3, URL_COLS = 26;
 
 char sShown[URL_CAP] = "";         // the link the last draw showed
 uint32_t sCheckedAt = 0;
@@ -55,7 +53,7 @@ void pageUpdate() {
   if (strcmp(url, sShown) != 0) repaint();
 }
 
-// The link as text under the code. It has no spaces, so a line ends after the last '/' that fits,
+// The link as text. It has no spaces, so a line ends after the last '/' that fits,
 // or at the edge when that would leave less than half a line. What does not fit ends in "..".
 void drawUrl(const char *url) {
   const char *rest = url;
@@ -102,19 +100,16 @@ void pageDraw() {
                th::color(secure ? th::STAMP_OK : th::STAMP_WARN));
   receipt::row(STUB_X0, STUB_X1, ROWS_Y + 3 * ROW_PITCH, "ADDRESS", brief);
 
-  // Body: the link as a QR code, and as text under it.
+  // Body: the link as text.
   readUrl(sShown, sizeof sShown);
   if (sShown[0] == '\0') {
     textCentered(BODY_CX, 104, "no link set");
     textCentered(BODY_CX, 122, "VKSET repo_url <url>", th::SUB);
-  } else if (receipt::qr(QR_X, QR_Y, QR_SIZE, sShown)) {
-    drawUrl(sShown);
   } else {
-    textCentered(BODY_CX, 104, "link too long for a code");
     drawUrl(sShown);
   }
 
-  receipt::footer(sShown[0] ? "SCAN to open the link" : "", "CANCEL back");
+  receipt::footer("", "CANCEL back");
 }
 }  // namespace
 

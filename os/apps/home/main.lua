@@ -3,8 +3,7 @@
 -- The landing app (docs/os/apps/apps.md, "Home"; layout: docs/os/ui/ui.md, "Screens").
 --
 --   left stub   BALANCE, the default token's balance and its symbol (SETUP NEEDED on a badge
---               that is not provisioned), then a QR code of the config key repo_url (the
---               project's repository) or, when that key is empty, this badge's barcode
+--               that is not provisioned), then the line of the last failed fetch
 --   body        rows NAME, ADDRESS, KEY, CLOCK; a rule; a menu of the other installed apps;
 --               a rule; THANK YOU FOR HACKING
 --
@@ -29,13 +28,7 @@ local text = cfg.text
 
 -- Layout (pixels; a y is the top of the capital letters, as in vk.ui).
 local AMOUNT_Y = 40                    -- the stub's label; the value and the unit follow it
-local BARCODE_X, BARCODE_Y, BARCODE_W, BARCODE_H = 16, 122, 114, 40
-local NOTE_Y = 176                     -- the line under the barcode
--- With a link to show, the stub is the amount (moved up), the QR code and the line under it.
--- 102 px: 3 px modules for a link of up to 53 characters, with the quiet zone inside the square.
-local QR_AMOUNT_Y = 28
-local QR_SIZE, QR_Y = 102, 98
-local QR_NOTE_Y = 204
+local NOTE_Y = 176                     -- the line under the amount
 local INFO_Y = 32                      -- first body row
 local MENU_RULE_Y = INFO_Y + 4 * ui.ROW_PITCH - 3
 local MENU_Y = MENU_RULE_Y + 11        -- first menu row
@@ -45,7 +38,7 @@ local menu = {}                        -- {id = , name = } of each app offered
 local sel = 1
 local drawn = false                    -- a frame has been shown: a blocking fetch may now run
 local next_fetch = 0                   -- badge.millis() of the next fetch; nil: no more fetches
-local note = nil                       -- the line under the barcode
+local note = nil                       -- the line under the amount
 
 -- Every app the launcher lists, in its order, folders flattened (badge.system.launcher_apps():
 -- hidden apps and test fixtures are not in it), except Home itself. No app is named here.
@@ -108,20 +101,14 @@ end
 
 local function draw_stub()
   local cx = ui.STUB_CX
-  -- The link is a provisioned setting, read on every frame: a VKSET shows without a restart.
-  -- ui.qr draws nothing on a firmware without the kit's QR code: the barcode stays then.
-  local link = wallet.config("repo_url")
-  local qr = type(link) == "string" and link ~= "" and ui.qr(cx - QR_SIZE // 2, QR_Y, QR_SIZE, link)
-  local amount_y = qr and QR_AMOUNT_Y or AMOUNT_Y
   if wallet.provisioned() then
     local tokens = wallet.tokens()
     local symbol = type(tokens) == "table" and tokens[1] and tokens[1].symbol or ""
-    ui.amount(cx, amount_y, text.balance, wallet.balance() or text.unknown_amount, symbol)
+    ui.amount(cx, AMOUNT_Y, text.balance, wallet.balance() or text.unknown_amount, symbol)
   else
-    ui.amount(cx, amount_y, text.setup_needed, text.unknown_amount, "")
+    ui.amount(cx, AMOUNT_Y, text.setup_needed, text.unknown_amount, "")
   end
-  if not qr then ui.barcode(BARCODE_X, BARCODE_Y, BARCODE_W, BARCODE_H) end
-  if note then ui.text_center(note, cx, qr and QR_NOTE_Y or NOTE_Y, ui.color("sub")) end
+  if note then ui.text_center(note, cx, NOTE_Y, ui.color("sub")) end
 end
 
 local function draw_body()
@@ -139,8 +126,10 @@ local function draw_body()
   y = y + ui.ROW_PITCH
   ui.row(y, text.key, cfg.key_text[location] or location, false, nil, x0, x1)
   y = y + ui.ROW_PITCH
-  ui.row(y, text.clock, clock_ok and text.clock_ok or text.clock_unset, false,
-    not clock_ok and ui.color("stamp_warn") or nil, x0, x1)
+  -- The wall-clock time once synced; a neutral placeholder while SNTP is still syncing.
+  local clock = text.clock_unset
+  if clock_ok then clock = os.date("!%H:%M", math.floor(vk.local_time(wallet.time()))) end
+  ui.row(y, text.clock, clock, false, nil, x0, x1)
   ui.rule(MENU_RULE_Y, x0, x1)
 
   local visible = cfg.menu_rows

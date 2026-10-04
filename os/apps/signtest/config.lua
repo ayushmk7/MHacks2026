@@ -4,6 +4,9 @@ return {
   -- How often the laptop is asked for a pending transfer.
   poll_ms = 2000,
 
+  -- How long the checkout's claimed amount is shown before the firmware's approval opens.
+  claim_ms = 3000,
+
   -- How long to wait before a network call that failed is tried again.
   retry_ms = 2000,
 

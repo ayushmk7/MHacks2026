@@ -58,7 +58,6 @@ return {
     no_app = "system",                 -- a record no app asked for
     none = "-",                        -- an empty field in the detail view
     dev_mark = " (dev override)",
-    utc = " UTC",
     details = "SELECT details",
     reload = "SELECT reload",
     auto_count = "%d signed",          -- an automatic record: how many signatures it holds

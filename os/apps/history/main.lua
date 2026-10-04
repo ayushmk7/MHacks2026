@@ -16,7 +16,7 @@
 -- and on SELECT when it is empty, so a payment made or received meanwhile appears.
 -- CANCEL goes back from the detail to the list, and from the list out to the launcher.
 -- Amounts are the strings the firmware returns; nothing here does arithmetic on them. Times are
--- shown in UTC, like the header's clock. Reasons are in the words every app shares
+-- shown in wall-clock time (vk.local_time), like the header's clock. Reasons are in the words every app shares
 -- (vk.reason_text).
 --
 -- Log line ("[app] HIST ..."), for test/device/t_app_history.py:
@@ -41,21 +41,21 @@ local loaded_at = 0
 -- "14:20", or nil for a record made while the clock had no source.
 local function clock_of(t)
   if type(t) ~= "number" or t <= 0 then return nil end
-  t = math.floor(t)
+  t = vk.local_time(math.floor(t))
   return string.format("%02d:%02d", (t // 3600) % 24, (t // 60) % 60)
 end
 
 -- "14:20:05", or the no-time mark.
 local function seconds_of(t)
   if type(t) ~= "number" or t <= 0 then return text.no_time end
-  t = math.floor(t)
+  t = vk.local_time(math.floor(t))
   return string.format("%02d:%02d:%02d", (t // 3600) % 24, (t // 60) % 60, t % 60)
 end
 
--- "2026-10-03" (the civil date of a unix time, UTC), or nil.
+-- "2026-10-03" (the civil date of a unix time, in wall-clock time), or nil.
 local function date_of(t)
   if type(t) ~= "number" or t <= 0 then return nil end
-  local z = math.floor(t) // 86400 + 719468
+  local z = vk.local_time(math.floor(t)) // 86400 + 719468
   local era = z // 146097
   local doe = z - era * 146097
   local yoe = (doe - doe // 1460 + doe // 36524 - doe // 146096) // 365
@@ -134,7 +134,7 @@ end
 
 local function when_of(entry)
   local date = date_of(entry.time)
-  return date and (date .. " " .. clock_of(entry.time) .. text.utc) or text.no_date
+  return date and (date .. " " .. clock_of(entry.time)) or text.no_date
 end
 
 local function reason_of(entry)

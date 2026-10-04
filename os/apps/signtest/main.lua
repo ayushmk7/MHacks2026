@@ -17,7 +17,9 @@
 --
 -- Log lines (each "[app] ST ..."), for test/device/t_sign_net.py:
 --   ST status <the status line>      whenever it changes
+--   ST claim <amount> <symbol>       what the checkout claims (from the laptop, untrusted)
 --   ST begin <id>                    the approval was opened for that attempt
+--   ST real <amount> <symbol>        what the firmware decoded and showed (its newest history row)
 --   ST sig <base58>                  the signature the badge made
 --   ST sent <base58>                 the RPC node accepted the transaction
 --   ST refused <reason>
@@ -39,6 +41,7 @@ local attempt = nil          -- {id = , msg = }: the attempt being approved, sen
 local wire = nil             -- the signed transaction, base64
 local tries = 0
 local keep_until = 0         -- badge.millis() until which "sent ..." or "refused: ..." stays on screen
+local claim = nil            -- {key, merchant, amount, symbol, real}: the last attempt's claim vs the decoded amount
 
 local function set_status(text)
   if text ~= status then
@@ -120,6 +123,18 @@ local function ask()
     return later(cfg.poll_ms)
   end
 
+  -- What the checkout claims (laptop-supplied, never trusted): shown for cfg.claim_ms before the
+  -- firmware's approval, which shows what the transaction really moves.
+  if not claim or claim.key ~= key then
+    local c = type(reply.claimed) == "table" and reply.claimed or {}
+    claim = {key = key, merchant = tostring(c.merchant or "?"),
+             amount = type(c.amount) == "number" and string.format("%.2f", c.amount) or "?",
+             symbol = tostring(c.symbol or ""), real = nil}
+    badge.log("ST claim " .. claim.amount .. " " .. claim.symbol)
+    set_status("checkout claims " .. claim.amount .. " " .. claim.symbol)
+    return later(cfg.claim_ms)
+  end
+
   local ok, why = wallet.begin_solana(msg)
   if ok then
     handled[key] = true
@@ -142,6 +157,13 @@ end
 local function approving()
   local result, why = wallet.poll()
   if result == "pending" then return end
+  -- The amount the firmware decoded and showed: its newest history row.
+  local row = wallet.history(1)
+  row = row and row[1]
+  if claim and row then
+    claim.real = tostring(row.amount) .. " " .. tostring(row.symbol or "")
+    badge.log("ST real " .. claim.real)
+  end
   if result then
     badge.log("ST sig " .. codec.b58enc(result))
     wire = wallet.wire_tx(result, attempt.msg)
@@ -208,8 +230,13 @@ function on_draw()
   ui.page()
   ui.header("SIGN TEST")
   ui.title("SIGN TEST", ui.TITLE_Y)
+  if claim then
+    ui.row(70, "CHECKOUT", claim.merchant)
+    ui.row(90, "CLAIMED", claim.amount .. " " .. claim.symbol)
+    ui.row(110, "REAL", claim.real or "on the badge's screen next")
+  end
   -- One status line; a long one (an error from the laptop or the node) is cut by the row.
-  ui.row(100, "STATUS", status)
+  ui.row(claim and 130 or 100, "STATUS", status)
   ui.footer("", "CANCEL quit")
 end
 

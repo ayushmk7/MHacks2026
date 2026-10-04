@@ -1,7 +1,7 @@
 // Screen `launcher`: the MENU screen (docs/os/ui/shell.md, "Launcher"). Every listed app, Lua and
 // native, in a two-column grid, with one folder row per category; the inbox count; the balance
-// row; the barcode of the badge key. It is the bottom of the screen stack and is never re-entered,
-// so its cursor and its open folder survive an app run.
+// row; a QR code of the project's repository (config key `repo_url`). It is the bottom of the
+// screen stack and is never re-entered, so its cursor and its open folder survive an app run.
 //
 // The rows come from vk::host::catalog (the apps and their categories, hidden apps left out). No
 // category is named here: a folder exists because an app's manifest names it.
@@ -22,7 +22,12 @@ namespace vk::shell {
 
 namespace {
 
-constexpr int GRID_ROWS = 6;                 // rows at y = 48, 66, 84, 102, 120, 138
+constexpr int GRID_ROWS = 5;                 // rows at y = 48, 66, 84, 102, 120
+constexpr int STRIP_RULE_Y = 138;            // the rule over the balance and the QR code
+constexpr int QR_SIZE = 74;                  // 2 px modules and a 4-module quiet zone up to 53 characters (29 modules)
+constexpr int QR_X = X1 - QR_SIZE, QR_Y = 140; // ends at 213, above the footer's rule at 216
+constexpr int BALANCE_X1 = QR_X - 8;         // the balance row stops short of the code
+constexpr int BALANCE_Y = 174;               // centred in the strip 139..215
 constexpr int GRID_COLS = 2;
 constexpr int COL_X0[GRID_COLS] = {10, 170};
 constexpr int COL_X1[GRID_COLS] = {150, 310};
@@ -246,7 +251,7 @@ void update() {
 void drawBalance() {
   using namespace vk::ui;
   if (!vk::config::provisioned()) {
-    receipt::row(X0, X1, 166, "SETUP NEEDED", "provision over USB", false, theme::color(theme::STAMP_WARN));
+    receipt::row(X0, BALANCE_X1, BALANCE_Y, "SETUP NEEDED", "provision over USB", false, theme::color(theme::STAMP_WARN));
     return;
   }
   // The default token is the first entry of the token table.
@@ -264,7 +269,7 @@ void drawBalance() {
       snprintf(value, sizeof value, "-- %s", tokens[0].symbol);
     }
   }
-  receipt::row(X0, X1, 166, "BALANCE", value);
+  receipt::row(X0, BALANCE_X1, BALANCE_Y, "BALANCE", value);
 }
 
 // `name` in capitals after `prefix`, cut to NAME_COLS characters.
@@ -341,14 +346,10 @@ void draw() {
     textRight(X1, 28, position, theme::FAINT);
   }
 
-  receipt::rule(156);
+  receipt::rule(STRIP_RULE_Y);
   drawBalance();
-  const uint8_t *key = vk::wallet::publicKey();
-  if (key != nullptr) {                                              // not drawn when the badge has no identity
-    // A scanner reads the badge ID (the first 8 characters of the address); the plain bars are the fallback.
-    const String id = vk::wallet::addressBase58().substring(0, 8);
-    if (!receipt::barcodeText(X0, 184, 300, 22, id.c_str())) receipt::barcode(X0, 184, 300, 22, key, 32);
-  }
+  // Nothing is drawn when the link is not set or too long for the square.
+  receipt::qr(QR_X, QR_Y, QR_SIZE, vk::config::text("repo_url").c_str());
   receipt::footer("SELECT open", sFolder.length() ? "CANCEL back" : "CANCEL settings");
 }
 

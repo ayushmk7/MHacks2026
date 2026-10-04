@@ -236,7 +236,7 @@ void statusRight(char *out, size_t cap) {
   };
   char part[16];
   if (vk::clock::ok()) {
-    const uint32_t t = vk::clock::now();              // unix seconds: the time shown is UTC
+    const uint32_t t = vk::clock::local(vk::clock::now());   // wall clock: UTC plus utc_offset_min
     snprintf(part, sizeof part, "%02u:%02u", (unsigned)((t / 3600) % 24), (unsigned)((t / 60) % 60));
     add(part);
   }

@@ -1556,16 +1556,25 @@ function ui.perforation(x, y0, y1)
   end
 end
 
+-- Unix seconds (UTC) moved by the config key utc_offset_min: the wall-clock time every screen
+-- prints. For display only; a time that is checked or stored stays UTC.
+function vk.local_time(t)
+  local wallet = badge.wallet
+  local minutes = math.tointeger(tonumber(wallet and wallet.config and wallet.config("utc_offset_min") or ""))
+  if not minutes or minutes < -720 or minutes > 840 then return t end
+  return t + minutes * 60
+end
+
 -- The time, a middle dot and the battery ("14:32 . 87%"), or "USB" for the battery on external
 -- power: what the right side of a header shows.
--- The time (UTC) is the firmware clock's (wallet.time()), so it is left out while the clock has
--- no trusted source, as in the firmware's own header.
+-- The time is the firmware clock's (wallet.time()) in wall-clock time (vk.local_time), so it is
+-- left out while the clock has no trusted source, as in the firmware's own header.
 function ui.status()
   local parts = {}
   local wallet, battery = badge.wallet, badge.battery
   local seconds = wallet and wallet.time and wallet.time()
   if seconds then
-    seconds = math.floor(seconds)      -- a float past 2038 (32-bit Lua integers)
+    seconds = vk.local_time(math.floor(seconds))   -- floor: a float past 2038 (32-bit Lua integers)
     parts[#parts + 1] = string.format("%02d:%02d", (seconds // 3600) % 24, (seconds // 60) % 60)
   end
   if battery then

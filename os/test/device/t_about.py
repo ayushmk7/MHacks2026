@@ -1,18 +1,18 @@
-"""Settings -> About (shell.md, "About"): the page with the QR code of config key `repo_url`.
+"""Settings -> About (shell.md, "About"): the page with the link of config key `repo_url` as text
+(the QR code of it is on the launcher, t_barcode.py).
 
 Needs one badge with a dev build that has the About page (the boot line says pages=14). No
-network, no hands. To read the code back the laptop needs OpenCV in the repository's .venv
-(`pip install opencv-python-headless`); without it the decode step is skipped and the test says so.
+network, no hands. With OpenCV in the repository's .venv the screenshots are also checked for no
+QR code; without it that check is skipped.
 
 In order:
   1. `repo_url` is set (the test value of common.test_config() when the badge has none).
   2. From the launcher: CANCEL opens `settings`, DOWN to the last row, SELECT opens `about`
      (VKSTATE screen == "about").
-  3. In receipt-light and in receipt-dark: the screenshot shots/shell_about_<theme>.png holds a
-     QR code that decodes to exactly `repo_url`, and the code's patch is the light theme's paper
-     in both (a phone reads dark on light only). The size of one module is printed.
-  4. With `repo_url` empty the page says so and holds no code; the link is then put back and the
-     code returns, without leaving the page.
+  3. In receipt-light and in receipt-dark: the screenshot shots/shell_about_<theme>.png holds no
+     QR code, and in receipt-dark no light patch.
+  4. With `repo_url` empty the page changes (it says so); the link is then put back and the page
+     changes again, without leaving the page.
   5. CANCEL returns to `settings`.
 
 Leaves `repo_url` and the theme as it found them (the link stays set if the test set it), and the
@@ -29,7 +29,6 @@ SHOTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shots")
 WIDTH, HEIGHT = 320, 240
 THEMES = ("receipt-light", "receipt-dark")
 LIGHT_PAPER = 0xF77C        # receipt-light PAPER (#F3EFE4) as RGB565
-LIGHT_INK = 0x18C2          # receipt-light INK (#1B1A17)
 BODY_X = 147                # the body column: right of the perforation
 REDRAW_S = 0.8              # the page looks at the link, and the shell at the theme, every 500 ms
 
@@ -51,22 +50,6 @@ def body_pixels(shot):
     return [values[y * WIDTH + BODY_X:(y + 1) * WIDTH] for y in range(20, 216)]
 
 
-def module_px(rows):
-    """The width of one QR module in screen pixels. The first row of the body that holds the
-    code's ink is the top of the code, and the first run of ink in it is the top bar of the left
-    finder pattern, which is 7 modules wide."""
-    for row in rows:
-        if LIGHT_INK not in row:
-            continue
-        start = row.index(LIGHT_INK)
-        run = 0
-        while start + run < len(row) and row[start + run] == LIGHT_INK:
-            run += 1
-        assert run % 7 == 0, "the finder pattern's bar is %d px wide, not 7 whole modules" % run
-        return run // 7
-    return 0
-
-
 def run(badge):
     os.makedirs(SHOTS, exist_ok=True)
     to_launcher(badge)
@@ -83,41 +66,31 @@ def run(badge):
         state = goto_screen(badge, "about")
         assert state["screen"] == "about" and state["app"] == "", "not on About: %s" % state
 
-        # 3. Both themes: the code reads back as the link, on a light patch.
-        decoder = True
+        # 3. Both themes: the link as text, no code.
         for theme in THEMES:
             put(badge, "theme", theme)
             time.sleep(REDRAW_S)
             shot = badge.shot(os.path.join(SHOTS, "shell_about_%s.png" % theme))
-            rows = body_pixels(shot)
-            light = sum(row.count(LIGHT_PAPER) for row in rows)
-            assert light > 8000, "%s: the code's patch is not the light paper (%d such pixels)" % (theme, light)
-            size = module_px(rows)
-            assert size >= 3, "%s: a module is %d px wide, too small for a phone" % (theme, size)
+            if theme == "receipt-dark":
+                light = sum(row.count(LIGHT_PAPER) for row in body_pixels(shot))
+                assert light == 0, "%s: the body holds a light patch (%d such pixels)" % (theme, light)
             text = qr_decode(shot)
             if text is None:
-                decoder = False
-                print("t_about: %s: no QR decoder installed (opencv); module %d px" % (theme, size))
+                print("t_about: %s: no QR decoder installed (opencv)" % theme)
             else:
-                assert text == url, "%s: the code decodes to %r, expected %r" % (theme, text, url)
-                print("t_about: %s: decoded %r, module %d px" % (theme, text, size))
+                assert text == "", "%s: the page still shows a code (%r)" % (theme, text)
 
-        # 4. No link: the page says so, with no code. Then the link again, on the same page.
+        # 4. No link: the page says so. Then the link again, on the same page.
+        shown = badge.shot()
         put(badge, "repo_url", "")
         time.sleep(REDRAW_S)
         empty = badge.shot()
-        # The theme is receipt-dark here, so nothing else on the page is the light paper.
-        assert sum(row.count(LIGHT_PAPER) for row in body_pixels(empty)) == 0, (
-            "with no link the body still holds the code's light patch")
-        if decoder:
-            assert qr_decode(empty) == "", "with no link a code is still on the screen"
+        assert empty != shown, "the page did not change when the link was removed"
         assert badge.state()["screen"] == "about", "the page closed when the link was removed"
         put(badge, "repo_url", url)
         time.sleep(REDRAW_S)
         again = badge.shot()
-        assert again != empty, "the code did not come back when the link was set again"
-        if decoder:
-            assert qr_decode(again) == url, "the code that came back does not decode to the link"
+        assert again != empty, "the link did not come back when it was set again"
 
         # 5. Back.
         badge.btn("b", "tap")

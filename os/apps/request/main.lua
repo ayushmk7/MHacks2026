@@ -1,8 +1,15 @@
 -- Request: asks to be paid, waits, and checks the payment on chain (docs/os/apps/apps.md, "Request").
 --
 --   amount      UP/DOWN change the amount by config.step minor units, LEFT/RIGHT by ten steps.
---               SELECT opens the request. The amount is an integer count of minor units and is
+--               An arrow held past config.repeat_delay_ms repeats every config.repeat_ms, ten times
+--               the step after config.fast_after_ms and a hundred after config.faster_after_ms.
+--               SELECT (released before config.keypad_hold_ms) opens the request; SELECT held that
+--               long opens the keypad. The amount is an integer count of minor units and is
 --               turned into text ("10.00") by amount_text(); it is never a float.
+--   keypad      (drawn over the amount screen) 1-9 . 0 DEL and OK; the arrows move, SELECT presses.
+--               CANCEL deletes a character, or leaves the keypad when nothing is typed. OK turns
+--               the digits into minor units (parse_amount(), at most `decimals` after the point),
+--               keeps them within config.min and config.max and returns to the amount screen.
 --   waiting     wallet.request_open: the firmware signs and broadcasts the request and answers
 --               presence checks. The screen shows the seconds left and how many badges are checking.
 --               The screen is kept awake while a request is open.
@@ -52,10 +59,24 @@ local note = nil           -- a line under the rows
 local note_bad = false
 local status_at = 0
 local shown = false        -- the current screen has been drawn at least once
+local select_at = nil      -- amount screen: when SELECT went down (nil: no press to act on)
+local held = nil           -- amount screen: the arrow being held {key =, delta =, at =, next =}
+local keypad = nil         -- the keypad while open: {text =, cell =}
+
+local ARROWS = {up = 1, down = -1, right = 10, left = -10}   -- steps per press
+local KEYS = {"1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "DEL", "OK"}   -- 3 a row, OK alone
 
 local function amount_text(n)
   if decimals <= 0 then return string.format("%d", n) end
   return string.format("%d.%0" .. decimals .. "d", n // unit, n % unit)
+end
+
+-- The keypad's text ("12.5") as minor units, or nil when it holds no digit. Digits only: no float.
+local function parse_amount(text)
+  local whole, frac = text:match("^(%d*)%.?(%d*)$")
+  if not whole or (whole == "" and frac == "") or #frac > decimals then return nil end
+  frac = frac .. string.rep("0", decimals - #frac)
+  return (tonumber(whole) or 0) * unit + (tonumber(frac) or 0)
 end
 
 local function set_note(text, bad)
@@ -64,6 +85,7 @@ end
 
 local function set_view(name)
   view, shown = name, false
+  select_at, held = nil, nil                   -- a key released on another screen must not act here
   ui.dirty()
 end
 
@@ -77,7 +99,32 @@ local function change(delta)
   if next_minor == minor then return end
   minor = next_minor
   set_note(nil)
+  ui.dirty()
   badge.log("REQ amount " .. amount_text(minor))
+end
+
+-- SELECT on a keypad cell.
+local function keypad_press(key)
+  local text = keypad.text
+  if key == "OK" then
+    local typed = parse_amount(text)
+    keypad = nil
+    if typed then
+      minor = math.max(config.min, math.min(config.max, typed))
+      set_note(nil)
+      badge.log("REQ amount " .. amount_text(minor))
+    end
+  elseif key == "DEL" then
+    keypad.text = text:sub(1, -2)
+  elseif key == "." then
+    if decimals > 0 and not text:find(".", 1, true) then keypad.text = text .. "." end
+  else
+    -- At most `decimals` after the point, and at most 9 digits in all: Lua integers are 32-bit.
+    local whole, point, frac = text:match("^(%d*)(%.?)(%d*)$")
+    local room = point == "" and #whole + decimals <= 9 or point ~= "" and #frac < decimals
+    if room then keypad.text = text .. key end
+  end
+  ui.dirty()
 end
 
 local function open()
@@ -188,14 +235,32 @@ function on_start()
   badge.log("REQ amount " .. amount_text(minor))
 end
 
+-- The amount screen's held keys: SELECT held opens the keypad, an arrow held repeats.
+local function update_held(now)
+  if select_at and now - select_at >= config.keypad_hold_ms then
+    select_at = nil                            -- the release that follows does not open
+    held = nil
+    keypad = {text = "", cell = 1}
+    ui.dirty()
+  end
+  if held and not badge.input.down(held.key) then held = nil end   -- in case a release was missed
+  if held and now - held.at >= config.repeat_delay_ms and now >= held.next then
+    local t = now - held.at
+    local times = t >= config.faster_after_ms and 100 or t >= config.fast_after_ms and 10 or 1
+    held.next = now + config.repeat_ms
+    change(held.delta * times)
+  end
+end
+
 function on_update(dt)
   if want_open then
     want_open = false
-    if view == "amount" then open() end
+    if view == "amount" and not keypad then open() end
     return
   end
-  if not request then return end
   local now = badge.millis()
+  if view == "amount" and not keypad then update_held(now) end
+  if not request then return end
   if view == "confirming" then
     -- Not before the CHECKING screen has been drawn: a look-up blocks for up to vk.timeout_ms.
     if shown then check_step() end
@@ -227,21 +292,47 @@ function on_espnow(mac, data, rssi)
   ui.dirty()
 end
 
+-- The keypad: the arrows move over the 3-wide grid (OK is the last row), SELECT presses.
+local function keypad_button(key)
+  local cell = keypad.cell
+  if key == "b" then
+    if keypad.text == "" then keypad = nil else keypad.text = keypad.text:sub(1, -2) end
+    ui.dirty()
+    return
+  elseif key == "a" then
+    return keypad_press(KEYS[cell])
+  elseif key == "left" then
+    cell = cell == 13 and 13 or (cell - 1) % 3 == 0 and cell + 2 or cell - 1
+  elseif key == "right" then
+    cell = cell == 13 and 13 or cell % 3 == 0 and cell - 2 or cell + 1
+  elseif key == "up" then
+    cell = cell == 13 and 11 or cell <= 3 and 13 or cell - 3
+  elseif key == "down" then
+    cell = cell == 13 and 2 or cell >= 10 and 13 or cell + 3
+  end
+  keypad.cell = cell
+  ui.dirty()
+end
+
 function on_button(key, pressed)
+  if view == "amount" and not pressed then
+    if key == "a" and select_at then want_open = true end   -- a tap: open the request
+    if key == "a" then select_at = nil end
+    if held and held.key == key then held = nil end
+    return
+  end
   if not pressed then return end
-  if view == "amount" then
+  if view == "amount" and keypad then
+    keypad_button(key)
+  elseif view == "amount" then
     if key == "b" then
       badge.system.exit()
     elseif key == "a" then
-      want_open = true
-    elseif key == "up" then
-      change(config.step)
-    elseif key == "down" then
-      change(-config.step)
-    elseif key == "right" then
-      change(10 * config.step)
-    elseif key == "left" then
-      change(-10 * config.step)
+      select_at = badge.millis()
+    elseif ARROWS[key] then
+      local now = badge.millis()
+      held = {key = key, delta = ARROWS[key] * config.step, at = now, next = now}
+      change(held.delta)
     end
   elseif view == "paid" then
     if key == "a" or key == "b" then to_amount(nil) end
@@ -275,13 +366,31 @@ local function wrap(text, width)
   return lines
 end
 
--- The three rows of the body, for the current screen.
+-- The keypad in the body: 1-9 . 0 DEL in rows of three, OK under them; the cursor is inverted.
+local function draw_keypad()
+  local gfx = badge.gfx
+  for i, key in ipairs(KEYS) do
+    local row, col = (i - 1) // 3, (i - 1) % 3
+    local cx, w = ui.BODY_CX + (col - 1) * 50, 44
+    if i == 13 then cx, w = ui.BODY_CX, 144 end
+    local y = 54 + row * 22
+    local on = i == keypad.cell
+    if on then gfx.fill_rect(cx - w // 2, y - 5, w, 18, ui.color("ink")) end
+    ui.text_center(key, cx, y, ui.color(on and "paper" or "ink"))
+  end
+  ui.rule(160, ui.BODY_X0, ui.BODY_X1)
+  ui.text_center("min " .. amount_text(config.min) .. " \xC2\xB7 max " .. amount_text(config.max),
+    ui.BODY_CX, 170, ui.color("sub"))
+end
+
+-- The rows of the body, for the current screen.
 local function body_rows()
   if view == "amount" then
     return {
       {"UP / DOWN", amount_text(config.step)},
       {"LEFT / RIGHT", amount_text(10 * config.step)},
       {"SELECT", "open"},
+      {"HOLD SELECT", "keypad"},
     }
   end
   if view == "waiting" then
@@ -303,7 +412,8 @@ local function body_rows()
 end
 
 local function footer()
-  if view == "amount" then return "SELECT open", "CANCEL back" end
+  if keypad then return "SELECT press", keypad.text == "" and "CANCEL back" or "CANCEL delete" end
+  if view == "amount" then return "SELECT open \xC2\xB7 hold to type", "CANCEL back" end
   if view == "paid" then return "SELECT new request", "CANCEL back" end
   if view == "confirming" then
     if asking then return "SELECT keep checking", "CANCEL close anyway" end
@@ -320,17 +430,22 @@ function on_draw()
   ui.header(config.header)
   ui.perforation(ui.SPLIT_X, ui.CONTENT_Y + 4, 208)
 
-  -- Left stub: the amount under its label, then the badge's barcode.
+  -- Left stub: the amount under its label.
   local text = request and request.amount or amount_text(minor)
-  if view == "paid" then
+  if keypad then
+    ui.amount(ui.STUB_CX, 40, "TYPE", keypad.text == "" and "_" or keypad.text, symbol)
+    ui.title("KEYPAD", 30, ui.BODY_CX)
+    draw_keypad()
+    ui.footer(footer())
+    return
+  elseif view == "paid" then
     ui.amount(ui.STUB_CX, 40, "", text, symbol)      -- the kit's label is always ink
     ui.text_center(LABELS.paid, ui.STUB_CX, 40, ui.color("stamp_ok"))
   else
     ui.amount(ui.STUB_CX, 40, LABELS[view], text, symbol)
   end
-  ui.barcode(20, 128, 106, 44)
 
-  -- Body: the title, three rows, a rule, one note (or the question while checking).
+  -- Body: the title, the rows, a rule, one note (or the question while checking).
   ui.title("REQUEST", 30, ui.BODY_CX)
   local rows = body_rows()
   for i = 1, #rows do
