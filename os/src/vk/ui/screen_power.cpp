@@ -37,7 +37,7 @@ namespace vk::ui::screen {
 
 namespace {
 
-VK_CONFIG_KEY(dim_s, "dim_s", vk::config::Type::U32, "30", vk::config::F_NONE, 0, 3600,
+VK_CONFIG_KEY(dim_s, "dim_s", vk::config::Type::U32, "0", vk::config::F_NONE, 0, 3600,
               "seconds with no activity before the backlight dims; 0 never");
 VK_CONFIG_KEY(sleep_s, "sleep_s", vk::config::Type::U32, "120", vk::config::F_NONE, 0, 3600,
               "seconds with no activity before the backlight goes off; 0 never");

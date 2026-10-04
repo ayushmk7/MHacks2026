@@ -175,7 +175,7 @@ def judge(suite, rows, kinds):
             failed.append("%s.%s=%s %s" % (suite, name, status, value))
     assert not failed, "rows that must not be like this: %s" % "; ".join(failed)
     if kinds is not None:
-        missing = [name for name in kinds if name not in rows]
+        missing = [name for name in kinds if name not in rows and kinds[name] != "manual"]   # a manual row has no line until it is done
         assert not missing, "%s: no result line for %s" % (suite, ", ".join(missing))
 
 

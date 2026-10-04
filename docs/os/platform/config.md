@@ -100,7 +100,7 @@ Each key is registered by the code that uses it. This table is the complete list
 | `balance_poll_s` | U32 | 15 | | 0–3600 | `balance` | balance poll period; 0 disables |
 | `balance_max_s` | U32 | 600 | | 15–3600 | `balance` | longest wait between polls after failed ones: each failure doubles the wait up to this, never below `balance_poll_s` ([ui](../ui/ui.md#balance)) |
 | `pay_app` | STR | `pay` | | 1–24 | `requests` | app opened from a payment-request notification |
-| `dim_s` | U32 | 30 | | 0–3600 | `ui` (`screen_power.cpp`) | seconds with no activity before the backlight dims; 0 never; no dim phase when not below a non-zero `sleep_s` ([ui](../ui/ui.md#screen-dim-and-sleep)) |
+| `dim_s` | U32 | 0 | | 0–3600 | `ui` (`screen_power.cpp`) | seconds with no activity before the backlight dims; 0 never (the default: the screen stays full until it sleeps after `sleep_s`); no dim phase when not below a non-zero `sleep_s` ([ui](../ui/ui.md#screen-dim-and-sleep)) |
 | `sleep_s` | U32 | 120 | | 0–3600 | `ui` (`screen_power.cpp`) | seconds with no activity before the backlight goes off; 0 never. Settings → Display → `Sleep after` writes it |
 | `dim_pct` | U32 | 25 | | 1–100 | `ui` (`screen_power.cpp`) | the dimmed backlight, percent of the awake level (never 0 from a lit screen) |
 | `awake_usb` | U32 | 0 | | 0–1 | `ui` (`screen_power.cpp`) | 1: never dim or sleep while on external power |
