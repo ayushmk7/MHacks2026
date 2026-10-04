@@ -126,6 +126,14 @@ bool refresh(uint32_t timeoutMs);      // one blocking fetch
 }
 ```
 
+As built, the header also has `Reason fetch(uint32_t timeoutMs)` (what `refresh` and `wallet.refresh_balance` call; its reasons are in the [Lua API](../platform/lua-api.md#badgewallet-balance)), `FETCH_TIMEOUT_MS` (3000) and the reply scanner `scanReply` as an inline pure function, tested in the host suite `test_stores`.
+
+- The balance and the token account are always known together: a reply must hold both.
+- A stored balance belongs to the mint it was fetched for. If provisioning makes another mint the default token, the balance counts as unknown until the next fetch.
+- A fetch logs `[bal] fetch <ms> ms` (measurement M5), or `[bal] fetch failed after <ms> ms: …`. With Wi-Fi down the poll is skipped silently. `balance_poll_s 0` turns the poll off.
+- The status item is drawn in upstream's `::theme::TEXT`, since the bar is upstream's.
+- Device tests run with Wi-Fi off, so the poll never fires under the test provisioning. On a badge that is joined to a network, the test `rpc_url` (`http://127.0.0.1:8899`) makes every idle poll fail after up to 3 s; add `balance_poll_s 0` to `test_config()` in `test/device/common.py` if that disturbs a run.
+
 The feature publishes these to the rest of the firmware through `vk::wallet::tokenInfoLookup` ([signing](../wallet/signing.md#cross-feature-interfaces)), so `solana_pay` and the Wallet app never include a `balance` header.
 
 Upstream's shell redraws only when its own dirty flag is set (finding F12). When a status item's value changes (a new balance, a notification count, provisioning), its owner calls `vk::ui::requestShellRepaint()`; hook H20 makes the shell redraw on its next pass. The approval engine calls it when it closes.
@@ -219,7 +227,7 @@ Conventions every kit function follows (also in the comment at the top of `recei
 - A `y` is the top of the capital letters. A row at `y` owns y-5 to y+12; a selected row fills x0-10 to x1+10. A subline goes at y+13 and owns the 13 px below it.
 - Text that does not fit its space is cut and ends in `..`.
 - Body text is `Font0`. Three characters outside ASCII are drawn by hand, one column wide, when written as UTF-8: the middle dot `·` (U+00B7) and the triangles `◂` (U+25C2) and `▸` (U+25B8); LovyanGFX's own string drawing cannot reach them. Any other byte outside `0x20`–`0x7E` is drawn as `?`. `display::text` does not do this: text with a middle dot must go through the kit.
-- `statusRight` separates its parts with that middle dot (`14:32 · 87% · [2]`). The time is UTC (there is no timezone key) and is left out when the clock has no source; `[n]` is left out when the inbox is empty.
+- `statusRight` separates its parts with that middle dot (`14:32 · 87%`, or `14:32 · USB` on external power). The time is UTC (there is no timezone key) and is left out when the clock has no source, leaving `87%` or `USB` alone. Seen on the badge: `03:00 · USB` and `USB` (`os/test/device/shots/header_clock_usb.png`, `header_noclock_usb.png`).
 - Upstream never sets a font on the canvas, so every kit function leaves it on `Font0`, size 1, top-left datum. Code that sets a font on the canvas must put it back.
 - The footer clears its strip to `PAPER` first and its rule runs edge to edge (x 0..319), as in the simulation. The hold bar is 240 px wide (x 40..279) over a half-tone `FAINT` track. Sublines and `sub` are not bold (`Font0` has no bold).
 

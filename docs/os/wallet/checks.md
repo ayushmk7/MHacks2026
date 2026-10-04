@@ -205,7 +205,10 @@ Why record-only payments are allowed (amber, not red): a shop inside a game has 
 `decodeSolana` (the `solana` domain's decoder) does, in order:
 
 1. If a record and signature were supplied and `vk_record_verify` passes, call `clock::raiseTo(record.issued_at)`.
-2. Fill `vk_check_input_t` from the config (issuer key, token table, `record_ttl_s`), the clock, `crypto::verify`, `presenceLookup`; call `vk_check_solana`.
+2. Fill `vk_check_input_t` from the config (issuer key, token table, `record_ttl_s`), the clock, the verifier, `presenceLookup`; call `vk_check_solana`.
+
+   - **One verification per signature.** Step 1 and check 5 of the chain verify the same record. The verifier `decodeSolana` passes to both is `vk_verify_c` behind a one-entry memory: when a call has byte-for-byte the same message, signature and key as the previous one, the previous answer is returned. A signature check is a pure function of those three inputs, so the result cannot differ; the chain is unchanged and still asks for every verification itself. A record-only `begin` therefore costs one verification and a `begin` with a record and a request costs two (measured: 434 ms and 854 ms from the call to the first draw, [M3](../testing/testing.md#measurements)).
+   - **No issuer key.** If `issuer_key` is not set, step 1 is skipped and the chain gets a zero key **and** a verifier that refuses everything. The zero key alone is not enough: 32 zero bytes encode a low-order Ed25519 point, and TweetNaCl accepts forged signatures for it.
 3. Build the `ApprovalRequest` ([approval](approval.md#the-request)):
 
 | Field | Value |
@@ -213,18 +216,22 @@ Why record-only payments are allowed (amber, not red): a shop inside a game has 
 | `title` | `Pay` |
 | `headline` | `vk_headline_text(verdict.headline)` |
 | `big` | `<amount> <symbol>` from the decoded bytes and the token table; empty if not decoded |
-| `sub` | `to <record.display_name>` when the record is valid; else `to unverified recipient`; empty if not decoded |
+| `sub` | `to <record.display_name>` when the record is valid (`verdict.record_ok`: check 5 passed, so REVOKED, EXPIRED, STALE and WRONG RECIPIENT show the name; OVER LIMIT fails before the record is looked at and does not); else `to unverified recipient`; empty if not decoded |
 | line `Account` | the destination token account, base58, shortened to first 4 + `..` + last 4 |
 | line `Kind` | `merchant` or `person` (only with a valid record) |
-| line `Requested` | the request's amount and currency (only for `WRONG_AMOUNT`) |
-| line `Expected` | the record's token account, shortened (only for `WRONG_RECIPIENT`) |
-| line `Memo` | first 35 characters of the memo (only when present) |
-| line `Limit` | `over <cap> <symbol>` (only when the cap forced a hold). The verdict has no flag for this; `decodeSolana` recomputes it as `token->cap != 0 && transfer.amount > token->cap` |
+| line `Requested` | the request's amount and currency (only for `WRONG_AMOUNT`). The decimals are those of the provisioned token whose symbol equals the request's currency; a currency the badge has no token for is shown in raw units |
+| line `Expected` | the record's token account, shortened (only for `WRONG_RECIPIENT`); `none` when the record has no token account |
+| line `Memo` | first 35 characters of the memo (only when present), counted in UTF-8 characters; each non-ASCII or control character becomes one `?`. The screen's row shows as much of it as fits (about 17 characters, then `..`) |
+| line `Limit` | `over <cap> <symbol>` (only when the cap forced a hold). The verdict has no flag for this; `decodeSolana` recomputes it as `severity != RED && token->cap != 0 && transfer.amount > token->cap`: the chain applies the cap only to a payment that nothing blocked, so a red screen has no `Limit` line |
 | `severity`, `select`, `red_reason`, `dev_overridable` | from the verdict |
 | `recipient`, `recipient_name` | `record.device_pubkey`, `record.display_name` when valid; else the destination and empty |
 | `amount`, `decimals`, `symbol` | from the decoded bytes and the token table |
 
 At most four lines are shown; when more apply, the order of priority is `Requested`, `Expected`, `Limit`, `Account`, `Kind`, `Memo`.
+
+`big` holds 23 characters. The digits of an amount are never cut; an amount near the top of the 64-bit range loses part of its symbol.
+
+The log line `[pay] undecodable: <name>` is written only when the decoder itself fails. "Account 0 is not this badge" and UNKNOWN TOKEN also report `undecodable` to the app but log nothing, because the decoder succeeded.
 
 4. Return `VK_OK`, which opens the approval (a red one included). The only immediate refusals are those made by `begin()` itself ([signing](signing.md#the-signing-path)).
 

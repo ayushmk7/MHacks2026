@@ -50,7 +50,7 @@ Header magic `VKH1`. The header's `count` is the number of valid records (up to 
 | 16 | 1 | `outcome`: 1 signed, 2 cancelled, 3 timeout, 4 blocked, 5 failed, 6 approved (a confirmation that is not a signature) |
 | 17 | 1 | `reason` (`vk_reason_t`) |
 | 18 | 1 | `severity`: 0 green, 1 amber, 2 red |
-| 19 | 1 | flags: bit 0 = dev override used |
+| 19 | 1 | flags: bit 0 = dev override used. Set only when the override led to a signature; an override screen that was cancelled is `blocked` with the flag clear |
 | 20 | 8 | `amount` u64 raw units (0 if not a payment) |
 | 28 | 1 | `decimals` |
 | 29 | 9 | `symbol`, NUL-padded |
@@ -69,7 +69,29 @@ bool at(size_t newestFirstIndex, Entry &out);
 }
 ```
 
-One record is written per approval; the write takes a few milliseconds and happens in the `RESULT` phase, while the result screen is showing.
+The header also declares what the listener, the Lua binding and the host suite use: `Cursor` with `open(Cursor &)` and `at(cursor, i, out)` (the file header is read once for a reader of many records), `entryFor(outcome, unix_s)`, `append(entry)`, `outcomeName(code)`, the constants `OUTCOME_*`, `FILE_PATH`, `RING_CAPACITY`, `HEADER_SIZE`, `RECORD_SIZE`, and the function pointer `unixTime` (the clock on the badge; null in a host suite).
+
+Which outcome is written:
+
+- approved with a signature → `signed`; approved without one (a confirmation) → `approved`;
+- closed with reason `cancelled` → `cancelled`; `timeout` → `timeout`; `sign_failed` → `failed`;
+- anything else → `blocked`. A red approval reports its cause as the reason however it is closed, so a red screen closed with CANCEL or left to time out is `blocked`, with the cause in `reason`.
+
+Writing: the record goes into slot `head` first and the header second. If the record write fails nothing has changed. If only the header write fails, the header still describes the records that were there before; in a full ring the slot just written is the oldest record's, so the oldest entry shows the new record's contents until the next write. The two-write format cannot avoid that. `/vk/` is created when missing. A failed write is logged (`[vk] history: write failed …`) and ignored: the signature was already made and stays valid.
+
+A file with a wrong magic or version is renamed on the next **write**, not when it is read: until then readers report an empty history and change nothing. If the rename itself fails, the bad file is overwritten, so history keeps working.
+
+One record is written per approval, in the `RESULT` phase, while the result screen is showing. **The write is not quick, and it grows with the file.** LittleFS rewrites a file from the touched block to its end, and every append also rewrites the header at offset 0, so each append rewrites the whole file. Measured on the badge (integrator I3, 2026-10-03, dev build; the dev profile logs each append as `[vk] history write <ms> ms`):
+
+| Records in the file | One append |
+|---|---|
+| 0 to 16 | 22 to 75 ms |
+| 16 to 48 | 41 to 102 ms |
+| 48 to 112 | 60 to 231 ms (about 145 ms at 60 records) |
+| 112 to 128 | 134 to 181 ms |
+| full ring (every later write) | 245 to 320 ms, one of 32 at 406 ms |
+
+The loop is blocked for that time. It fits inside the 800 ms result screen, and no key or frame is acted on during `RESULT` anyway, but ESP-NOW frames that arrive meanwhile wait in upstream's 7-frame queue (U12). If this has to shrink, keep `count` and `head` out of the ring file (a second small file, or derive them by scanning at boot) so that an append touches one block.
 
 ## Contacts
 
@@ -106,4 +128,4 @@ Create it inside the feature that owns it, following the common rules above, and
 
 ## Tests
 
-Host: `test_stores` runs the three formats against an in-memory file: round trip, ring wrap-around at 128, oldest-replaced at capacity, bad magic recovery. Device: T-STO1 (history survives a reboot), T-STO2 (an app cannot open `/vk/history.bin` through `badge.storage`).
+Host: `test_stores` runs the three formats against an in-memory file: round trip, ring wrap-around at 128, oldest-replaced at capacity, bad magic recovery; for the history also a failed record write, a failed header write, a missing `/vk/`, the listener for all six outcome codes, and the balance reply scanner. Device: T-STO1 (history survives a reboot), T-STO2 (an app cannot open `/vk/history.bin` through `badge.storage`).

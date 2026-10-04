@@ -41,6 +41,18 @@ The first app, used to reach gate 1 and by the unattended test loop. Dev profile
 3. On a signature: `vk.send_tx(wallet.wire_tx(sig, msg))`. The dashboard detects a signed transaction from the chain; nothing is posted. On refusal: `POST <listener_url>/badge/outcome` with `{id, outcome="rejected"}`.
 4. Screen: one status line (`waiting`, `approving`, `sent <short sig>`, `refused: <reason>`).
 
+As built (WP13): the listener serves a pending attempt for 90 s, so `signtest` remembers every attempt id it has taken and never opens the same attempt twice. Until `lib/vk.lua` exists (WP35) it carries its own minimal JSON field extraction and RPC call, marked temporary; WP35 replaces them with `require("vk")`. A network call that returns nil shows a status line and retries. Its on-chain path has not run yet (`t_sign_net.py`, deferred: network).
+
+## Check test
+
+A test fixture, not an app for people. On start it requires `case` (a file `case.lua` that the test pushes into the app folder; without it the app logs `CT nocase` and idles). Case fields: `msg_hex` or `transfer` (a table passed to `wallet.build_transfer`), `record_hex`, `sig_hex`, `req_hex`, `delay_ms` (default 1500 in the tests: `common.launch()` must first see the app running with no approval open), `flush_draw` (draw and call `badge.gfx.flush()` every frame), `history` (log the newest `wallet.history` entry), `storage_probe` (try `badge.storage.read` on `"../../vk/history.bin"` and `"/vk/history.bin"`, each inside `pcall`).
+
+It logs with `badge.log`, one line each: `CT tick <n>` once a second from `on_update`; `CT call <ms>` just before `begin_solana` (for measurement M3); `CT begin ok` or `CT begin err <reason>`; `CT poll sig <hex>` or `CT poll err <reason>`; `CT hist <outcome> <amount> <symbol>` or `CT hist none`; `CT storage <ok|fail> <ok|fail>`; `CT case error: …` when `case.lua` exists but does not load. CANCEL exits.
+
+## Request test
+
+A test fixture. It turns ESP-NOW on, then opens one request per frame from `on_update` (not all inside `on_start`: each open is one signature, and this keeps the badge answering serial between them) for the amounts in its `config.lua`. It logs `RT open <req_id>` or `RT err <reason>`, `RT status <state> <proofs>` every second, and `RT result <status>` for RESULT frames.
+
 ## Home
 
 The landing app (set as upstream's autostart app by provisioning).

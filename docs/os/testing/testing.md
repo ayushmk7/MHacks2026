@@ -136,9 +136,11 @@ The unattended loop for an agent: edit → `scripts/build.sh dev --upload <port>
 | T-APR5 | serve each refusal vector: second instruction, wrong mint, two signers, v0 message, trailing bytes | each: red `CANNOT READ PAYMENT` or `UNKNOWN TOKEN`; `select` disabled even in the dev profile; `poll` gives `undecodable` | auto |
 | T-APR6 | release profile: any red approval; press and hold SELECT | never signs | hands (release build has no hooks) |
 
+T-APR1 has two halves. The offline half (`t_sign.py`, one badge, no network) uses `checktest` with a transfer built on the laptop whose account 0 is the badge's own key: red `UNVERIFIED RECIPIENT` with the dev override, an injected hold, and the returned signature verified on the laptop against `VKINFO pubkey`; it also signs a transfer built on the badge by `wallet.build_transfer` with a memo. The on-chain half (`t_sign_net.py`, `NEEDS = "network"`) is `signtest` against the dashboard listener and devnet. T-APR5 asserts the specific headline per vector and the `[pay] undecodable: program|header|version|trailing` log line for the four decoder failures; the wrong-mint vector decodes, so it logs nothing. `t_sign.py` also covers review focus 2: an app stopped before it polls leaves the next `begin` not `busy`, and `DEL checktest` while the approval is open closes it.
+
 ### Checks
 
-Needs the backend's `/registry` route. Each is run by a test app that passes a prepared `ctx`.
+T-CHK2 to T-CHK9 run offline on one badge (`t_chk.py`): `checktest` passes a prepared `ctx`, and `test/device/fixtures.py` builds the message (account 0 is the badge's own `VKINFO` key), a fresh record signed by the test issuer of `vectors.json`, and the request, for each case. The vectors' own record and messages are used only in the fixtures' self-check (`python test/device/fixtures.py`), because that record is older than `record_ttl_s` and its messages have another payer. T-CHK1 needs a second badge. Against the real backend the same cases need its `/registry` route.
 
 | Id | Procedure | Pass | How |
 |---|---|---|---|
@@ -151,6 +153,8 @@ Needs the backend's `/registry` route. Each is run by a test app that passes a p
 | T-CHK7 | request for 10.00, transfer for 500.00 | red `WRONG AMOUNT`, line `Requested 10.00 HACK` | auto |
 | T-CHK8 | amount above `cap`; above `max` | hold with line `Limit`; red `OVER LIMIT` | auto |
 | T-CHK9 | `VKTIME` to past the record's expiry; then, on a badge that has not synced, a fresh record | red `EXPIRED`; amber `CLOCK UNSYNCED` | auto |
+
+`t_chk.py` adds two cases with no id: the replay (valid record and valid request, no presence: amber `VERIFIED - NOT PRESENT`) and review focus 1 (after a `begin` with a record and a request the app still logs `CT tick`: the callback was not killed). The second half of T-CHK9 resets the badge so the clock has no source; if a saved Wi-Fi network syncs SNTP after that reset, CLOCK UNSYNCED cannot appear and the test accepts amber `VERIFIED - NOT PRESENT` with a printed note. Each case saves `test/device/shots/chk_<case>.png`.
 
 ### Requests and presence
 
@@ -180,7 +184,7 @@ Needs the backend's `/registry` route. Each is run by a test app that passes a p
 | Id | Procedure | Pass | How |
 |---|---|---|---|
 | T-STO1 | sign once, reboot, `wallet.history(1)` | the entry is there with the right amount and outcome | auto |
-| T-STO2 | Lua app tries `badge.storage.read("../../vk/history.bin")` and `"/vk/history.bin"` | both fail | auto |
+| T-STO2 | Lua app tries `badge.storage.read("../../vk/history.bin")` and `"/vk/history.bin"` | both fail (upstream raises a Lua error for a path outside the app folder; `checktest` wraps the call in `pcall`, and an error or `nil` both count as failing) | auto |
 | T-CON1 | two badges swap contacts | each lists the other's name and address | 2 |
 | T-CON2 | replay a captured CARD after the swap | `expired` | 2 |
 | T-LED2 | open green, amber and red approvals | LED colours match; red is solid | hands |
@@ -207,11 +211,13 @@ Fill in on hardware; these numbers set config values and decide fallbacks.
 | Id | What | How | Result | Decides |
 |---|---|---|---|---|
 | M1 | CHAL → PROOF round trip, 50 samples | log line `[req] proof <ms> ms` on the payer | p50 = , p95 = | `presence_ms` = p95 × 1.5 |
-| M2 | one Ed25519 verify; one sign (software key; SE050 key) | log lines `[vk] verify <ms> ms`, `[vk] sign <domain> <n> bytes <ms> ms` | | if verify > 400 ms, switch `VK_ED25519_BACKEND` to 1 |
-| M3 | `begin_solana` → approval visible | timestamp in the log at `begin` and at first draw | engine part only (WP12, `VKDEMOAPPROVE`): `[vk] approval open … at <ms>` to `[vk] approval first draw at <ms>` is 11 ms. The decode and verification before it are measured in Batch 3 | target under 2 s |
-| M4 | image size; free heap and free PSRAM in the launcher and during an approval | compile output; `VKSTATE.heap`; upstream heartbeat line | WP01 dev build (2026-10-03): 1,882,539 bytes, 56 % of the slot (unmodified upstream: 1,871,707); globals 77,504 bytes. Launcher: heap 197 to 202 KB free, PSRAM 7,971 KB free. During an approval: not yet measured | slot is 3,342,336 bytes |
+| M2 | one Ed25519 verify; one sign (software key; SE050 key) | log lines `[vk] verify <ms> ms`, `[vk] sign <domain> <n> bytes <ms> ms` | Batch 3 (2026-10-03, software key, TweetNaCl): **verify 419 ms** (median of 45 samples over three runs of `t_chk.py`, every sample 418 to 420). **Sign 211 ms** (`[vk] sign solana 214 bytes 211 ms`; `pay-req` 210 and 211 ms). SE050: not measurable on this badge | verify is above 400 ms: the Monocypher backend (`VK_ED25519_BACKEND 1`) is called for |
+| M3 | `begin_solana` → approval visible | timestamp in the log at `begin` and at first draw | Batch 3, from the app's call (`CT call <ms>`) to `[vk] approval first draw at <ms>`: **12 ms** with no record, **434 ms** with a record (one verification), **854 ms** with a record and a request (two). Before the duplicate record check was removed ([checks](../wallet/checks.md#verdict-to-screen)) the last two were 853 and 1273 ms. Engine part alone (WP12): 11 ms | target under 2 s: met |
+| M4 | image size; free heap and free PSRAM in the launcher and during an approval | compile output; `VKSTATE.heap`; upstream heartbeat line | WP01 dev build (2026-10-03): 1,882,539 bytes, 56 % of the slot (unmodified upstream: 1,871,707); globals 77,504 bytes. Launcher: heap 197 to 202 KB free, PSRAM 7,971 KB free. Batch 3 dev build: 1,961,263 bytes, 59 % of the slot; launcher heap 186 KB free, PSRAM 7,971 KB; during a payment approval opened by a Lua app `VKSTATE.heap` is 189,568 | slot is 3,342,336 bytes |
 | M5 | one RPC request over the hotspot | `[bal] fetch <ms> ms` | | `balance_poll_s`, HTTP timeouts |
 | M6 | loop-task stack high-water mark during a signature and during an HTTPS request | `uxTaskGetStackHighWaterMark(NULL)` logged once a minute in the dev profile | | if under 1 KB free, raise the loop stack with `SET_LOOP_TASK_STACK_SIZE(16 * 1024)` in `os.ino` (a new hook) |
+
+The cost of one history write (22 to 320 ms, growing with the file) is measured in [stores](../wallet/stores.md#history).
 
 ## What cannot be tested without a person
 

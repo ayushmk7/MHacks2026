@@ -191,8 +191,9 @@ This also fixes upstream finding F1: the handler is installed once and never cle
 
 - `wallet.request_open{...}` ([Lua API](../platform/lua-api.md#badgewallet-requests)) makes the firmware build a REQ (`payee_pubkey` = this badge, random `req_id`, `expiry = now + req_ttl_s`), sign it once (domain `pay-req`), and store it as an **active request**. At most 2 are active; opening a third fails with `busy`.
 - The feature's service broadcasts each active request every `req_period_ms` (default 1000).
-- An active request closes on `wallet.request_close(req_id)`, at its expiry, or when the app that opened it stops.
+- An active request closes on `wallet.request_close(req_id)`, at its expiry, or when the app that opened it stops. Upstream runs the stop listeners before the app's `on_stop`, so the service also closes any request whose app is not the running app: a request opened from `on_stop` does not outlive its app.
 - Opening a request needs the clock (`no_time` otherwise): the expiry is a real time.
+- The table logic (active requests, rate limits, cache, presence slots, judging) takes time, random bytes, signing and verification through function pointers (`vk::requests::hooks`), so the host suite `test_requests` runs it on the laptop.
 
 ## Presence
 
@@ -203,7 +204,7 @@ The question presence answers: is the holder of the payee key within radio range
 Route for type 2, in firmware, no app involved:
 
 1. `req_id` matches an active request, else drop.
-2. Rate limits per active request: at most `req_max_proofs` (default 8) proofs in total, and at least `req_gap_ms` (default 200) since the last one. Otherwise drop.
+2. Rate limits per active request: at most `req_max_proofs` (default 8) proofs in total, and at least `req_gap_ms` (default 200) since the last one. Otherwise drop. The gap is measured from the **end** of the last signature, so a CHAL that queued while that signature ran is dropped. (Measured from the start, a signature slower than the gap would always satisfy it.)
 3. Sign `pay-proof` over `req_id ‖ nonce ‖ payer_pubkey` (from the CHAL) and unicast PROOF to the sender's MAC.
 
 The loop is blocked for one signature. That is the latency the payer measures.
@@ -213,7 +214,7 @@ The loop is blocked for one signature. That is the latency the payer measures.
 `src/vk/features/requests/presence.{h,cpp}`. A table of 4 slots: `req_id`, `payee_pubkey` (from the REQ), `mac`, `nonce`, `t0_ms`, `result`. The oldest slot is reused when the table is full.
 
 - `wallet.challenge(mac, req_frame)` parses the REQ, fills a slot with a fresh random nonce and result `PENDING`, sets `t0_ms = millis()` and sends CHAL to `mac`.
-- Route for type 3: find the `PENDING` slot with that `req_id` whose `mac` equals the sender's; verify the signature over `req_id ‖ nonce ‖ own_pubkey` with the slot's `payee_pubkey`. Invalid → `BAD_SIG`. Valid and `rx_ms − t0_ms ≤ presence_ms` → `PRESENT`. Valid but slower → `LATE`. The first PROOF decides; later ones for that slot are ignored.
+- Route for type 3: find the `PENDING` slot with that `req_id` whose `mac` equals the sender's; verify the signature over `req_id ‖ nonce ‖ own_pubkey` with the slot's `payee_pubkey`. Invalid → `BAD_SIG`. Valid and `rx_ms − t0_ms ≤ presence_ms` → `PRESENT`. Valid but slower → `LATE`. The first PROOF decides; later ones for that slot are ignored. A PROOF whose `rx_ms` is earlier than the slot's `t0_ms` is not judged at all: it answers the nonce of a challenge that has since been replaced. A PROOF from another MAC is ignored.
 - `wallet.presence(req_id)` returns the slot's result as a string for the app's UI. The approval reads the same slot through `presenceLookup` ([checks](../wallet/checks.md#presence-lookup)).
 
 `presence_ms` is a config key. Its default (1500) allows for a software signature on the payee; measurement M1 ([testing](../testing/testing.md#measurements)) sets the real value: the 95th percentile of CHAL→PROOF plus half again.
@@ -221,6 +222,11 @@ The loop is blocked for one signature. That is the latency the payer measures.
 ### Request cache (payer side)
 
 The route for type 1 keeps the last 8 distinct requests seen (by `req_id`): frame, MAC, RSSI, time seen. An entry is dropped at its expiry or 30 s after it was last heard. `wallet.requests()` returns the cache. When a new `req_id` appears and the running app is not the configured `pay_app`, the route posts a notification ([app host](../platform/app-host.md#notifications)). The route returns false, so a running app also gets the frame.
+
+- A REQ already past its expiry is never cached or announced. With no clock source only the 30 s rule applies.
+- A ninth request replaces the entry that has been silent longest.
+- A known `req_id` heard from another MAC updates the entry's MAC.
+- The notification body is `<name> <amount> <currency>`, cut to the 39 characters a note holds by shortening the name; the amount is kept whole.
 
 ## Sequences
 

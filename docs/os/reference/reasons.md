@@ -8,7 +8,7 @@ One list for every refusal in Badge OS. In C it is `vk_reason_t` (`src/vk/wallet
 |---|---|---|---|---|
 | 0 | `VK_OK` | `ok` | no error | — |
 | 1 | `VK_CANCELLED` | `cancelled` | the user pressed CANCEL on a green or amber approval | `poll` |
-| 2 | `VK_TIMEOUT` | `timeout` | a green or amber approval was not answered in `approval_tmo_s` | `poll` |
+| 2 | `VK_TIMEOUT` | `timeout` | a green or amber approval was not answered in `approval_tmo_s`; a balance fetch had no route to the node or did not complete | `poll`; `refresh_balance` |
 | 3 | `VK_UNDECODABLE` | `undecodable` | the bytes are not a payment the badge can read, the token is unknown, or account 0 is not this badge | `poll` (red approval) |
 | 4 | `VK_UNVERIFIED` | `unverified` | no record, a record whose issuer signature fails, or a request that does not verify | `poll` (red); `vk.record` on 404 |
 | 5 | `VK_REVOKED` | `revoked` | the record says revoked | `poll` (red) |
@@ -19,16 +19,16 @@ One list for every refusal in Badge OS. In C it is `vk_reason_t` (`src/vk/wallet
 | 10 | `VK_NO_TIME` | `no_time` | the clock has no trusted source | `request_open` |
 | 11 | `VK_BUSY` | `busy` | an approval is open or a result is waiting to be polled; two requests are already open | `begin`; `request_open` |
 | 12 | `VK_DENIED` | `denied` | the app lacks the permission | `begin` (native apps; Lua apps get a Lua error instead) |
-| 13 | `VK_NOT_PROVISIONED` | `not_provisioned` | the badge has not been provisioned | `begin`; `request_open` |
+| 13 | `VK_NOT_PROVISIONED` | `not_provisioned` | the badge has not been provisioned; a balance fetch has no token table, `rpc_url` or key | `begin`; `request_open`; `refresh_balance` |
 | 14 | `VK_TOO_LONG` | `too_long` | the bytes exceed the domain's limit or what the key can sign (242 bytes with an SE050 key) | `begin` |
-| 15 | `VK_SIGN_FAILED` | `sign_failed` | the key refused or the domain table failed its self-check | `poll`; `request_open`; `contact_card` |
+| 15 | `VK_SIGN_FAILED` | `sign_failed` | the key refused, the badge has no key, or the domain table failed its self-check | `poll`; `request_open`; `challenge`; `contact_card` |
 | 16 | `VK_BAD_ARG` | `bad_arg` | an argument has the right type but an invalid value | any function |
-| 17 | `VK_UNSUPPORTED` | `unsupported` | the domain or feature is not in this firmware; a default could not be resolved | `begin`; `build_transfer` |
+| 17 | `VK_UNSUPPORTED` | `unsupported` | the domain or feature is not in this firmware; a default could not be resolved; the node's reply to a balance fetch held no usable account or was not status 200 | `begin`; `build_transfer`; `refresh_balance` |
 | 18 | `VK_IDLE` | `idle` | `poll` was called with nothing begun | `poll` |
 
 Rules: a red approval always reports its own cause (`red_reason`), however it was closed. An app decides what to tell the user from the reason; `vk.report` forwards `unverified`, `revoked`, `expired`, `mismatch` and `bad_proof` to the dashboard feed.
 
-Decoder errors (`sol_tx_err_t`, [solana-payments](../wallet/solana-payments.md#decoder-rules)) are logged as `[pay] undecodable: <name>` and all surface to apps as `undecodable`.
+Decoder errors (`sol_tx_err_t`, [solana-payments](../wallet/solana-payments.md#decoder-rules)) are logged as `[pay] undecodable: <name>` and all surface to apps as `undecodable`. The two `undecodable` causes that are not decoder errors (account 0 is not this badge; UNKNOWN TOKEN) log nothing.
 
 ## Approval headlines
 

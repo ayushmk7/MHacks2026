@@ -33,7 +33,7 @@
 
 Conditions the specification implies but that are easy to miss. Each has a test in the package that owns the code.
 
-1. **Slow crypto inside a Lua callback.** `begin_solana` with a full `ctx` verifies a record and a request (about a second each with TweetNaCl) inside one 250 ms callback. Expected: the binding extends the deadline and the app survives. Test in WP21 (device: call with full ctx, app still running afterwards).
+1. **Slow crypto inside a Lua callback.** `begin_solana` with a full `ctx` verifies a record and a request (measured: 419 ms each with TweetNaCl, 854 ms to the first draw) inside one 250 ms callback. Expected: the binding extends the deadline and the app survives. Test in WP21 (device: call with full ctx, app still running afterwards).
 2. **App stopped while an approval is open.** Hook H4 skips `routeButtons()` and defers launch and stop requests while the approval is active, so a force-quit (hold CANCEL) cannot happen and a pushed `RUN` or `STOP` is applied on the first pass after the approval closes. The only stop during an approval is a pushed `DEL <running id>` (upstream calls `runtime::stop()` directly). Expected: the approval closes, no result lingers, the next `begin` from another app is not `busy`. Test in WP12 (host: `appStopping`; device: `DEL` of the running app while `modal` is true closes the approval; an app stopped with an un-polled result leaves the next `begin` not `busy`).
 3. **Storage failure.** `/vk/` missing on first boot, filesystem full, or NVS write refused. Expected: directory is created; a failed history write never blocks or fails a signature; `VKSET` answers `ERR`. Tests in WP10 (config) and WP24 (history with a failing file layer on the host).
 4. **No network.** Wi-Fi absent at boot or lost mid-flow. Expected: boot does not wait for SNTP; `vk.*` network helpers return `nil, message`; the balance service skips; the pay flow ends in `failed` with a reason, never hangs. Tests in WP20, WP33, WP35.
@@ -228,11 +228,11 @@ Stub behaviour (must equal upstream behaviour) is the last column of that table.
 **Files:** Create `src/vk/features/solana_pay/domain_solana.cpp`, `lua_solana.cpp`; `src/vk/wallet/lua_wallet.cpp` (identity functions, `begin`, `poll`, `config`, `tokens`, `badge.codec`); `apps/signtest/{app.ini,main.lua,config.lua}`; `test/device/t_sign.py`. Config keys `issuer_key`, `tokens`, `record_ttl_s`.
 **Interfaces consumed:** `vk_check_solana`, `approval::open`, `signer::begin/poll`, config.
 
-- [ ] `decodeSolana`: fill `vk_check_input_t`, call the chain, map the verdict to an `ApprovalRequest` per the table. At this stage a record is rarely supplied; the path with one is exercised in WP21.
-- [ ] `vk::wallet::begin` now opens the approval for button domains.
-- [ ] Lua bindings; each calls `runtime::extendDeadline` as specified.
-- [ ] Sign test app (it carries its own minimal JSON field extraction until WP35; replace with `vk` then).
-- [ ] Device (`t_sign.py`), dashboard running with the listener open: T-APR1 (the signature verifies on the laptop with the badge's public key; the transaction confirms on devnet), T-APR4, T-APR5.
+- [x] `decodeSolana`: fill `vk_check_input_t`, call the chain, map the verdict to an `ApprovalRequest` per the table. At this stage a record is rarely supplied; the path with one is exercised in WP21.
+- [x] `vk::wallet::begin` now opens the approval for button domains.
+- [x] Lua bindings; each calls `runtime::extendDeadline` as specified.
+- [x] Sign test app (it carries its own minimal JSON field extraction until WP35; replace with `vk` then). Written; its network path has not run.
+- [ ] Device (`t_sign.py`), dashboard running with the listener open: T-APR1 (the signature verifies on the laptop with the badge's public key; the transaction confirms on devnet), T-APR4, T-APR5. Done offline with `checktest` (`t_sign.py`): T-APR1's signature half, T-APR4, T-APR5. Deferred (network: `t_sign_net.py`): `signtest` against the listener and the confirmation on devnet.
 
 **Done when (Gate 1):** a transfer served by the laptop is shown with the correct amount on the firmware screen, signed after the hold, and confirmed on devnet; each refusal vector is refused.
 
@@ -255,8 +255,8 @@ Stub behaviour (must equal upstream behaviour) is the last column of that table.
 **Files:** Modify `features/solana_pay/domain_solana.cpp`, `lua_solana.cpp` (`check_record`); create `apps/checktest/` (dev-only test app, permissions `sign,net,history,storage`, that calls `begin_solana` with the message and `ctx` of one case, loaded from `case.lua`, which the test pushes with the app), `test/device/t_chk.py`.
 **Needs:** no network. `t_chk.py` builds each case on the laptop (message, record, request), signing with the test issuer and device keys from `vectors.json`, with the badge provisioned to that issuer, and pushes it as `case.lua`. The backend's `GET /registry/<address>` ([backend](../integration/backend.md#needed-routes)) is needed by the Pay app, not by this package.
 
-- [ ] Record verification, `clock::raiseTo`, and the full verdict mapping. A supplied request is verified here too (checks 11 and 12 do not need the `requests` feature); only presence is absent until WP23, so the best verdict in this package is amber.
-- [ ] Device: T-CHK2 to T-CHK9; the app is still running after a `begin_solana` with a full `ctx` (review focus 1).
+- [x] Record verification, `clock::raiseTo`, and the full verdict mapping. A supplied request is verified here too (checks 11 and 12 do not need the `requests` feature); only presence is absent until WP23, so the best verdict in this package is amber.
+- [x] Device: T-CHK2 to T-CHK9; the app is still running after a `begin_solana` with a full `ctx` (review focus 1).
 
 ### WP22: ESP-NOW router
 
@@ -272,9 +272,9 @@ Stub behaviour (must equal upstream behaviour) is the last column of that table.
 **Files:** Create `src/vk/features/requests/domain_pay_req.cpp`, `domain_pay_proof.cpp`, `requests.{h,cpp}`, `presence.{h,cpp}`, `lua_requests.cpp`; `apps/reqtest/` (dev-only fixture: opens a request, logs RESULT frames); `test/device/t_req.py` (two ports). The request cache posts its notification through `vk::host::notify::post` (a stub until WP32). Config keys `presence_ms`, `req_ttl_s`, `req_period_ms`, `req_max_proofs`, `req_gap_ms`, `pay_app`. Permission `request`.
 **Interfaces produced:** sets `vk::wallet::presenceLookup`; Lua `request_open/close/status`, `requests`, `challenge`, `presence`.
 
-- [ ] Payee: active-request table, signing, rebroadcast service, CHAL route with rate limits, close on app stop (a `VK_ON_APP_STOP` listener).
-- [ ] Payer: request cache route, presence slots, PROOF route with `lastRxMs`, log line `[req] proof <ms> ms`.
-- [ ] Device: T-REQ1 to T-REQ4, T-CHK1.
+- [x] Payee: active-request table, signing, rebroadcast service, CHAL route with rate limits, close on app stop (a `VK_ON_APP_STOP` listener).
+- [x] Payer: request cache route, presence slots, PROOF route with `lastRxMs`, log line `[req] proof <ms> ms`.
+- [ ] Device: T-REQ1 to T-REQ4, T-CHK1 (deferred, second badge: `t_req.py`). On one badge (done: `t_req_single.py`): `no_time`, open, status, close on app stop, `busy`, `bad_arg`.
 
 **Done when (Gate 2):** on two badges, an honest request is green; a replayed request is amber; a transaction to the wrong account or for the wrong amount is red; an unregistered payee is red.
 
@@ -283,9 +283,9 @@ Stub behaviour (must equal upstream behaviour) is the last column of that table.
 **Read:** [stores](../wallet/stores.md).
 **Files:** Create `src/vk/features/history/history.{h,cpp}`, `lua_history.cpp`; `test/host/test_stores.cpp`. Permission `history`.
 
-- [ ] Host tests first: ring wrap at 128, bad magic recovery, a write that fails leaves the previous file intact and returns false.
-- [ ] Listener writes one record per outcome; a failed write is logged and ignored (review focus 3). Creates `/vk/` if missing.
-- [ ] Device: T-STO1, T-STO2.
+- [x] Host tests first: ring wrap at 128, bad magic recovery, a write that fails leaves the previous file intact and returns false.
+- [x] Listener writes one record per outcome; a failed write is logged and ignored (review focus 3). Creates `/vk/` if missing.
+- [x] Device: T-STO1, T-STO2.
 
 ---
 
@@ -321,8 +321,8 @@ Stub behaviour (must equal upstream behaviour) is the last column of that table.
 **Read:** [ui](../ui/ui.md#balance).
 **Files:** Create `src/vk/features/balance/balance.{h,cpp}`, `lua_balance.cpp`. Config key `balance_poll_s`. Status item `balance`.
 
-- [ ] Service with the stated conditions; reply scanning; 3 s timeout; skip when Wi-Fi is down (review focus 4).
-- [ ] Device: after `devnet:setup` funded the badge, the bar shows the balance within one poll; `wallet.token_account()` equals the account `devnet:setup` created; log `[bal] fetch <ms> ms`.
+- [x] Service with the stated conditions; reply scanning; 3 s timeout; skip when Wi-Fi is down (review focus 4). Written and compiled; nothing of it has run against a network.
+- [ ] Device: after `devnet:setup` funded the badge, the bar shows the balance within one poll; `wallet.token_account()` equals the account `devnet:setup` created; log `[bal] fetch <ms> ms` (deferred, network; no test file yet).
 
 ### WP34: Contacts feature
 
@@ -427,16 +427,16 @@ Each app is one folder under `apps/` with `app.ini`, `main.lua`, `config.lua`, w
 | 10 | Batch 2: 2A; integrator I2 | 2026-10-03 | host suite `config`; on the badge `t_cfg.py`: T-BOOT2, T-CFG3 (against `rpc_url`, unprovisioned and again over a stored value), T-CFG1 (values survive a reset, `provisioned=1`), T-CFG2 (`Change setting` confirmation: hold writes, CANCEL leaves) | code complete. The first firmware build had no error in this package. `VKINFO pubkey` is `5vpmgLuCfbV7Lp2hTNFz7w75ibhVkc56G1mR6weQedvj`, equal to the key read by eye in WP00. The tests leave the badge provisioned with the test values. Deferred: T-CFG4 (hands); `vkdev.py provision --env` (needs `npm run devnet:setup`, U9). Spec additions recorded in config.md |
 | 11 | Batch 2: 2B; integrator I2 | 2026-10-03 | host suite `domains`; pre-flash check 2 (nothing but `signer.cpp` signs); T-BOOT3 on the badge (`selfcheck=1`, `key=software`, boot log `[vk] selfcheck ok`) | code complete. One domain registered (`store-reg`). No signature has been made through `signRaw` on the badge yet: the first is WP13's (M2). Deferred: store registration against a broker (network). Spec additions recorded in signing.md |
 | 12 | Batch 2: 2C (engine, LEDs, demo command), 2D (theme, receipt kit, screen); integrator I2 | 2026-10-03 | host suite `approval`; on the badge `t_apr.py` in `receipt-light` and in `receipt-dark`: the three demo severities with their `VKSTATE` and select rules, launcher repaint after close, T-APR2, pushed `STOP` and `RUN` applied only after the approval closes, T-APR3 | code complete. Screenshots in `os/test/device/shots/`: `approval_<green\|amber\|red>_<theme>.png` and `result_<approved\|cancelled\|blocked\|timed_out>_<theme>.png`; all read by the integrator, no clipped or overlapping text. Changed at integration, both by the design owner's decision: the footer in `RESULT` shows the result word and no key hints; **the rubber stamp was removed** from the approval screen and the kit (`receipt::stamp` deleted; the `STAMP_*` tokens stay as status inks), so the coloured band alone carries the verdict. Engine open to first draw: 11 ms (part of M3). Cosmetic, not changed: the screen is 5 px higher than the simulation between the band and the last row. Deferred: T-LED1, T-LED2 (hands); `DEL <running id>` while a signing approval is open (review focus 2) needs an app-owned approval, so it moves to Batch 3 with `signtest`; `SIGNED` and `SIGN FAILED` result screens (need a signing domain) |
-| 13 | | | Gate 1 | |
+| 13 | Batch 3: 3A (`domain_solana.cpp`), 3B (`lua_wallet.{h,cpp}`, `lua_solana.cpp`), 3C (`signtest`, `checktest`, `fixtures.py`, `t_sign.py`, `t_sign_net.py`); integrator I3 | 2026-10-03 | nine host suites (`sol record frames checks config domains approval stores requests`); `fixtures.py` self-check; on the badge `t_boot.py`, `t_cfg.py` (T-CFG3 now against `tokens`), `t_apr.py`, and `t_sign.py`: T-APR1 offline half (red UNVERIFIED RECIPIENT with the dev override, injected hold, signature verified on the laptop against `VKINFO pubkey`; also a transfer built on the badge with a memo), T-APR4, T-APR5 (five vectors), review focus 2 (stop before poll, then not `busy`; `DEL` while modal) | **Gate 1 is met only in its offline half**: the correct amount on the firmware screen, signed after the hold, each refusal vector refused. Missing half: `signtest` against the dashboard listener and a transaction confirmed on devnet (`t_sign_net.py`, never run; needs the hotspot, the listener and `devnet:setup`). First firmware build of the batch compiled with no error. Boot line: `[vk] registries: services=7 commands=16 lua=29 status=2 domains=4 routes=3 permissions=2 patterns=5 native=0 config=17`. Image 1,961,263 bytes (59 % of the slot). M2: sign 211 ms (`[vk] sign solana 214 bytes 211 ms`), **verify 419 ms, above the 400 ms threshold: Monocypher (WP51, agent 4F) is called for**. No loop-task stack overflow seen. Screenshots `pay_unverified_dev.png`, `apr4_approval.png`. The batch's sources first entered the history in the owner's snapshot commit `3586802` ("before utsav push"), taken while integration was running: it also holds a temporary dev-only file, `features/devtools/tmp_i3.cpp` (commands `VKHDR`, `VKHISTFILL`, `VKHISTRM`), which the batch commit removes |
 | 20 | Batch 2: 2E; integrator I2 | 2026-10-03 | on the badge `t_clock.py`: `[os] ready` 7.8 s after reset with Wi-Fi absent, `time=none`, `VKTIME` gives `time=sntp` in `VKINFO` and `VKSTATE` | code complete; device verification of SNTP deferred (network: `t_clock_net.py`, U5, U6). Both SNTP paths are compiled (callback and status poll). No host suite (`clock.cpp` is host-compilable if one is wanted) |
-| 21 | | | | |
+| 21 | Batch 3: 3A (glue), 3C (`checktest`, `t_chk.py`); integrator I3 | 2026-10-03 | host suite `checks`; on the badge `t_chk.py`: T-CHK2 to T-CHK9 (severity, headline, select, the named line, the poll reason), the replay case (amber VERIFIED - NOT PRESENT), review focus 1 (the app survives a `begin` with a record and a request) | The decoder's verifier remembers its last answer, so the record is verified once, not twice (checks.md, "Verdict to screen"): M3 is 12 ms with no record, 434 ms with a record, 854 ms with a record and a request (853 and 1273 ms before). Screenshots `chk_<case>.png` for all 11 cases, read by the integrator: no clipped or overlapping text; also tried with a 32-character name, a 35-character memo and `999.99 HACK`: everything is shortened with `..` as the layout specifies. Deferred: T-CHK1 (second badge) |
 | 22 | Batch 2: 2E; integrator I2 | 2026-10-03 | on the badge: `hello` launches, runs and stops with the router's handler installed (`t_clock.py`, `t_apr.py`); `whosnear` launched from the real keys comes up on channel 1 | code complete; device verification deferred (second badge: T-HOOK1 and `whosnear` between two badges, `t_hook.py`). `routes=0` until WP23 |
-| 23 | | | Gate 2 | |
-| 24 | | | | |
+| 23 | Batch 3: 3D; integrator I3 | 2026-10-03 | host suite `requests`; on the badge `t_req_single.py`: `no_time` with the clock unset, two requests open after `VKTIME` (one `[vk] sign pay-req` each, 210 and 211 ms), status `open 0`, stopping the app closes them, a third open is `busy`, `10.001` and `0.00` are `bad_arg` | code complete; device verification of everything over the air deferred (second badge): T-REQ1 to T-REQ4 and T-CHK1 (`t_req.py`), M1, T-REQ5 (also needs the Inbox of WP32; `notify::post` is still the WP01 stub, so the "Payment request" note is dropped until then). **Gate 2 is met only in its offline half**: on one badge with prepared inputs, an unregistered payee is red (T-CHK3, T-CHK4), a request with no presence is amber (the replay case), a wrong account or amount is red (T-CHK6, T-CHK7). Missing half: an honest request green (T-CHK1) and the replay and wrong-payment cases between two real badges. Registries: services +2, routes +3, domains +2, lua +6, permissions +1, config +6 |
+| 24 | Batch 3: 3E (history), 3C (`t_sto.py`); integrator I3 | 2026-10-03 | host suite `stores`; on the badge `t_sto.py`: T-STO1 (a refused then a signed payment; `signed 10.00 HACK` before and after a reset), T-STO2 (both paths fail); also run once with the ring full (128 records, wrap path) | One append costs 22 to 75 ms on a nearly empty file and 245 to 320 ms on a full ring, not "a few milliseconds" (table in stores.md); the dev profile logs `[vk] history write <ms> ms`. `fileio` `renameFile` over an existing file is still not exercised on the badge (only the bad-magic path uses it) |
 | 30 | | | | |
 | 31 | | | | |
 | 32 | | | | |
-| 33 | | | | |
+| 33 | Batch 3: 3E; integrator I3 | 2026-10-03 | compiles and registers (service, status item `balance`, `balance_poll_s`, three Lua functions); the reply scanner is covered by host suite `stores` | code complete; device verification deferred (network): status item shows the balance within one poll, `wallet.token_account()` equals the funded account, `[bal] fetch` (M5), `refresh_balance` with Wi-Fi off returns `nil, "timeout"`. No test file exists for it yet (3E described the test; write `t_bal_net.py` with `NEEDS = "network"`). The device tests run with Wi-Fi off (`VKINFO wifi=0`), so the idle poll never fired and `balance_poll_s 0` was not needed in the test provisioning |
 | 34 | | | | |
 | 35 | | | | |
 | 36 | | | | |

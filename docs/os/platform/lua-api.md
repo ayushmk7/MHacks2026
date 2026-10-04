@@ -8,6 +8,7 @@ Conventions:
 - **Amounts are strings** in display units (`"12.50"`). Lua numbers here are 32-bit integers and floats; never do arithmetic on token amounts.
 - Binary values (keys, signatures, frames, messages) are Lua strings of raw bytes. Addresses returned for display are base58 strings. Use `badge.codec` to convert.
 - "Permission" is what the app's `app.ini` must list. A function called without it raises `permission '<name>' not granted`.
+- Unix times (`expiry`, `issued_at`, `time`, `added`) are Lua integers up to 2^31−1 and floats above that, because Lua integers here are 32-bit signed.
 
 ## `badge.wallet`: identity
 
@@ -15,13 +16,13 @@ No permission needed.
 
 | Function | Returns |
 |---|---|
-| `wallet.pubkey()` | 32-byte string |
-| `wallet.address()` | base58 string |
+| `wallet.pubkey()` | 32-byte string; `""` if the badge has no identity |
+| `wallet.address()` | base58 string; `""` if the badge has no identity |
 | `wallet.key_location()` | `"se050"`, `"software"` or `"none"` |
 | `wallet.provisioned()` | boolean |
 | `wallet.time_ok()` | boolean: the clock has a trusted source |
-| `wallet.tokens()` | array of `{symbol, mint, decimals, cap, max}` (`mint` base58; `cap`, `max` strings) |
-| `wallet.config(name)` | the text value of a config key, or `nil` if unknown. All config values are public |
+| `wallet.tokens()` | array of `{symbol, mint, decimals, cap, max}` (`mint` base58; `cap`, `max` strings in display units; a `cap` or `max` of zero, meaning none, reads `"0.00"` with the token's decimals) |
+| `wallet.config(name)` | the text value of a config key, or `nil` if the key is not registered. A registered key with no value and no default returns `""`. All config values are public |
 | `wallet.balance([symbol])` | last known balance of the default token as a string; `nil` if not fetched yet or if `symbol` is not the default token (feature `balance`) |
 | `wallet.token_account([symbol])` | this badge's token account for the default token, base58; `nil` if not known yet or for another symbol |
 
@@ -31,18 +32,32 @@ Permission `sign`.
 
 | Function | Returns | Notes |
 |---|---|---|
-| `wallet.check_record(record, sig)` | `{ok, reason, display_name, device_pubkey, kind, solana_wallet, solana_ata, expiry, status, issued_at}` | Verifies the issuer signature, status and expiry. For list UIs only: the approval verifies the record again itself. Keys are base58; `kind` is `"merchant"` or `"person"`; `status` `"active"` or `"revoked"` |
-| `wallet.build_transfer{destination=, amount=, blockhash=, [symbol=], [source=], [memo=]}` | message bytes | `destination`, `source`, `blockhash` base58. `source` defaults to `wallet.token_account(symbol)`; `symbol` defaults to the first token. Fails with `bad_arg` or, when the source account is unknown, `unsupported` |
+| `wallet.check_record(record, sig)` | `{ok, reason, display_name, device_pubkey, kind, solana_wallet, solana_ata, expiry, status, issued_at}` | Verifies the issuer signature, status and expiry. For list UIs only: the approval verifies the record again itself. Keys are base58; `kind` is `"merchant"` or `"person"`; `status` `"active"` or `"revoked"`. Details below |
+| `wallet.build_transfer{destination=, amount=, blockhash=, [symbol=], [source=], [memo=]}` | message bytes | `destination`, `source`, `blockhash` base58. `source` defaults to `wallet.token_account(symbol)`; `symbol` defaults to the first token. Fails with `bad_arg` or `unsupported`. Details below |
 | `wallet.begin(domain, bytes, [ctx])` | `true` | Opens the firmware approval for a button domain. The app stops running until it closes |
 | `wallet.begin_solana(msg, [ctx])` | `true` | Same as `wallet.begin("solana", msg, ctx)` |
 | `wallet.begin_bank(payload, [ctx])` | `true` | Same as `wallet.begin("bank", payload, ctx)` (feature `bank`) |
 | `wallet.poll()` | `"pending"` · a 64-byte signature · `nil, reason` | Call from `on_update` after `begin`. A result is returned once. With nothing begun: `nil, "idle"` |
-| `wallet.wire_tx(sig, msg)` | base64 string | The wire transaction (`0x01 ‖ sig ‖ msg`), ready for the RPC method `sendTransaction` |
-| `wallet.requests()` | array of `{req, mac, rssi, name, amount, currency, rail, payee, req_id, age_ms, expires_in_s}` | Payment requests heard recently (feature `requests`). `req` is the raw frame to pass as `ctx.req`; `name` is the sender's *claim*; `req_id` is 16 hex characters |
-| `wallet.challenge(mac, req)` | `true` | Starts a presence check with the badge at `mac` for that request |
-| `wallet.presence(req_id)` | `"none"`, `"pending"`, `"present"`, `"late"`, `"bad_sig"` | For the app's own UI. The approval reads the same result itself |
+| `wallet.wire_tx(sig, msg)` | base64 string | The wire transaction (`0x01 ‖ sig ‖ msg`), ready for the RPC method `sendTransaction`. `nil, "bad_arg"` when `sig` is not 64 bytes or `msg` is empty or longer than 1232 bytes |
+| `wallet.requests()` | array of `{req, mac, rssi, name, amount, currency, rail, payee, req_id, age_ms, expires_in_s}` | Payment requests heard recently (feature `requests`). `req` is the raw frame to pass as `ctx.req`; `name` is the sender's *claim*; `req_id` is 16 hex characters; `mac` is `aa:bb:cc:dd:ee:ff`; `rail` is `"solana"` or `"bank"`; `payee` is base58; `amount` is a string in display units (the raw number if the badge has no token with that currency); `expires_in_s` is 0 when the clock has no source |
+| `wallet.challenge(mac, req)` | `true` | Starts a presence check with the badge at `mac` for that request. `nil, "bad_arg"` for a bad MAC or frame; `nil, "sign_failed"` when the badge has no key. It returns `true` even if the radio refuses the frame; the slot then stays pending |
+| `wallet.presence(req_id)` | `"none"`, `"pending"`, `"present"`, `"late"`, `"bad_sig"` | For the app's own UI. The approval reads the same result itself. An id that is not 16 hex characters gives `"none"` |
 
-`ctx` is a table with any of `record` (registry record bytes), `record_sig` (64 bytes), `req` (REQ frame bytes). Nothing in it is trusted; the firmware verifies each part ([checks](../wallet/checks.md)).
+`ctx` is a table with any of `record` (registry record bytes), `record_sig` (64 bytes), `req` (REQ frame bytes). Nothing in it is trusted; the firmware verifies each part ([checks](../wallet/checks.md)). A field that is not a string raises a Lua error; a `record_sig` that is not exactly 64 bytes gives `nil, "bad_arg"`; an empty `record` or `req` counts as absent.
+
+`wallet.check_record` always returns one table, never `nil, reason`:
+
+- `reason` is `"ok"`, `"unverified"`, `"revoked"` or `"expired"`; revoked is judged before expired, as in the check chain. `ok` is true only for `"ok"`. Expiry is judged only when the clock has a source.
+- Anything that cannot verify gives `{ok=false, reason="unverified"}` with no other fields: a wrong signature length, an empty or oversize record, a record that does not parse, a bad signature, or no `issuer_key`.
+- The record's fields are present whenever the issuer signature verified, also for a revoked or expired record. `solana_wallet` and `solana_ata` are absent when the record has none.
+- It does not check `record_ttl_s` freshness and does not raise the clock floor; only the approval does those.
+
+`wallet.build_transfer`:
+
+- A missing required field, or a field that is not a string (a numeric `amount` included), raises a Lua error.
+- `bad_arg`: unknown `symbol`, bad base58, a bad or zero amount, source equal to destination, a memo that is not UTF-8 or is too long. An empty `memo` means no memo.
+- `unsupported`: no token table, a default source that is not known yet, or no identity.
+- A bad argument that was supplied is reported before a missing default.
 
 `wallet.begin` is in `wallet/lua_wallet.cpp`; `wallet.begin_solana` and `wallet.begin_bank` are in their feature folders, and features may not include each other. All three parse `ctx` the same way by calling one function, declared in `src/vk/wallet/lua_wallet.h`:
 
@@ -52,7 +67,11 @@ int vk::wallet::luaBegin(lua_State *L, const char *domain, int bytesIndex, int c
 
 `bytesIndex` and `ctxIndex` are the Lua stack positions of the bytes and of the optional `ctx` table. It pushes `true` or `nil, reason` and returns the number of Lua results, so `begin_solana` is `return luaBegin(L, "solana", 1, 2);`.
 
-`begin` reasons: `not_provisioned`, `busy`, `too_long`, `unsupported`, `bad_arg`. (A Lua app without the permission never reaches `begin`: the call raises an error. `denied` exists for native apps.) `poll` reasons: `cancelled`, `timeout`, `sign_failed`, and for a blocked (red) approval the cause: `undecodable`, `unverified`, `revoked`, `expired`, `mismatch`, `bad_proof`, `over_cap`, `no_time`.
+Before calling `begin` it extends the callback deadline by 2500 ms once, once more when both `record` and `record_sig` are present, and once more when `req` is present (7500 ms for a full `ctx`; the two verifications it covers take about 0.85 s together with TweetNaCl).
+
+The same header declares three helpers for bindings in feature folders: `int luaRefuse(lua_State *, Reason)` (pushes `nil, reason` and returns 2), `size_t base64Length(size_t)` and `void base64Encode(const uint8_t *, size_t, char *out)`. Base64 is implemented in `lua_wallet.cpp` because upstream's is in `src/identity/`, which features may not include.
+
+`begin` reasons: `not_provisioned`, `busy`, `too_long`, `unsupported`, `bad_arg`. (A Lua app without the permission never reaches `begin`: the call raises an error. `denied` exists for native apps.) `poll` reasons: `cancelled`, `timeout`, `sign_failed`, and for a blocked (red) approval the cause: `undecodable`, `unverified`, `revoked`, `expired`, `mismatch`, `bad_proof`, `over_cap`, `no_time`. A red approval reports its cause however it was closed (CANCEL or the timeout).
 
 ## `badge.wallet`: requests
 
@@ -60,9 +79,11 @@ Permission `request`. Feature `requests`.
 
 | Function | Returns | Notes |
 |---|---|---|
-| `wallet.request_open{amount=, [symbol=], [rail=], [name=], [ttl_s=]}` | `{req_id, frame, expiry}` | The firmware builds, signs and broadcasts the request and answers presence checks for it. `rail` is `"solana"` (default) or `"bank"`; `name` defaults to the badge's `display_name`; `ttl_s` defaults to `req_ttl_s`. Reasons: `not_provisioned`, `no_time`, `busy` (two are already open), `bad_arg`, `sign_failed` |
-| `wallet.request_close(req_id)` | boolean | |
-| `wallet.request_status(req_id)` | `{state, proofs}` or `nil` | `state` is `"open"`, `"closed"` or `"expired"`; `proofs` counts presence checks answered |
+| `wallet.request_open{amount=, [symbol=], [rail=], [name=], [ttl_s=]}` | `{req_id, frame, expiry}` | The firmware builds, signs and broadcasts the request and answers presence checks for it. `rail` is `"solana"` (default) or `"bank"`; `name` defaults to the badge's `display_name`, else upstream's device name, cut to 32 characters with non-ASCII as `?`; `ttl_s` defaults to `req_ttl_s`. Reasons, checked in this order: `not_provisioned`, `no_time`, `busy` (two are already open), `bad_arg` (also: a zero amount, more decimals than the token has, `ttl_s` outside 10 to 600, a symbol not in the token table), `sign_failed`. On the bank rail the currency is `symbol` or `USD`, with 2 decimals |
+| `wallet.request_close(req_id)` | boolean | `false` for an id that is not 16 hex characters |
+| `wallet.request_status(req_id)` | `{state, proofs}` or `nil` | `state` is `"open"`, `"closed"` or `"expired"`; `proofs` counts presence checks answered. The firmware remembers the last four closed requests; an older or malformed id gives `nil` |
+
+`request_open` costs one signature (about 0.2 s with a software key) and does not turn ESP-NOW on: the app calls `badge.espnow.enable(true)` (upstream enables it at boot by default). A request belongs to the app that opened it and closes when that app stops.
 
 The payer's RESULT frame arrives in `on_espnow` (needs `espnow`). It is unauthenticated: confirm the transaction on chain before showing "paid" (`vk.confirm`).
 
@@ -86,13 +107,13 @@ Permission `history`. Feature `history`.
 
 | Function | Returns |
 |---|---|
-| `wallet.history([max])` | array, newest first, of `{time, domain, outcome, reason, amount, symbol, name, address, app, sig, dev}`. `outcome` is `"signed"`, `"cancelled"`, `"timeout"`, `"blocked"`, `"failed"` or `"approved"` (a confirmation that is not a signature); `sig` is base58 or `nil`; `dev` is true if a dev-build override was used. `max` defaults to 20, limit 64 |
+| `wallet.history([max])` | array, newest first, of `{time, domain, outcome, reason, amount, symbol, name, address, app, sig, dev}`. `outcome` is `"signed"`, `"cancelled"`, `"timeout"`, `"blocked"`, `"failed"` or `"approved"` (a confirmation that is not a signature); `sig` is base58 or `nil` (the only field that can be `nil`); `dev` is true if a dev-build override was used. `amount` is always a string in display units (`"0"` for a confirmation); `address` is base58, or `""` when there is no recipient; `time` is 0 when the clock had no source. `max` defaults to 20, limit 64. The call extends the callback deadline by 1500 ms (one file read per entry) |
 
 ## `badge.wallet`: balance
 
 | Function | Permission | Returns |
 |---|---|---|
-| `wallet.refresh_balance()` | `net` | `true`, or `nil, reason`. Fetches now (blocks up to 3 s) |
+| `wallet.refresh_balance()` | `net` | `true`, or `nil, reason`. Fetches now (connecting and reading each get 3 s; the call extends the callback deadline by 7 s). Reasons: `not_provisioned` (no token table, `rpc_url` or key), `timeout` (no route, or the request failed), `unsupported` (the node answered with no usable account, or a status other than 200) |
 
 ## `badge.theme`
 
@@ -112,6 +133,8 @@ No permission needed. Implemented in `src/vk/wallet/lua_wallet.cpp`.
 | `codec.b64enc(bytes)` / `codec.b64dec(text)` | string / bytes or `nil` |
 | `codec.b58enc(bytes)` / `codec.b58dec(text)` | string / bytes or `nil` |
 | `codec.hex(bytes)` / `codec.unhex(text)` | lower-case hex / bytes or `nil` |
+
+`b58enc` and `b58dec` handle at most 64 bytes (a longer input gives `nil`). `b64dec` is strict: standard alphabet, padded, no whitespace, unused bits zero. `unhex` accepts both cases. The empty string encodes and decodes to the empty string in all three.
 
 ## `lib/vk.lua`
 

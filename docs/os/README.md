@@ -105,7 +105,7 @@ Everything marked `[UNVERIFIED]`, with the fallback and the package that settles
 |---|---|---|---|
 | U1 | ~~The toolchain builds upstream~~ settled: core 3.3.12 builds it | — | WP00, done |
 | U2 | ~~Self-registering statics survive linking~~ settled: they do (a service in an unreferenced file ran at boot); no anchor file is needed | — | WP01, done |
-| U3 | Ed25519 speed on the ESP32-S3 (TweetNaCl) | Monocypher backend | WP51 (M2) |
+| U3 | Ed25519 speed on the ESP32-S3 (TweetNaCl): measured in Batch 3, verify 419 ms, sign 211 ms (software key). Verify is above the 400 ms threshold | Monocypher backend: called for | WP51 (M2 measured; the backend switch is still to do) |
 | U12 | Upstream's 7-frame ESP-NOW queue loses frames while a signature blocks the loop | re-challenge; amber when presence is unknown | WP51 (M1) |
 | U4 | SE050 signs a 214-byte message with the limit raised to 242 | software key (H18) | WP50; blocked on this badge, whose SE050 refuses select |
 | U13 | Which SE050 operation latches the I²C clock low (finding F17) | H21 keeps every path to the SE050 closed ([H21](architecture/upstream-hooks.md#h21--se050-quarantine-provisional)); with it the bus stayed healthy after the power cycle (first evidence, recorded under F17) | one deliberate debugging session with `VK_SE050_QUARANTINE 0`, which will need another power cycle |

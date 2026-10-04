@@ -21,7 +21,7 @@
 namespace vk::ui::receipt {
 void page();                                              // fill PAPER
 void header(const char *left, const char *right);         // y 0..19: text at y=7, then a dashed rule at y=19
-void statusRight(char *out, size_t cap);                  // "14:32 . 87% . [2]" plus SETUP / DEV when they apply
+void statusRight(char *out, size_t cap);                  // "14:32 · 87%", or "14:32 · USB" on external power; no time without a clock source
 void title(const char *text, int y);                      // centred, letter-spaced, FreeMonoBold9pt7b
 void rule(int y, int x0 = 10, int x1 = 310);              // dashed: 3 px on, 2 px off
 void perforation(int x, int y0, int y1);                  // dashed vertical line

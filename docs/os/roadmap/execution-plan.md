@@ -222,6 +222,16 @@ As built in Batch 2 (integrator I2, confirmed on the badge):
 
 `test/device/fixtures.py` (3C): `build_transfer_msg`, `make_record`, `make_req`, `case_lua(dict)`.
 
+As built in Batch 3 (integrator I3, confirmed on the badge):
+
+- Boot line: `[vk] registries: services=7 commands=16 lua=29 status=2 domains=4 routes=3 permissions=2 patterns=5 native=0 config=17`.
+- `fixtures.py` also has the helpers the tests share for driving `checktest`: `Keys`, `install_checktest`, `push_case`, `start_case`, `open_case`, `cancel`, `poll_result`, `ct_wait`, `ct_ticks`, `log_ms`, `lines_of`, `set_time`, `badge_pubkey`, `short_address`, `verify`. `vkdev.py` has no delete and no single-file push: a test sends `AUTH` + `DEL <id>` through `cmd`, and `push_case` pushes a temporary folder holding only `case.lua` with `app_id="checktest"`.
+- `common.launch()` returns only when the app is running with no approval open, so a `checktest` case waits `delay_ms` (1500) before it calls `begin_solana`. `begin_solana` with a record and a request blocks the loop for about 0.85 s; the helpers wait for the `CT begin` log line and send nothing meanwhile.
+- One verification is 419 ms and one signature 211 ms (TweetNaCl, software key). A `begin` verifies each supplied signature once.
+- The receipt header's right side (`receipt::statusRight`) is the time and the battery only, and `USB` on external power; confirmed on the badge as `03:00 · USB` and, with no clock source, `USB` (`shots/header_clock_usb.png`, `header_noclock_usb.png`). No shipped screen calls it yet (the launcher of WP37 is the first). `t_cfg.py`'s SETUP check looks at upstream's bar (status item `setup`, hook H14), which is unchanged; it will need rewriting when the receipt launcher replaces upstream's.
+- The device tests leave about 55 history records per full run; a history append then costs about 145 ms (stores.md).
+- `checktest`, `reqtest` and `hello` stay installed on the badge after the tests.
+
 ### 5.3 Who registers what
 
 | Kind | Name → owner file |
