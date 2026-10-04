@@ -54,7 +54,7 @@ Use this instead of guessing an upstream function name. If something you need is
 | `src/ui/theme.h` | `theme::BG`, `HEADER`, `PANEL`, `BORDER`, `WHITE`, `TEXT`, `MUTED`, `GREEN`, `PURPLE`, `WARN`, `ERR`, `rgb565(r,g,b)`. **Edited in the fork**: the names stay and the values are Receipt-light ([table](upstream-hooks.md#srcuithemeh-the-values)). BadgeOS code does not use them; it uses `vk::ui::theme::color()` |
 | `src/badge_log.h` | `badge_log::tagf(tag, fmt, ...)`, `println`, `printf` |
 | `tools/badge-push.py` | Pushes an app folder over HTTP or BLE. Its texts say BadgeOS in the fork |
-| `apps/` | Upstream shipped six sample apps (`dice`, `gallery`, `hello`, `radar`, `vumeter`, `whosnear`). **Deleted in the fork**; `hello_native` and the dev test apps take their place in tests |
+| `apps/` | Upstream shipped six sample apps (`dice`, `gallery`, `hello`, `radar`, `vumeter`, `whosnear`). **Deleted in the fork**; the dev-only fixtures (`nativetest` and the hidden Lua test apps) take their place in tests |
 
 ## Lua app model
 

@@ -1,6 +1,8 @@
 -- Duel: everything a person might want to change. Edit and push again.
 -- Both badges should run the same values; the inviter's stake is the one that counts.
 return {
+  header = "BADGEOS",         -- the left header text of every BadgeOS screen
+
   -- Stakes offered on the title screen (at most 6 fit). Strings in display units, written with
   -- the token's decimals; never numbers.
   stakes = {"1.00", "5.00", "10.00", "25.00"},

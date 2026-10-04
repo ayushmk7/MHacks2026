@@ -7,28 +7,31 @@ In order:
      "GAME score 2", about a second apart); the playfield is saved as shots/game_play_<theme>.png.
   3. Nobody moves the player, and a share of the blocks fall straight at it (config
      spawn.aim_percent), so the run ends ("GAME over <n>") and the title returns ("GAME title").
-  4. DOWN, SELECT on the first shop item starts a purchase ("GAME shop <id> <price>"). The shop's
-     address in config.lua is a placeholder and the badge has no network, so the purchase ends in
-     a failure the screen shows ("GAME buy failed <reason>", saved as
+  4. With config key shop_address empty the app logs "GAME shop closed" and the title is Play only.
+     With shop_address set (to the test issuer key: well formed, but no shop's record), restarted,
+     it logs "GAME shop open" and lists the items. DOWN, SELECT on the first shop item starts a
+     purchase ("GAME shop <id> <price>"); the badge has no network, so the purchase ends in a
+     failure the screen shows ("GAME buy failed <reason>", saved as
      shots/game_buy_failed_<theme>.png). No approval opens and the app keeps running.
   5. CANCEL goes back to the title; CANCEL again exits: VKSTATE app is "" and screen is "launcher".
   6. No Lua error was logged.
 
 Needs one badge with a dev build on which the first shop item was never bought (an owned item
 cannot be bought again). No hands. No network is needed; with a network the purchase still fails
-(the placeholder is not an address). Leaves the badge provisioned with the test
-values, game installed, and the launcher on the screen.
+(the issuer key has no shop record). Leaves the badge provisioned with the test values,
+shop_address empty, game installed, and the launcher on the screen.
 
 The evil-game checks are not in this file: they need the registry (a signed record for the shop)
-over a network, a funded token account, and config.lua's placeholders replaced. For the integrator
-or a later test, with apps/evilgame assembled as scripts/push-apps.sh does (apps/game/*.lua except
-config.lua, plus evilgame's app.ini and config.lua, plus vk.lua):
+over a network, a funded token account, and shop_address set to that shop. For the integrator
+or a later test, with apps/evilgame assembled as scripts/push-apps.sh does (its app.ini says
+include=game: apps/game's files except config.lua, plus evilgame's app.ini and config.lua, plus
+vk.lua):
   - evil = "amount": start evilgame, DOWN, SELECT on "Buy sword". The game's own screen says
     "Buy sword: 5.00 HACK". The firmware approval that opens (VKSTATE modal) must show the true
     amount, 500.00 HACK, with the amber headline VERIFIED - NOT PRESENT and the shop's verified
     name, and must ask for a hold because 500.00 is over the cap (100.00 under test provisioning).
     CANCEL there gives "GAME buy failed cancelled" and the item stays locked.
-  - evil = "recipient" (with evil_recipient a token account that is not the shop's): the approval
+  - evil = "recipient" (the transfer goes to the badge's own address, not the shop's): the approval
     must be red, headline WRONG RECIPIENT, and cannot be signed: an injected hold on SELECT does
     nothing, and closing it gives "GAME buy failed mismatch".
   - In both cases wallet.history (the History app) records the attempt with app "evilgame".
@@ -85,8 +88,10 @@ def running(badge, what):
 
 
 def run(badge):
-    provision_test(badge)
+    provision_values = provision_test(badge)
     to_launcher(badge)
+    # The shop is closed until step 4 opens it.
+    assert badge.cmd("VKSET shop_address")[-1] == "OK", "VKSET shop_address (empty)"
 
     with open(VK_LUA, "rb") as handle:
         library = handle.read()
@@ -97,12 +102,14 @@ def run(badge):
     # 1. The title.
     badge.clear_log()
     launch(badge, APP, timeout=20)
+    badge.wait_log(r"\[app\] GAME shop closed", timeout=10)
     badge.wait_log(r"\[app\] GAME title", timeout=10)
     os.makedirs(SHOTS, exist_ok=True)
     theme = theme_name(badge)
     time.sleep(0.3)
     title = badge.shot(os.path.join(SHOTS, "game_title_%s.png" % theme))
-    assert colours(title) >= 3, "the title screen is blank (%d colours)" % colours(title)
+    # With the shop closed the title is one selected row (Play): ink and paper only.
+    assert colours(title) >= 2, "the title screen is blank (%d colours)" % colours(title)
 
     # 2. Play: the score counts seconds.
     no_lua_error(badge)
@@ -130,16 +137,27 @@ def run(badge):
     badge.wait_log(r"\[app\] GAME title", timeout=10)
     running(badge, "after game over")
 
-    # 4. The shop: a purchase that cannot succeed fails where the player can see it.
-    time.sleep(0.3)
-    back_on_title = badge.shot()
+    # 4. The shop. Without a shop address the title is Play only (step 1 saw "GAME shop closed").
+    #    With one (config key shop_address; any well-formed address: there is no network and no
+    #    registry record), the Buy rows appear and a purchase that cannot succeed fails where the
+    #    player can see it.
     no_lua_error(badge)
+    badge.stop()
+    badge.wait_state(on_launcher, timeout=5)
+    assert badge.cmd("VKSET shop_address %s" % provision_values["issuer_key"])[-1] == "OK", "VKSET shop_address"
+    badge.clear_log()
+    launch(badge, APP, timeout=20)
+    badge.wait_log(r"\[app\] GAME shop open", timeout=10)
+    badge.wait_log(r"\[app\] GAME title", timeout=10)
+    time.sleep(0.3)
+    back_on_title = badge.shot(os.path.join(SHOTS, "game_shop_%s.png" % theme))
+    assert back_on_title != title, "the title did not change when the shop opened"
     badge.clear_log()
     badge.btn("down")
     badge.btn("a")
     badge.wait_log(r"\[app\] GAME shop \S+ \S+", timeout=5)
     line = badge.wait_log(r"\[app\] GAME buy (?:failed \S.*|done \S+)", timeout=BUY_TIMEOUT_S)
-    assert "buy failed" in line, "a purchase from a placeholder shop did not fail: %s" % line
+    assert "buy failed" in line, "a purchase with no network and no shop record did not fail: %s" % line
     time.sleep(0.3)
     running(badge, "after the failed purchase")
     failure = badge.shot(os.path.join(SHOTS, "game_buy_failed_%s.png" % theme))
@@ -157,3 +175,4 @@ def run(badge):
     # 6.
     no_lua_error(badge)
     to_launcher(badge)
+    assert badge.cmd("VKSET shop_address")[-1] == "OK", "VKSET shop_address (empty) did not close the shop"

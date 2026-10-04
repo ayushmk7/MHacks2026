@@ -45,6 +45,7 @@ Line numbers are for upstream commit `812b8c7`. Upstream's `solana-os.ino` is `o
 | H21 | `src/hal/se050.cpp` `test()`, `src/hal/se050_t1.cpp` `begin()`, `src/hal/badge_i2c.cpp` `scan()` | provisional: nothing addresses the SE050 on the I²C bus; the badge behaves as if it had no secure element (button fix, finding F17) |
 | H23 | `src/config.h`, `src/net/espnow_mgr.cpp`, `src/lua_sdk/lib_gfx.cpp`, `src/net/push_server.cpp`, `src/net/push_protocol.cpp` | BadgeOS names: OS name, hostname, hotspot password, broker URL, ESP-NOW magic; upstream's `SOLANA_*` Lua colour constants removed; the LED pulse when a push lands uses the theme's LED colour, not upstream's brand colours |
 | H24 | `os.ino` `loop()` | the canvas is sent to the panel through `vk::flush()`, which counts the transfers |
+| H25 | `src/apps/app_store.cpp` `refresh()` | the launcher's app catalogue is rebuilt after a rescan (two sites: the include and the call) |
 
 ## The edits
 
@@ -416,6 +417,19 @@ In `loop()` in `os.ino`, the one statement that sends the canvas to the panel:
 `vk::flush()` (`src/vk/vk.cpp`) calls `display::flush()` and, when it returns true (the canvas had changed and was transferred), adds one to a counter and the time taken to a sum; `vk::flushStats()` returns both. Behaviour is unchanged in both profiles. The counter is what the dev commands report: `VKSTATE` has `flushes` (transfers since boot) and `VKPERF` has the transfers of the last second ([testing](../testing/testing.md#dev-hooks)).
 
 Why it exists: a screenshot (`VKSHOT`) reads the canvas, not the glass, so a canvas that is drawn but never sent, or sent on every pass (34 ms each, which caps the loop at about 20 passes a second), passes every screenshot test. The device tests assert that the count grows when the picture changes, and the responsiveness figures in [testing](../testing/testing.md#measurements) are read from it. The boot screen and the approval's "Signing..." frame call `display::flush()` directly and are not counted.
+
+### H25 — launcher catalogue after a rescan
+
+In `src/apps/app_store.cpp`, an include and the last line of `refresh()`:
+
+```cpp
+#include "../vk/host/catalog.h"  // VK: H25
+...
+  badge_log::tagf("fs", "%u app(s) installed", (unsigned)sCount);
+  vk::host::catalog::invalidate();  // VK: H25
+```
+
+`vk::host::catalog` (`src/vk/host/catalog.cpp`) is the list the launcher shows: every app with its folder (`category`), hidden apps left out ([app host](../platform/app-host.md#manifest)). It reads each app's `app.ini` once and keeps the result; this call marks it stale, and the next read rebuilds it. Every path that installs or removes an app (serial, BLE and Wi-Fi push, the store client, `removeApp`) ends in `refresh()`, so a re-pushed `app.ini` that only moves an app to another folder is seen at once, though the app count did not change. Behaviour of `app_store` is unchanged.
 
 ## Retired hooks
 

@@ -68,6 +68,14 @@ extern const Screen kInstalling;   // dialogs.cpp
 void appDeleteOpen(const String &id, const String &name);   // remembers the app, then push(&kAppDelete)
 void appErrorSet(const String &message);                    // the text kAppError shows
 
+// ---- added for the launcher's folders (2026-10-04); nothing above changes ----
+// What VKSTATE reports about the launcher (launcher.cpp): the open folder ("" at the top level),
+// the cursor, and each cell's key: an app's id, or "folder:<category>" for a folder.
+const char *launcherFolder();
+int launcherCursor();
+int launcherRowCount();
+String launcherRowKey(int index);
+
 }  // namespace vk::shell
 ```
 
@@ -303,18 +311,21 @@ Buttons: none. The screen cannot be captured over serial (no command is read dur
 
 ## Launcher
 
-Screen `launcher`: the simulation's MENU screen. It lists every installed app, Lua and native, through `app_store::count()` and `app_store::at(i, info)` (native apps follow the Lua apps, hook H11).
+Screen `launcher`: the simulation's MENU screen. It lists the apps of `vk::host::catalog` (`src/vk/host/catalog.h`): every installed app, Lua and native (native apps follow the Lua apps, hook H11), each with the folder its manifest names, apps with `hidden=1` left out ([app host](../platform/app-host.md#launcher-and-install-keys)). The catalog reads every `app.ini` once and again after each rescan of `/apps` (hook H25).
+
+**Folders.** The top level shows every app with no `category`, in the catalog's order, then one cell per category, in alphabetical order. SELECT on a folder cell opens the folder: the same grid, holding that category's apps. CANCEL in a folder returns to the top level with the cursor on the folder's cell; CANCEL at the top level opens Settings. A folder of exactly one app is not opened: SELECT on its cell starts the app. No category is named in the launcher's code: a folder exists because an app's manifest names it, and goes when its last app does (an open folder whose last app is deleted closes). The open folder, like the cursor, survives an app run: an app started from a folder returns to it.
 
 | Element | Call and position |
 |---|---|
-| frame | `receipt::page()`, `receipt::header("BADGEOS", statusRight)`, `receipt::title("MENU", 26)` |
-| grid | two columns: left `x0 = 10, x1 = 150`, right `x0 = 170, x1 = 310`; six rows at y = 48, 66, 84, 102, 120, 138. Cell (row r, column c) shows app index `(scrollRow + r) * 2 + c` |
-| cell | `receipt::row(x0, x1, y, "NN NAME", value, selected)`: `NN` is the index + 1 with two digits, `NAME` is `info.name` in upper case, cut to 16 characters so the value always fits the 23-column cell. Value: `◂` on the selected cell; for the app whose id is `inbox`, the waiting-notification count when it is above 0, and `<count> ◂` when that cell is the selected one (the count must not disappear under the cursor); otherwise empty |
-| scroll mark | when there are more than 12 apps: `n/N` (selected index + 1 / count) right-aligned at (310, 28), `FAINT` |
+| frame | `receipt::page()`, `receipt::header("BADGEOS", statusRight)`, `receipt::title("MENU", 26)`; in a folder the title is the folder's name in upper case (`GAMES`) |
+| grid | two columns: left `x0 = 10, x1 = 150`, right `x0 = 170, x1 = 310`; six rows at y = 48, 66, 84, 102, 120, 138. Cell (row r, column c) shows cell index `(scrollRow + r) * 2 + c` of the current level |
+| app cell | `receipt::row(x0, x1, y, "NN NAME", value, selected)`: `NN` is the index + 1 with two digits, `NAME` is the app's name in upper case, cut to 16 characters so the value always fits the 23-column cell. Value: `◂` on the selected cell; for an app whose manifest says `count=notes` (the Inbox), the waiting-notification count when it is above 0, and `<count> ◂` when that cell is the selected one (the count must not disappear under the cursor); otherwise empty |
+| folder cell | `"NN GAMES"`: the category in upper case; value: the number of apps in it (`3`, `3 ◂` when selected) |
+| scroll mark | when there are more than 12 cells: `n/N` (selected index + 1 / count) right-aligned at (310, 28), `FAINT` |
 | rule | `receipt::rule(156)` |
 | balance | `receipt::row(10, 310, 166, "BALANCE", "<amount> <symbol>")`. Unprovisioned (`!vk::config::provisioned()`): `receipt::row(10, 310, 166, "SETUP NEEDED", "provision over USB", false, STAMP_WARN)` |
 | barcode | `receipt::barcodeText(10, 184, 300, 22, id)`: a Code 128 barcode a scanner app reads back as the badge ID (the first 8 characters of the address), dark on a light patch in both themes, 2 px per module. If it does not fit, the decorative `receipt::barcode(…, vk::wallet::publicKey(), 32)`. Not drawn when the badge has no identity |
-| footer | `receipt::footer("SELECT open", "CANCEL settings")` |
+| footer | `receipt::footer("SELECT open", "CANCEL settings")`; in a folder `"CANCEL back"` |
 
 Balance text: the default token is the first entry of `vk::config::tokens()`; `vk::wallet::tokenInfoLookup(mint, info)` gives its balance; the amount is formatted with `sol_format_amount` and followed by the symbol. `--` and the symbol when the pointer is null (the balance feature is absent) or the balance is not known yet.
 
@@ -324,18 +335,20 @@ Buttons:
 
 | Button | Action |
 |---|---|
-| UP / DOWN | one row up or down (index ∓ 2), with key repeat; wraps between the first and last row, clamped to the last app |
+| UP / DOWN | one row up or down (index ∓ 2), with key repeat; wraps between the first and last row, clamped to the last cell |
 | LEFT | to the left column |
-| RIGHT, released within 600 ms | to the right column, when an app is there. A release between 600 and 800 ms does nothing |
-| RIGHT, held 800 ms | **delete**: if the selected app is a Lua app (`!vk::host::native::exists(info.id)`): `appDeleteOpen(info.id, info.name.length() ? info.name : info.id)`. A native app cannot be deleted; nothing happens. The release that follows is ignored |
-| SELECT | `::leds::stopAnimation(); runtime::requestLaunch(info.id);` |
-| CANCEL | `push(&kSettings)` |
+| RIGHT, released within 600 ms | to the right column, when a cell is there. A release between 600 and 800 ms does nothing |
+| RIGHT, held 800 ms | **delete**: if the selected cell is a Lua app (`!vk::host::native::exists(id)`): `appDeleteOpen(id, name)`. A native app or a folder cannot be deleted; nothing happens. The release that follows is ignored |
+| SELECT | an app: `::leds::stopAnimation(); runtime::requestLaunch(id);`. A folder of two or more apps: open it. A folder of one app: launch that app |
+| CANCEL | in a folder: back to the top level. At the top level: `push(&kSettings)` |
 
 RIGHT is read from `buttons::pressed`, `buttons::down` and `buttons::released` with the press time kept by the launcher. Upstream's launcher was a single column with RIGHT = delete; the grid needs RIGHT for the column, so delete moved to the hold.
 
-Refresh: on input and on a repaint request; `refresh_ms` is 0. In `update()` the launcher also compares `app_store::count()` and `vk::host::notify::count()` with the values it last drew and repaints when either changed (an install or delete arriving over the network; a new notification). The battery, the clock and the theme are covered by the framework's 500 ms check; the balance by `requestShellRepaint()`.
+Refresh: on input and on a repaint request; `refresh_ms` is 0. In `update()` the launcher also compares `vk::host::catalog::generation()` (which changes after every rescan of `/apps`: an install, a delete, a new `app.ini`) and `vk::host::notify::count()` with what it last drew, and rebuilds and repaints when either changed. The battery, the clock and the theme are covered by the framework's 500 ms check; the balance by `requestShellRepaint()`.
 
-Differences from upstream's launcher, on purpose: no `Settings` row (CANCEL opens settings), no version text beside an app (the delete confirmation shows it), the cursor survives an app run.
+`VKSTATE` (dev profile) reports the launcher in three fields, also while an app runs: `folder` (the open folder, `""` at the top level), `cursor` (the selected cell's index) and `menu` (the cells of the current level in grid order: an app's id, or `folder:<category>`). `screen` stays `launcher` in a folder. Device tests move the cursor with `common.launcher_cursor_to(badge, key)` and open a folder with `common.open_folder(badge, name)`.
+
+Differences from upstream's launcher, on purpose: no `Settings` row (CANCEL opens settings), no version text beside an app (the delete confirmation shows it), the cursor survives an app run, apps are grouped in folders.
 
 ## Delete confirmation
 
@@ -642,6 +655,7 @@ A row that only acts (no screen) is `VK_SETTINGS_ACTION(ident, "id", order, "Lab
 No host suite: the shell is drawing and upstream calls. Device tests ([testing](../testing/testing.md#acceptance-tests)) navigate by `VKSTATE.screen`, never by comparing screenshots, and save one screenshot per screen and theme as `os/test/device/shots/shell_<screen>_<theme>.png`:
 
 - `t_shell.py`: boot lands on `launcher` with no app, with the backlight on and the canvas sent to the panel (`VKSTATE` `backlight` and `flushes`: a screenshot reads the canvas and would pass on a black screen); grid navigation; settings and back; an app that exits, an app that errors (`app_error`), the delete confirmation by holding RIGHT. Its two fixture apps are written to a temporary folder at run time.
+- `t_folders.py`: the launcher's folders, checked against the manifests themselves (`app.ini` of each Lua app the badge has, the last `BADGE_APP` argument of each native one): the top level, each folder's apps, CANCEL back onto the folder's cell, a one-app folder starting its app, an app returning to its folder, `badge.system.launcher_apps()`, and a fixture's `app.ini` pushed with a category, without one and hidden (the launcher follows each time, though the app count does not change). Screenshots `folders_top_<theme>.png`, `folders_<category>_<theme>.png`.
 - `t_pages1.py`, `t_pages2.py`: every settings page reached by name, drawn, and left with CANCEL; Theme changes config key `theme`; Wallet and Inbox launch their apps. `identity_new` is only ever left with CANCEL.
 - `t_about.py`: the About page in both themes. The QR code in each screenshot is read back on the laptop (`common.qr_decode`: OpenCV's detector on the screenshot enlarged three times) and must be exactly `repo_url`; its patch is the light paper in both themes; a module is at least 3 px; with the key empty the page holds no code, and the code returns when the key is set again.
 - Not scriptable on one badge: the boot screen (a person), the offer and installing screens (a broker), the Wi-Fi actions (they would drop the test network).

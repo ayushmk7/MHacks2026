@@ -223,4 +223,11 @@ VK_LUA_FUNCTION(build_transfer, "wallet", "build_transfer", "sign", l_build_tran
 VK_LUA_FUNCTION(wire_tx, "wallet", "wire_tx", "sign", l_wire_tx);
 VK_LUA_FUNCTION(check_record, "wallet", "check_record", "sign", l_check_record);
 
+// Who an app's shop is paid: a deployment value, so apps read it (wallet.config("shop_address"))
+// instead of carrying an address. The Game sells only while it is set (apps.md, "Game"). A string
+// rather than KEY32 so that `VKSET shop_address` with no value closes the shop again; the address
+// itself is checked where it is used (vk.pay refuses one that is not 32 bytes of base58).
+VK_CONFIG_KEY(shop_address, "shop_address", vk::config::Type::STR, "", vk::config::F_NONE, 0, 44,
+              "the shop's address (base58) that apps with a shop pay; empty: no shop");
+
 }  // namespace

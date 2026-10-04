@@ -168,7 +168,54 @@ static void test_bad_min_api() {
   CHECK(extra.min_api == 0xFFFFFFFFu);
 }
 
+// The launcher keys: category (a folder name, lower case) and hidden.
+static void test_launcher_keys() {
+  using vk::host::manifest::Launcher;
+  using vk::host::manifest::parseLauncher;
+  Launcher l;
+  l.category = "stale";
+  l.hidden = true;
+  CHECK(parseLauncher(String("name=Dice\npermissions=\n"), l));
+  CHECK(l.category == "");
+  CHECK(!l.hidden);
+
+  CHECK(parseLauncher(String("category = Games\r\nhidden=1\n"), l));
+  CHECK(l.category == "games");
+  CHECK(l.hidden);
+  CHECK(parseLauncher(String("hidden=true\n"), l));
+  CHECK(l.hidden);
+  CHECK(parseLauncher(String("hidden=0\n"), l));
+  CHECK(!l.hidden);
+  CHECK(parseLauncher(String("hidden=yes\n"), l));   // only 1 and true count
+  CHECK(!l.hidden);
+
+  // A name that is not [a-z0-9_-] or is longer than 16 characters is no folder at all.
+  CHECK(parseLauncher(String("category=my games\n"), l));
+  CHECK(l.category == "");
+  CHECK(parseLauncher(String("category=../x\n"), l));
+  CHECK(l.category == "");
+  CHECK(parseLauncher(String("category=abcdefghijklmnopq\n"), l));
+  CHECK(l.category == "");
+  CHECK(parseLauncher(String("category=dev_tools-2\n"), l));
+  CHECK(l.category == "dev_tools-2");
+  CHECK(!l.countNotes);
+
+  // count: only "notes" is known.
+  CHECK(parseLauncher(String("count=notes\n"), l));
+  CHECK(l.countNotes);
+  CHECK(parseLauncher(String("count=apples\n"), l));
+  CHECK(!l.countNotes);
+
+  // The keys push-apps.sh reads are not the firmware's business, and do not disturb the others.
+  CHECK(parseLauncher(String("profile=dev\ninclude=game\ncategory=tests\n"), l));
+  CHECK(l.category == "tests");
+  Extra extra;
+  CHECK(parsed("category=games\nhidden=1\npermissions=sign\n", extra));
+  CHECK(extra.permissions == "sign");
+}
+
 int main() {
+  test_launcher_keys();
   test_both_keys();
   test_defaults();
   test_spaces();

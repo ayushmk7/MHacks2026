@@ -277,7 +277,19 @@ void cmdState(const String &, const vk::serial::Reply &reply) {
   out += String((unsigned)display::brightness());
   out += ",\"flushes\":";
   out += String((unsigned)vk::flushStats().transfers);   // canvas transfers since boot (hook H24)
-  out += '}';
+  // The launcher (shell.md, "Launcher"): its open folder, its cursor and its cells, in grid order.
+  // Kept while an app runs: they are what the launcher shows when it comes back.
+  out += ",\"folder\":";
+  jsonString(out, vk::shell::launcherFolder());
+  out += ",\"cursor\":";
+  out += String(vk::shell::launcherCursor());
+  out += ",\"menu\":[";
+  const int rows = vk::shell::launcherRowCount();
+  for (int i = 0; i < rows; ++i) {
+    if (i) out += ',';
+    jsonString(out, vk::shell::launcherRowKey(i).c_str());
+  }
+  out += "]}";
   reply(out);
 }
 

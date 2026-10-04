@@ -147,4 +147,4 @@ class Inbox final : public badge::App {
 
 }  // namespace
 
-BADGE_APP(Inbox, "inbox", "Inbox", "1.0.0", "");
+BADGE_APP(Inbox, "inbox", "Inbox", "1.0.0", "", "count=notes");

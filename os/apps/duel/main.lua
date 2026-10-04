@@ -593,7 +593,7 @@ end
 
 local function screen(title, hint, back)
   ui.page()
-  ui.header("DUEL")
+  ui.header(cfg.header)
   ui.perforation(ui.SPLIT_X, ui.CONTENT_Y, 212)
   ui.title(title, TITLE_Y, ui.BODY_CX)
 

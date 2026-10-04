@@ -38,6 +38,7 @@ and H20 are retired, and no line in the source carries them.
 | H21 | `src/hal/se050.cpp` `test()`, `src/hal/se050_t1.cpp` `begin()`, `src/hal/badge_i2c.cpp` `scan()` | provisional: nothing addresses the SE050 on the I²C bus; the badge behaves as if it had no secure element (button fix, finding F17) |
 | H23 | `src/config.h`, `src/net/espnow_mgr.cpp`, `src/lua_sdk/lib_gfx.cpp`, `src/net/push_server.cpp`, `src/net/push_protocol.cpp` | BadgeOS names: OS name, hostname, hotspot password, broker URL, ESP-NOW magic; upstream's `SOLANA_*` Lua colour constants removed; the LED pulse when a push lands uses the theme's LED colour, not upstream's brand colours |
 | H24 | `os.ino` `loop()` | the canvas is sent to the panel through `vk::flush()`, which counts the transfers |
+| H25 | `src/apps/app_store.cpp` `refresh()` | the launcher's app catalogue is rebuilt after a rescan (two sites: the include and the call) |
 
 ## Replaced upstream files
 

@@ -169,7 +169,7 @@ def run(badge):
         badge.btn("down", "tap")
     settings_empty = take(badge, "shell_settings_inbox0_%s.png" % theme)
 
-    reply = badge.cmd("VKNOTE Pages test|from t_pages2|hello_native")[-1]
+    reply = badge.cmd("VKNOTE Pages test|from t_pages2|nativetest")[-1]
     assert reply == "OK", "VKNOTE -> %s" % reply
     badge.wait_state(lambda s: s["notes"] == 1, timeout=5)
     time.sleep(1.3)  # the Settings list repaints every 1000 ms

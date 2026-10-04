@@ -2,20 +2,23 @@
 # Installs the Lua apps of apps/ on a badge (docs/os/guides/build-flash-provision.md, "Installing apps").
 #
 #   scripts/push-apps.sh --port /dev/cu.usbserial-10 dev                  every app, over USB serial
-#   scripts/push-apps.sh --host 192.168.4.31 --token 123456 release       over Wi-Fi, without the dev-only test apps
+#   scripts/push-apps.sh --host 192.168.4.31 --token 123456 release       over Wi-Fi, without the dev-only apps
+#
+# Every folder under apps/ that holds an app.ini is an app; this script names none of them. What
+# it does with each one comes from that app's own app.ini (docs/os/platform/app-host.md, "Manifest"):
+#
+#   profile=dev      installed by `dev` only; `release` leaves the app out (test fixtures, demos)
+#   include=<app>    the files of apps/<app>/ are pushed with this app too, except its config.lua
+#                    and app.ini, and except any file this app has itself (the evil game is the
+#                    game's code with its own config.lua)
 #
 # Upstream's push writes only under /apps/<id>/, so the shared library cannot live in one place on
-# the badge. For each folder under apps/ this script makes a temporary copy, adds lib/vk.lua to it
-# as vk.lua, and pushes the copy under the folder's name. The copy of `evilgame` also gets
-# apps/game/*.lua except config.lua: the evil game is the game with another config.
+# the badge: each app is pushed from a temporary copy that also holds lib/vk.lua as vk.lua.
 #
-#   dev       every app
-#   release   every app except the dev-only test apps: signtest checktest vktest reqtest
-#             (evilgame is included: the demo needs it)
-#
-#   --port <port>    push over USB serial with scripts/vkdev.py, run by the repository's venv
-#                    (<repo>/.venv/bin/python, which has pyserial). A dev build gives vkdev.py its
-#                    pairing code itself; for a release build add --token <code>.
+#   --port <port>    push over USB serial with scripts/push_serial.py, in one session that holds the
+#                    port exclusively (see that file for why). A dev build gives it its pairing code;
+#                    for a release build add --token <code>. The Python is the repository's venv
+#                    (<repo>/.venv/bin/python, which has pyserial), or $VK_PYTHON.
 #   --host <ip>      push over Wi-Fi with upstream's tools/badge-push.py; needs --token <code>
 #   --token <code>   the six-digit pairing code from Settings -> Push on the badge
 #                    (with --host it may also come from the environment variable BADGE_TOKEN)
@@ -27,8 +30,7 @@ set -u
 
 FW="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO="$(cd "$FW/.." && pwd)"
-PY="$REPO/.venv/bin/python"
-DEV_ONLY="signtest checktest vktest reqtest"
+PY="${VK_PYTHON:-$REPO/.venv/bin/python}"
 
 usage() {
   cat >&2 <<'EOF'
@@ -83,6 +85,7 @@ if [ "$dry_run" -eq 0 ]; then
     if [ ! -x "$PY" ]; then
       echo "push-apps.sh: $PY not found; from the repository root run:" >&2
       echo "  python3 -m venv .venv && .venv/bin/pip install pyserial esptool" >&2
+      echo "or point VK_PYTHON at a Python that has pyserial" >&2
       exit 1
     fi
   else
@@ -98,77 +101,91 @@ fi
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/push-apps.XXXXXX")" || exit 1
 trap 'rm -rf "$TMP"' EXIT
 
-is_dev_only() {
-  case " $DEV_ONLY " in
-    *" $1 "*) return 0 ;;
-  esac
-  return 1
+# manifest_key <id> <key>: the value of `key` in apps/<id>/app.ini (the last line wins, as on the
+# badge), spaces around it dropped; empty when the key is absent.
+manifest_key() {
+  sed -n -E "s/^[[:space:]]*$2[[:space:]]*=[[:space:]]*(.*[^[:space:]])?[[:space:]]*\$/\\1/p" \
+    "$FW/apps/$1/app.ini" | tr -d '\r' | tail -n 1
 }
 
 # prepare <id>: fills $TMP/<id> with what is pushed for that app. Returns 1 if it cannot.
 prepare() {
-  local id="$1" work="$TMP/$1" f
+  local id="$1" work="$TMP/$1" include f name
   mkdir -p "$work" || return 1
   cp -R "$FW/apps/$id/." "$work/" || return 1
-  if [ "$id" = "evilgame" ]; then
-    if [ ! -d "$FW/apps/game" ]; then
-      echo "push-apps.sh: evilgame needs apps/game, which is missing" >&2
+  include="$(manifest_key "$id" include)"
+  if [ -n "$include" ]; then
+    if [ ! -f "$FW/apps/$include/app.ini" ]; then
+      echo "push-apps.sh: $id includes apps/$include, which is not an app" >&2
       return 1
     fi
-    for f in "$FW"/apps/game/*.lua; do
+    for f in "$FW/apps/$include"/*; do
       [ -f "$f" ] || continue
-      [ "$(basename "$f")" = "config.lua" ] && continue
+      name="$(basename "$f")"
+      case "$name" in config.lua|app.ini) continue ;; esac
+      [ -e "$work/$name" ] && continue          # the app's own file wins
       cp "$f" "$work/" || return 1
     done
   fi
   cp "$FW/lib/vk.lua" "$work/vk.lua" || return 1
 }
 
-# push <id>: sends $TMP/<id> to the badge as app <id>.
-push() {
-  local id="$1" work="$TMP/$1"
-  if [ "$dry_run" -eq 1 ]; then
-    (cd "$work" && find . -type f ! -name '.*' | sed 's|^\./|    |' | sort)
-    return 0
-  fi
-  if [ -n "$port" ]; then
-    if [ "$token_given" -eq 1 ]; then
-      "$PY" "$FW/scripts/vkdev.py" --port "$port" --code "$token" push "$work" --id "$id"
-    else
-      "$PY" "$FW/scripts/vkdev.py" --port "$port" push "$work" --id "$id"
-    fi
-  else
-    # --id: the tool would otherwise take the id from the folder it is given.
-    "$PY" "$FW/tools/badge-push.py" --host "$host" --token "$token" push "$work" --id "$id"
-  fi
-}
-
 pushed=()
 skipped=()
 failed=()
+serial_args=()
 
 for dir in "$FW"/apps/*/; do
-  [ -d "$dir" ] || continue
+  [ -f "$dir/app.ini" ] || continue
   id="$(basename "$dir")"
-  if [ "$profile" = "release" ] && is_dev_only "$id"; then
+  if [ "$profile" = "release" ] && [ "$(manifest_key "$id" profile)" = "dev" ]; then
     skipped+=("$id")
     continue
   fi
-  echo "== $id"
-  if prepare "$id" && push "$id"; then
-    pushed+=("$id")
-  else
-    echo "push-apps.sh: $id failed" >&2
+  if ! prepare "$id"; then
+    echo "push-apps.sh: $id could not be prepared" >&2
     failed+=("$id")
+    continue
   fi
-  rm -rf "${TMP:?}/$id"
+  if [ "$dry_run" -eq 1 ]; then
+    echo "== $id"
+    (cd "$TMP/$id" && find . -type f ! -name '.*' | sed 's|^\./|    |' | sort)
+    pushed+=("$id")
+  elif [ -n "$port" ]; then
+    serial_args+=("$id=$TMP/$id")                # all of them in one session, below
+  else
+    echo "== $id"
+    # --id: the tool would otherwise take the id from the folder it is given.
+    if "$PY" "$FW/tools/badge-push.py" --host "$host" --token "$token" push "$TMP/$id" --id "$id"; then
+      pushed+=("$id")
+    else
+      echo "push-apps.sh: $id failed" >&2
+      failed+=("$id")
+    fi
+  fi
 done
+
+if [ "${#serial_args[@]}" -gt 0 ]; then
+  code_args=()
+  [ "$token_given" -eq 1 ] && code_args=(--code "$token")
+  log="$TMP/push.log"
+  "$PY" "$FW/scripts/push_serial.py" --port "$port" ${code_args[@]+"${code_args[@]}"} "${serial_args[@]}" 2>&1 | tee "$log"
+  # An app counts as pushed only when push_serial.py said so; a crash leaves the rest failed.
+  for arg in "${serial_args[@]}"; do
+    id="${arg%%=*}"
+    if grep -q -x -F "push: $id ok" "$log"; then
+      pushed+=("$id")
+    else
+      failed+=("$id")
+    fi
+  done
+fi
 
 verb="pushed"
 [ "$dry_run" -eq 1 ] && verb="would push"
 echo "push-apps.sh: $profile: $verb ${#pushed[@]} app(s): ${pushed[*]-}"
 if [ "${#skipped[@]}" -gt 0 ]; then
-  echo "push-apps.sh: left out (dev only): ${skipped[*]}"
+  echo "push-apps.sh: left out (profile=dev): ${skipped[*]}"
 fi
 if [ "${#failed[@]}" -gt 0 ]; then
   echo "push-apps.sh: FAILED: ${failed[*]}" >&2

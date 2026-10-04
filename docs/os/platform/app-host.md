@@ -15,7 +15,7 @@ Upstream already provides the Lua runtime, the sandbox (1 MB heap, 250 ms per ca
 | Manifest | `app.ini` | the `BADGE_APP(...)` line |
 | Consent prompt | yes, for sensitive permissions | no |
 
-Both appear in the same launcher grid (hook H11; the shell's launcher lists `app_store::count()`/`at()`), are launched and stopped the same way, receive the same callbacks, and are paused the same way by the approval.
+Both appear in the same launcher grid, in the folder their manifest names (hook H11 puts the native apps in `app_store::count()`/`at()`; the launcher lists `vk::host::catalog`, [below](#launcher-and-install-keys)), are launched and stopped the same way, receive the same callbacks, and are paused the same way by the approval.
 
 | Callback | Lua global | Native `badge::App` method |
 |---|---|---|
@@ -30,7 +30,7 @@ Holding CANCEL for 1.5 s force-quits any app (upstream `APP_ESCAPE_HOLD_MS`).
 
 ## Manifest
 
-`app.ini`, `key=value` per line. Upstream keys: `name`, `version`, `author`, `description`, `entry`. BadgeOS adds two, read by our own parser (upstream's `Info` struct is not changed):
+`app.ini`, `key=value` per line. Upstream keys: `name`, `version`, `author`, `description`, `entry`. BadgeOS adds two that the launch checks, read by our own parser (upstream's `Info` struct is not changed), and the launcher and install keys [below](#launcher-and-install-keys):
 
 | Key | Form | Default | Meaning |
 |---|---|---|---|
@@ -60,6 +60,29 @@ How the two keys are read:
 - A missing `app.ini` is not an error: the app gets the defaults (no permissions, `min_api` 1) and `load()` returns true.
 - Comment lines, unknown keys and spaces around keys and values are ignored. Spaces around a permission name and empty items in the list (`sign,,net`) are dropped; a name listed twice counts once.
 - A `min_api` that is not decimal digits makes `load()` return false, and the launch is refused with `bad min_api in app.ini`.
+
+### Launcher and install keys
+
+Optional keys that say where an app is listed and how it is installed. Nothing about them is in C++ or in a script: a folder on the launcher exists because an app names it.
+
+| Key | Form | Default | Read by | Meaning |
+|---|---|---|---|---|
+| `category` | `[a-z0-9_-]`, 1 to 16 characters (any case; stored lower case) | none | firmware | the launcher folder the app is listed in; the folder's label is the name in capitals. Any other value counts as none |
+| `hidden` | `1` or `true` | `0` | firmware | not listed on the launcher, nor by `badge.system.launcher_apps()` (Home's menu); it still starts over serial (`RUN`), from Settings and with `badge.system.launch()`. Test fixtures, and apps reached from Settings |
+| `count` | `notes` | none | firmware | the launcher shows the number of waiting notifications on the app's cell (the Inbox) |
+| `profile` | `dev` | (both) | `scripts/push-apps.sh` | `release` does not install the app |
+| `include` | an app id | none | `scripts/push-apps.sh` | that app's files are pushed with this one, except its `config.lua` and `app.ini` and any file this app has itself ([installing](../guides/build-flash-provision.md#installing-apps)) |
+
+A native app has no `app.ini`: the same keys are the optional last argument of its `BADGE_APP` line, separated by `;` ([native apps](native-apps.md#the-sdk-header)):
+
+```cpp
+BADGE_APP(SelfTest, "selftest", "Self test", "1.0.0", "", "category=tests");
+BADGE_APP(Inbox, "inbox", "Inbox", "1.0.0", "", "count=notes");
+```
+
+A native app compiled only in the dev profile wraps its file in `#if VK_PROFILE_DEV` (`src/vk/vk_build.h`); `profile` and `include` mean nothing for it.
+
+`src/vk/host/manifest.h` declares the parser, `struct Launcher { String category; bool hidden; bool countNotes; }` with `parseLauncher(text, out)` (pure, host-tested) and `loadLauncher(id, out)`. `src/vk/host/catalog.{h,cpp}` builds from them the list the launcher shows: every app of `app_store` (Lua apps in upstream's order, then the native ones by id), hidden ones left out, each with its category. It reads every `app.ini` once and again only after `app_store::refresh()` has rescanned `/apps` (hook [H25](../architecture/upstream-hooks.md#h25--launcher-catalogue-after-a-rescan)), so moving an app to another folder needs only a new `app.ini`. The same list is `badge.system.launcher_apps()` for Lua ([Lua API](lua-api.md#badgesystemlauncher_apps)).
 
 ## Permissions
 
@@ -228,29 +251,29 @@ void clear();
 
 - Eight notes, in RAM, oldest dropped. Nothing is persisted.
 - The 10 s rule compares a post with every stored note and with the last accepted post, so dismissing a note does not let the same text straight back in; an ignored post does not restart the 10 s. A post with an empty title and an empty body is dropped. Title and body are cut to the field sizes.
-- Shown by: the launcher's `inbox` cell and the Settings list's Inbox row, whose value is the waiting count ([shell](../ui/shell.md#launcher)); the `notify` LED pattern while a note is waiting and the badge is idle (`vk::host::idle()`, [ui](../ui/ui.md#launcher-and-settings)), and the **Inbox** native app, which lists the notes; SELECT launches `app_id`, RIGHT dismisses.
+- Shown by: the launcher's cell of the app whose manifest says `count=notes` (the Inbox) and the Settings list's Inbox row, whose value is the waiting count ([shell](../ui/shell.md#launcher)); the `notify` LED pattern while a note is waiting and the badge is idle (`vk::host::idle()`, [ui](../ui/ui.md#launcher-and-settings)), and the **Inbox** native app, which lists the notes; SELECT launches `app_id`, RIGHT dismisses.
 - Posted by firmware features only (a payment request seen, a contact saved). Apps cannot post.
 
 ## System apps
 
-The launcher and the settings are the shell, not apps ([shell](../ui/shell.md)). The screens below are native apps, each removable by deleting its folder. They appear in the launcher; `inbox` and `wallet_settings` are also opened by the Settings rows Inbox and Wallet:
+The launcher and the settings are the shell, not apps ([shell](../ui/shell.md)). The screens below are native apps, each removable by deleting its folder. `inbox` and `wallet_settings` are opened by the Settings rows Inbox and Wallet; `inbox` is also on the launcher's top level, `wallet_settings` only in Settings (`hidden=1`):
 
-| App id | Launcher name | What it shows |
+| App id | Launcher | What it shows |
 |---|---|---|
-| `inbox` | Inbox | notifications |
-| `wallet_settings` | Wallet | provisioning state, key location, public key, token table with caps, clock source, every config key (read-only), "Reset wallet config" (→ `config::requestReset()`), build profile |
-| `hello_native` | Hello (C++) | the smallest native app; proof the runtime works |
+| `inbox` | Inbox, top level, with the waiting count (`count=notes`) | notifications |
+| `wallet_settings` | hidden; Settings → Wallet | provisioning state, key location, public key, token table with caps, clock source, every config key (read-only), "Reset wallet config" (→ `config::requestReset()`), build profile |
+| `selftest` | Self test, folder TESTS (`category=tests`) | the hardware checklist ([apps](../apps/apps.md#self-test)) |
+| `nativetest` | hidden; dev profile only | a test fixture: the native app the device tests launch and stop |
 
 ## Adding and removing
 
 | To | Do |
 |---|---|
-| add a Lua app | create `apps/<id>/app.ini` and `main.lua`, push it ([extending](../guides/extending.md#add-a-lua-app)) |
-| add a native app | create `src/native_apps/<id>/<id>.cpp` with one `BADGE_APP(...)` line, reflash ([extending](../guides/extending.md#add-a-native-app)) |
+| add an app | `scripts/new-app.sh <id> "<Name>" [--native] [--category <name>]`, then push (Lua) or reflash (native) ([extending](../guides/extending.md#add-an-app)) |
 | add a permission | one `VK_PERMISSION(...)` line; name it in the `VK_LUA_FUNCTION` lines it gates |
 | add a Lua function | one `VK_LUA_FUNCTION(...)` line |
 | remove an app | delete its folder (and `DEL <id>` on badges that have it) |
 
 ## Tests
 
-Host: `test_manifest` (parser), `test_consent` (hash, store round trip with an in-memory file). Device: T-APP1 to T-APP7 in [../testing/testing.md](../testing/testing.md#acceptance-tests) (`t_app.py`, `t_native.py`), plus `t_notify.py` (notes and the Inbox) and `t_wallet_app.py`. `t_native.py` also pushes a folder named `hello_native` and checks that the native app still starts, and checks that `begin` from a native app's `on_stop` is refused like `begin` from its `on_start`.
+Host: `test_manifest` (both parsers: the launch keys and the launcher keys), `test_consent` (hash, store round trip with an in-memory file). Device: T-APP1 to T-APP7 in [../testing/testing.md](../testing/testing.md#acceptance-tests) (`t_app.py`, `t_native.py`), plus `t_notify.py` (notes and the Inbox), `t_wallet_app.py` and `t_folders.py` (the launcher keys and the folders). `t_native.py` also pushes a folder named `nativetest` and checks that the native app still starts, and checks that `begin` from a native app's `on_stop` is refused like `begin` from its `on_start`.

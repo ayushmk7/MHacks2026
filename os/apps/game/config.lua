@@ -6,10 +6,10 @@ return {
   title = "Dodge",
 
   shop = {
-    -- Who is paid: the shop's address, which must have a registry record. This is a deployment
-    -- value: the string below is a placeholder that provisioning replaces. Until then every
-    -- purchase fails with a message and nothing can be signed.
-    recipient = "REPLACE_WITH_SHOP_ADDRESS",
+    -- Who is paid is a deployment value, so it is not in this file: the provisioned config key
+    -- named here holds the shop's address (base58; it must have a registry record). While the
+    -- key is empty the title lists only Play: there is no shop to buy from.
+    address_key = "shop_address",
 
     -- The token paid with; nil is the badge's default token.
     symbol = nil,

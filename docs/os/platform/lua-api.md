@@ -1,6 +1,6 @@
 # Lua API
 
-Everything BadgeOS adds to the `badge` table, and the shared Lua library `lib/vk.lua`. Upstream's own modules (`badge.gfx`, `input`, `led`, `system`, `storage`, `battery`, `mic`, `se050`, `wifi`, `http`, `espnow`, `ble`) are documented in upstream's `README.md` and are unchanged, except that some now need a permission ([app host](app-host.md#permissions)).
+Everything BadgeOS adds to the `badge` table, and the shared Lua library `lib/vk.lua`. Upstream's own modules (`badge.gfx`, `input`, `led`, `system`, `storage`, `battery`, `mic`, `se050`, `wifi`, `http`, `espnow`, `ble`) are documented in upstream's `README.md` and are unchanged, except that some now need a permission ([app host](app-host.md#permissions)) and `badge.system` has one function more, [`launcher_apps`](#badgesystemlauncher_apps).
 
 Conventions:
 
@@ -117,6 +117,14 @@ Permission `history`. Feature `history`.
 | Function | Permission | Returns |
 |---|---|---|
 | `wallet.refresh_balance()` | `net` | `true`, or `nil, reason`. Fetches now (connecting and reading each get 3 s; the call extends the callback deadline by 7 s). Reasons: `not_provisioned` (no token table, `rpc_url` or key), `timeout` (no route, or the request failed), `unsupported` (the node answered with no usable account, or a status other than 200) |
+
+## `badge.system.launcher_apps`
+
+| Function | Permission | Returns |
+|---|---|---|
+| `badge.system.launcher_apps()` | — | an array of `{id, name, category}`: every app the launcher lists, in the launcher's order (Lua apps, then native ones), with the folders flattened; `category` is `""` for the top level. Hidden apps (`hidden=1`: test fixtures, apps reached from Settings) are not in it |
+
+Added to upstream's `badge.system` table by `VK_LUA_FUNCTION` in `src/vk/host/catalog.cpp`, from the same list the launcher draws ([app host](app-host.md#launcher-and-install-keys)). Home's menu is this list minus Home itself, so no app names another app's id. Upstream's `badge.system.apps()` still lists every installed app, hidden ones included.
 
 ## `badge.theme`
 

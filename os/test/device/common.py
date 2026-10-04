@@ -74,17 +74,31 @@ def provision_test(badge):
     return values
 
 
-# The rows of the shell's Settings list, in order (execution-plan.md, section 5.3; ui/shell.md,
-# "Settings page registry"). theme, wallet and inbox are action rows: SELECT acts in place or
-# launches an app, so they never become a screen.
-SETTINGS_ROWS = ("theme", "wifi", "bluetooth", "espnow", "push", "store", "identity", "display",
-                 "leds", "wallet", "inbox", "info", "console", "about")
-SETTINGS_ACTIONS = ("theme", "wallet", "inbox")
+def _settings_registry():
+    """The rows of the shell's Settings list, in order, and the action rows among them, read from
+    the registrations themselves (ui/shell.md, "Settings page registry"): every
+    VK_SETTINGS_PAGE / VK_SETTINGS_ACTION(ident, "id", order, ...) line under src/vk/shell/pages/,
+    sorted by order then id, as settings_list.cpp sorts them. An action row (SELECT acts in place
+    or launches an app) never becomes a screen. A page added or deleted needs no edit here."""
+    import re
+    pages = os.path.normpath(os.path.join(_HERE, "..", "..", "src", "vk", "shell", "pages"))
+    pattern = re.compile(r'^VK_SETTINGS_(PAGE|ACTION)\(\s*\w+\s*,\s*"([a-z_]+)"\s*,\s*(-?\d+)', re.M)
+    rows = []
+    for name in sorted(os.listdir(pages)):
+        if name.endswith(".cpp"):
+            with open(os.path.join(pages, name), "r", encoding="utf-8") as handle:
+                rows += [(int(order), row_id, kind) for kind, row_id, order in pattern.findall(handle.read())]
+    rows.sort(key=lambda row: (row[0], row[1]))
+    return (tuple(row[1] for row in rows), tuple(row[1] for row in rows if row[2] == "ACTION"))
+
+
+SETTINGS_ROWS, SETTINGS_ACTIONS = _settings_registry()
 # Screens opened from a page, as {screen: page}. SELECT on the page opens them.
 SETTINGS_SUBSCREENS = {"identity_new": "identity"}
 
-# CANCEL taps to_launcher sends at most: the screen stack is at most 6 deep.
-LAUNCHER_TAPS = 6
+# CANCEL taps to_launcher sends at most: the screen stack is at most 6 deep, and an open launcher
+# folder takes one more.
+LAUNCHER_TAPS = 7
 
 
 def assert_screen_lit(state, what):
@@ -129,21 +143,117 @@ def on_launcher(state):
     return state["app"] == "" and state.get("screen") == "launcher"
 
 
+# ---- app manifests (docs/os/platform/app-host.md, "Manifest") -------------------------------------
+
+APPS_DIR = os.path.normpath(os.path.join(_HERE, "..", "..", "apps"))
+FOLDER_KEY = "folder:"   # how VKSTATE `menu` names a folder cell
+
+
+def manifest(app_id):
+    """os/apps/<id>/app.ini as a dict (keys in lower case, values trimmed); {} when there is none."""
+    values = {}
+    try:
+        with open(os.path.join(APPS_DIR, app_id, "app.ini"), "r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line or line[0] in "#;" or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                values[key.strip().lower()] = value.strip()
+    except OSError:
+        pass
+    return values
+
+
+def lua_apps(profile="dev"):
+    """The Lua apps of os/apps that push-apps.sh installs for `profile` (release leaves out the
+    ones whose manifest says profile=dev), sorted."""
+    ids = []
+    for name in sorted(os.listdir(APPS_DIR)):
+        if not os.path.isfile(os.path.join(APPS_DIR, name, "app.ini")):
+            continue
+        if profile == "release" and manifest(name).get("profile") == "dev":
+            continue
+        ids.append(name)
+    return ids
+
+
+# ---- the launcher's grid and folders (docs/os/ui/shell.md, "Launcher") ----------------------------
+
+LAUNCHER_COLS = 2
+
+
+def launcher_cursor_to(badge, key, timeout=5):
+    """Moves the launcher's cursor to the cell `key` of the grid on screen (an app id, or
+    "folder:<name>"), with UP/DOWN/LEFT/RIGHT taps, and returns the state. VKSTATE `menu` lists
+    the cells in grid order, `cursor` is the selected one."""
+    state = badge.state()
+    assert on_launcher(state), "launcher_cursor_to(%r): not on the launcher: %s" % (key, state.get("screen"))
+    menu = state["menu"]
+    assert key in menu, "launcher_cursor_to: %r is not on the launcher (folder %r): %s" % (
+        key, state.get("folder"), menu)
+    want = menu.index(key)
+    rows = (want // LAUNCHER_COLS) - (state["cursor"] // LAUNCHER_COLS)
+    for _ in range(abs(rows)):
+        badge.btn("down" if rows > 0 else "up", "tap")
+    deadline = time.monotonic() + timeout
+    while True:
+        state = badge.state()
+        if state["cursor"] == want:
+            return state
+        assert time.monotonic() < deadline, "launcher_cursor_to(%r): cursor %d, wanted %d" % (
+            key, state["cursor"], want)
+        if state["cursor"] // LAUNCHER_COLS != want // LAUNCHER_COLS:
+            time.sleep(0.1)   # the vertical taps are still being applied
+            continue
+        badge.btn("right" if state["cursor"] < want else "left", "tap")
+        time.sleep(0.1)
+
+
+def open_folder(badge, name):
+    """From the launcher's top level, opens the folder `name`; returns the state inside it."""
+    launcher_cursor_to(badge, FOLDER_KEY + name)
+    badge.btn("a", "tap")
+    return badge.wait_state(lambda s: on_launcher(s) and s.get("folder") == name, timeout=5)
+
+
+def launcher_find(badge):
+    """Every app the launcher lists, as {app_id: folder}, folder "" for the top level. Opens each
+    folder of more than one app to read it, and ends on the top level."""
+    state = to_launcher(badge)
+    found = {key: "" for key in state["menu"] if not key.startswith(FOLDER_KEY)}
+    for key in [k for k in state["menu"] if k.startswith(FOLDER_KEY)]:
+        name = key[len(FOLDER_KEY):]
+        launcher_cursor_to(badge, key)
+        badge.btn("a", "tap")
+        inner = badge.wait_state(lambda s: s.get("folder") == name or s["app"] != "", timeout=5)
+        if inner["app"] != "":
+            # A folder of one app launches it.
+            found[inner["app"]] = name
+            to_launcher(badge)
+            continue
+        for app_id in inner["menu"]:
+            found[app_id] = name
+        badge.btn("b", "tap")
+        badge.wait_state(lambda s: on_launcher(s) and s.get("folder") == "", timeout=5)
+    return found
+
+
 def to_launcher(badge):
-    """Leaves the shell's launcher on screen (VKSTATE app "" and screen "launcher") and returns
-    that state.
+    """Leaves the shell's launcher on screen (VKSTATE app "" and screen "launcher"), at its top
+    level (no folder open), and returns that state.
 
     An open approval is dismissed with CANCEL and the running app is stopped. Then CANCEL is
     tapped until the screen is the launcher: it leaves the error screen, a settings page and the
-    Settings list one step at a time. The state is read before every tap, because CANCEL on the
-    launcher itself opens Settings."""
+    Settings list one step at a time, and then an open folder. The state is read before every
+    tap, because CANCEL on the launcher's top level itself opens Settings."""
     if badge.state()["modal"]:
         badge.btn("b", "tap")
         badge.wait_state(lambda s: not s["modal"], timeout=5)
     badge.stop()
     state = badge.wait_state(lambda s: s["app"] == "", timeout=5)
     for _ in range(LAUNCHER_TAPS):
-        if on_launcher(state):
+        if on_launcher(state) and not state.get("folder"):
             return state
         if state["modal"]:
             badge.btn("b", "tap")
@@ -152,8 +262,9 @@ def to_launcher(badge):
         badge.btn("b", "tap")
         time.sleep(0.2)
         state = badge.state()
-    assert on_launcher(state), "not on the launcher after %d CANCEL taps: app %r, screen %r" % (
-        LAUNCHER_TAPS, state["app"], state.get("screen"))
+    assert on_launcher(state) and not state.get("folder"), (
+        "not on the launcher's top level after %d CANCEL taps: app %r, screen %r, folder %r" % (
+            LAUNCHER_TAPS, state["app"], state.get("screen"), state.get("folder")))
     return state
 
 

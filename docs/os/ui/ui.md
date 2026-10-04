@@ -90,7 +90,7 @@ BadgeOS has no status bar and no status items. Upstream's 22 px bar belonged to 
 |---|---|
 | `setup` (`SETUP` while unprovisioned) | the launcher's balance row reads `SETUP NEEDED` ([launcher](shell.md#launcher)) |
 | `dev` (`DEV` in the dev profile) | the dev build is marked on the approval screen, where it matters ([approval](../wallet/approval.md#dev-builds)) |
-| `inbox` (`[n]`) | the value of the launcher's `inbox` cell and of the Settings list's Inbox row |
+| `inbox` (`[n]`) | the value of the launcher's Inbox cell (the app with `count=notes`) and of the Settings list's Inbox row |
 | `balance` | the launcher's `BALANCE` row |
 
 The one piece that stays is the repaint request, now in `src/vk/ui/repaint.{h,cpp}`: `vk::ui::requestShellRepaint()` asks the shell to redraw its top screen on its next pass, and the shell calls `vk::ui::consumeShellRepaint()` itself ([framework](shell.md#framework)). Whoever changes something the shell shows calls it: the balance feature on a new balance, the notification inbox on a change, the config store on provisioning or reset, the approval engine when it closes.
@@ -235,7 +235,7 @@ The battery figure is the measured one. The badge has no fuel gauge, so the only
 | Screen | Layout |
 |---|---|
 | Boot | [shell: Boot](shell.md#boot). Header `BADGEOS` / `*** STARTING UP ***`; left stub: brand line `BadgeOS`, percent as an amount, a 14-cell block bar, the stage's detail text; body: title `CHECKLIST`, one row per stage with `OK`, `..` or blank. No splash images come before it |
-| Launcher | [shell: Launcher](shell.md#launcher). Header; title `MENU`; apps in a 2-column grid of rows `NN NAME`, selected row inverted with `◂` (the `inbox` row shows the number of waiting notifications as its value when there are any); rule; row `BALANCE … 142.50 HACK`, or `SETUP NEEDED` while the badge is unprovisioned; barcode; footer `SELECT open` / `CANCEL settings` |
+| Launcher | [shell: Launcher](shell.md#launcher). Header; title `MENU` (an open folder: its name); apps in a 2-column grid of rows `NN NAME`, then one row per folder with its number of apps as the value, selected row inverted with `◂` (the Inbox row shows the number of waiting notifications as its value when there are any); rule; row `BALANCE … 142.50 HACK`, or `SETUP NEEDED` while the badge is unprovisioned; barcode; footer `SELECT open` / `CANCEL settings` |
 | Settings list, every settings page, delete confirmation, app-store offer, installing, app error | [shell](shell.md#settings-list): each is a receipt list or ticket drawn with the kit |
 | About | [shell: About](shell.md#about). Left stub: the name `BadgeOS` as a title, a rule, rows VERSION, API, KEY, ADDRESS; body: the QR code of config key `repo_url` (148 px) and the link as text under it, or `no link set` |
 | Home | left stub: `BALANCE` amount, then the QR code of `repo_url` (102 px), or the barcode when that key is empty; body: rows NAME, ADDRESS, KEY, CLOCK; a rule; the app menu (four rows, scrolling); a rule; `THANK YOU FOR HACKING`. No INBOX row: the count is not readable from Lua, and the launcher and Settings show it ([apps](../apps/apps.md#home)) |

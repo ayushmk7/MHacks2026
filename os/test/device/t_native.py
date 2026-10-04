@@ -1,6 +1,6 @@
 """T-APP5 and the badge half of T-APP6: the native app runtime (WP31).
 
-T-APP5  hello_native (compiled into the firmware) is in the app list after the Lua apps, launches,
+T-APP5  nativetest (compiled into the firmware) is in the app list after the Lua apps, launches,
         draws its own screen, exits on CANCEL, and launches again as a new object. A pushed DEL of
         a native id answers "delete failed" and removes nothing (hook H11).
 T-APP6  A native app without `sign` in its BADGE_APP permissions gets `denied` from
@@ -27,11 +27,11 @@ from common import launch, provision_test, to_launcher
 SHOTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shots")
 SHOT_BYTES = 320 * 240 * 2
 
-APP = "hello_native"
-APP_NAME = "Hello (C++)"
+APP = "nativetest"
+APP_NAME = "Native test"
 DENY_APP = "zz_denytest"
 
-# What hello_native draws: the compile-time palette's theme::BG and theme::GREEN (src/ui/theme.h),
+# What nativetest draws: the compile-time palette's theme::BG and theme::GREEN (src/ui/theme.h),
 # which hold Receipt-light values now: #F3EFE4 (paper) and #17804F, as RGB565.
 BG = 0xF77C
 GREEN = 0x1409
@@ -61,19 +61,19 @@ def _colours(pixels):
     return collections.Counter(struct.unpack("<%dH" % (len(pixels) // 2), pixels))
 
 
-def _hello_is_on_screen(badge, name):
+def _fixture_is_on_screen(badge, name):
     pixels = badge.shot(os.path.join(SHOTS, name))
     colours = _colours(pixels)
     assert len(colours) > 1, "T-APP5: the screen is blank (one colour, 0x%04X)" % next(iter(colours))
     total = sum(colours.values())
     assert colours[BG] > 0.8 * total, (
-        "T-APP5: %d %% of the screen is hello_native's background; the app did not fill it"
+        "T-APP5: %d %% of the screen is nativetest's background; the app did not fill it"
         % (100 * colours[BG] // total))
-    assert colours[GREEN] > 100, "T-APP5: only %d pixels of hello_native's green text" % colours[GREEN]
+    assert colours[GREEN] > 100, "T-APP5: only %d pixels of nativetest's green text" % colours[GREEN]
     return pixels
 
 
-def _start_hello(badge):
+def _start_fixture(badge):
     badge.clear_log()
     state = launch(badge, APP)
     assert state["app"] == APP, "VKSTATE app is %r" % state["app"]
@@ -81,7 +81,7 @@ def _start_hello(badge):
     badge.wait_log(r"native app '%s' started" % APP, timeout=2)
 
 
-def _cancel_hello(badge):
+def _cancel_fixture(badge):
     badge.btn("b", "tap")  # CANCEL: badge::exit()
     badge.wait_state(lambda s: s["app"] != APP, timeout=5)
     badge.wait_log(r"native app '%s' stopped" % APP, timeout=2)
@@ -102,18 +102,18 @@ def t_app5(badge):
     assert not later_lua, "Lua apps listed after a native app: %s" % later_lua
 
     # Launch: running, native, and its own picture on the screen.
-    _start_hello(badge)
-    first = _hello_is_on_screen(badge, "native_hello.png")
+    _start_fixture(badge)
+    first = _fixture_is_on_screen(badge, "native_fixture.png")
     assert first != launcher, "T-APP5: the screen is still the launcher's"
 
     # CANCEL exits.
-    _cancel_hello(badge)
+    _cancel_fixture(badge)
     assert badge.state()["app"] != APP
 
     # Launch again: a new object is created (the log has a second "started"), and it draws again.
-    _start_hello(badge)
-    _hello_is_on_screen(badge, "native_hello_again.png")
-    _cancel_hello(badge)
+    _start_fixture(badge)
+    _fixture_is_on_screen(badge, "native_fixture_again.png")
+    _cancel_fixture(badge)
 
     # Hook H11, removeApp is not hooked: DEL of a native id fails and the app stays.
     reply = _authed(badge, "DEL " + APP)[-1]
@@ -121,7 +121,7 @@ def t_app5(badge):
     assert APP in [row[0] for row in _app_list(badge)], "%s is gone from LIST after DEL" % APP
 
     # A STOP sent while it runs stops it like any app.
-    _start_hello(badge)
+    _start_fixture(badge)
     badge.stop()
     badge.wait_state(lambda s: s["app"] != APP, timeout=5)
     badge.wait_log(r"native app '%s' stopped" % APP, timeout=2)
@@ -140,11 +140,11 @@ def t_shadow(badge):
     finally:
         shutil.rmtree(folder, ignore_errors=True)
     try:
-        _start_hello(badge)        # asserts native true and the "started" line
+        _start_fixture(badge)        # asserts native true and the "started" line
         log = "\n".join(badge.log())
         assert "ignoring pushed app '%s'" % APP in log, "no 'ignoring pushed app' line in the log:\n%s" % log
         assert "SHADOW ran" not in log, "the pushed folder's main.lua ran in place of the built-in app"
-        _cancel_hello(badge)
+        _cancel_fixture(badge)
     finally:
         reply = _authed(badge, "DEL " + APP)[-1]
     assert reply == "OK deleted", "DEL of the pushed %s folder -> %s" % (APP, reply)

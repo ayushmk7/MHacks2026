@@ -16,25 +16,51 @@ Every app BadgeOS ships: what it is for, its permissions, its screens and its fl
 - Every app passes `header = "BADGEOS"` from its `config.lua`.
 - The launcher and the settings are not apps: they are the BadgeOS shell ([shell](../ui/shell.md)). An app that exits returns to the shell's launcher. Upstream's sample apps (`hello`, `dice`, `gallery`, `radar`, `vumeter`, `whosnear`) are not shipped; the Dice app below is BadgeOS's own.
 
-| App | Id | Kind | Permissions |
-|---|---|---|---|
-| Sign test | `signtest` | Lua, dev only | `sign,net` |
-| Home | `home` | Lua | `net` |
-| Pay | `pay` | Lua | `sign,net,espnow` |
-| Request | `request` | Lua | `request,net,espnow` |
-| History | `history` | Lua | `history` |
-| Contacts | `contacts` | Lua | `contacts,espnow` |
-| Game | `game` | Lua | `sign,net,espnow,storage` |
-| Evil game | `evilgame` | Lua, demo only | `sign,net,espnow,storage` |
-| Duel | `duel` | Lua | `sign,request,net,espnow` |
-| Check test | `checktest` | Lua, dev only (test fixture, WP21): loads its case from `case.lua`, pushed with the app by the test | `sign,net,history,storage` |
-| Library test | `vktest` | Lua, dev only (test fixture, WP35) | `sign,net,espnow` |
-| Request test | `reqtest` | Lua, dev only (test fixture, WP23): opens a request and logs RESULT frames | `request,espnow` |
-| Inbox | `inbox` | native | — |
-| Wallet | `wallet_settings` | native | — |
-| Hello (C++) | `hello_native` | native | — |
-| Dice | `dice` | Lua | — |
-| Self test | `selftest` | native | — |
+Where an app is listed comes from its own manifest (`category`, `hidden`; for a native app the last `BADGE_APP` argument), and whether `push-apps.sh release` installs it from `profile` ([app host](../platform/app-host.md#launcher-and-install-keys)). The launcher's top level is Contacts, History, Home, Pay, Request and Inbox, then the folders GAMES (Dice, Duel, Game) and TESTS (Self test, its only app, so SELECT on TESTS opens it).
+
+| App | Id | Kind | Launcher | Permissions |
+|---|---|---|---|---|
+| Home | `home` | Lua | top level | `net` |
+| Pay | `pay` | Lua | top level | `sign,net,espnow` |
+| Request | `request` | Lua | top level | `request,net,espnow` |
+| History | `history` | Lua | top level | `history` |
+| Contacts | `contacts` | Lua | top level | `contacts,espnow` |
+| Inbox | `inbox` | native | top level, with the waiting count (`count=notes`) | — |
+| Dice | `dice` | Lua | GAMES | — |
+| Duel | `duel` | Lua | GAMES | `sign,request,net,espnow` |
+| Game | `game` | Lua | GAMES | `sign,net,espnow,storage` |
+| Self test | `selftest` | native | TESTS | — |
+| Wallet | `wallet_settings` | native | hidden: Settings → Wallet opens it | — |
+| Evil game | `evilgame` | Lua, dev profile only (`profile=dev`, `include=game`): the attack demo | hidden | `sign,net,espnow,storage` |
+| Sign test | `signtest` | Lua, dev profile only: test fixture, needs the laptop's listener | hidden | `sign,net` |
+| Check test | `checktest` | Lua, dev profile only (test fixture, WP21): loads its case from `case.lua`, pushed with the app by the test | hidden | `sign,net,history,storage` |
+| Library test | `vktest` | Lua, dev profile only (test fixture, WP35) | hidden | `sign,net,espnow` |
+| Request test | `reqtest` | Lua, dev profile only (test fixture, WP23): opens a request and logs RESULT frames | hidden | `request,espnow` |
+| Native test | `nativetest` | native, dev profile only (test fixture) | hidden | — |
+
+## Audit (2026-10-04)
+
+Every app on the badge was launched with the dev build of that day, its main keys pressed (injected), the screen captured and its log read; one badge, provisioned with the test values, no network, no clock source, no second badge. The rule: nothing visible on the launcher may dead-end, show a placeholder, error, or be unable to do its job on a provisioned badge. An app that needs a second badge or the network is not broken for that, but must say on its screen what it waits for.
+
+| App | Evidence | Decision |
+|---|---|---|
+| Home | starts (`HOME addr 5vpm..edvj`); name, address, key, `clock not set` in the warning ink, the repository QR code, `no network` under it; the menu lists the other apps | keep, top level. Its menu was a list of ids in `config.lua`; it is now `badge.system.launcher_apps()` |
+| Pay | `PAY list 0`, the screen says "No requests nearby" | keep, top level (waits for a badge that asks) |
+| Request | SELECT on the amount: `REQ err no_time`, the screen says "The clock is not set (no_time). Join Wi-Fi to set it" | keep, top level |
+| History | `HIST n 64`; SELECT shows a record's nine rows | keep, top level |
+| Contacts | `CON list 0`; SELECT starts the swap: "Looking for badges nearby / open Contacts, Swap on the other badge" | keep, top level |
+| Inbox | "Nothing new"; the count appears on its launcher cell with a note (`t_notify.py`) | keep, top level |
+| Dice | SELECT: `DICE roll 1 1 total 2` | keep, GAMES |
+| Duel | `DUEL title`; SELECT on a stake: `DUEL not ready no_time`, the screen says "Cannot duel: clock not set." Its header read `DUEL`, not `BADGEOS` | keep, GAMES; fixed: the header comes from `config.lua` |
+| Game | play runs (`GAME play`, `GAME score 1`, `GAME over 2`). Its shop paid `shop.recipient = "REPLACE_WITH_SHOP_ADDRESS"`: every purchase ended in "the shop is not set up" | keep, GAMES; fixed: the shop's address is the config key `shop_address`, and while it is empty the title is Play only |
+| Self test | runs its 14 checks (`t_selftest.py`) | keep, TESTS |
+| Wallet | its five pages open; Settings → Wallet opens it | keep, hidden: it is the wallet's settings and lives in Settings ([shell](../ui/shell.md#wallet-and-inbox)) |
+| Evil game | the game's code with a lying config; `evil_recipient = "REPLACE_WITH_ATTACKER_TOKEN_ACCOUNT"` | fixed and hidden: the shop comes from `shop_address`, the "recipient" lie pays the badge's own address, so it works from configuration alone; dev profile only, never on a launcher |
+| Sign test | "listener_url not set": does nothing without the laptop's listener | hidden dev fixture |
+| Check test | `CT nocase`: idles without the `case.lua` a test pushes | hidden dev fixture |
+| Library test | runs its checks (`VT done`); not for people | hidden dev fixture |
+| Request test | `RT err no_time`; a fixture of `t_req.py` | hidden dev fixture |
+| Hello (C++) `hello_native` | a sample that printed "gm from C++" in upstream's palette | deleted; the native template (`os/templates/native_app/`) replaced it, and the tests' native fixture is `nativetest` (hidden, dev only) |
 
 ## Dice
 
@@ -51,7 +77,7 @@ Serial: `[selftest] start`, one line `[selftest] <name>=<OK|FAIL|--> <value>` pe
 
 ## Sign test
 
-The first app, used to reach gate 1 and by the unattended test loop. Dev profile only; never pushed to a judge badge.
+The first app, used to reach gate 1 and by the unattended test loop. Dev profile only (`profile=dev`) and hidden (`hidden=1`): without the laptop's listener it can only say `listener_url not set`, so no person is offered it; never pushed to a judge badge.
 
 1. `GET <listener_url>/badge/pending?badge=<wallet.address()>` every 2 s. The reply holds `id` and `messageBase64` ([backend](../integration/backend.md#existing-routes)).
 2. `wallet.begin_solana(codec.b64dec(messageBase64))` with no `ctx`. In the dev profile the approval is red "UNVERIFIED RECIPIENT" with the hold-to-sign override.
@@ -79,13 +105,13 @@ A test fixture. It turns ESP-NOW on, then opens one request per frame from `on_u
 The landing app (set as upstream's autostart app by provisioning, `--autostart home`; without it the badge starts on the shell's launcher).
 
 - Calls `wallet.refresh_balance()` on start and every `balance_poll_s` seconds (the firmware does not poll while an app runs). Shows the badge's display name, short address (first 4 + `..` + last 4), key location, and `wallet.balance()` for the default token; "SETUP NEEDED" when unprovisioned; "clock not set" when `time_ok()` is false.
-- A menu of the other installed apps (`badge.system.apps()` filtered by the list in `config.lua`); SELECT launches with `badge.system.launch(id)`.
+- A menu of the other apps: every app the launcher lists (`badge.system.launcher_apps()`, folders flattened, hidden apps left out) except Home; SELECT launches with `badge.system.launch(id)`.
 - CANCEL exits to the launcher.
 
 As built (WP40):
 
 - The screen is the two-column receipt. Left stub: `BALANCE`, the balance and the symbol, then the barcode; on an unprovisioned badge the label reads `SETUP NEEDED`. Body: rows NAME, ADDRESS, KEY (`secure chip` or `software`, worded in `config.lua`), CLOCK (`clock not set` in the warning ink when `time_ok()` is false), a rule, a four-row scrolling menu, a rule, `THANK YOU FOR HACKING`. There is no INBOX row (the count is not readable from Lua; the launcher and Settings show it). The footer's left text is `SELECT open` when the menu is not empty.
-- The menu is the ids of `config.lua` that `badge.system.apps()` reports, minus Home. UP/DOWN move, SELECT launches.
+- The menu is `badge.system.launcher_apps()` minus Home, in the launcher's order (no app id is named in Home's files; until 2026-10-04 it was a list in `config.lua`). UP/DOWN move, SELECT launches.
 - The balance is fetched after the first frame is on screen and then every `balance_poll_s` seconds (0: once only). It is skipped when unprovisioned or when Wi-Fi is not connected; a failure only changes one line under the barcode, and the next attempt is a whole period later. `wallet.refresh_balance()` blocks: with a route but a node that does not answer it holds the frame for up to about 6 s per attempt (the badge's own hotspot counts as connected).
 - Log lines: `HOME addr <short>` once, `HOME balance <ok|reason>` per attempted fetch.
 - The repository QR code. When `wallet.config("repo_url")` is not empty, the stub shows `vk.ui.qr(22, 98, 102, link)` in place of the barcode: the amount moves up (label at y = 28 instead of 40) and the line a failed fetch writes goes under the code (y = 204). With the project's link a module is 3 px. The key is read on every frame, so a `VKSET repo_url …` shows without restarting the app. With the key empty, or on a firmware whose kit has no QR code (`vk.ui.qr` returns false), the stub is as before: amount, barcode, line. `t_app_home.py` reads the code back from its screenshot.
@@ -141,33 +167,33 @@ As built (WP43): `wallet.contacts()` is oldest first; the list shows newest firs
 A single-player arcade game with a shop, to show that an ordinary app can take payments safely.
 
 - **Play.** A dodge game: the player moves LEFT/RIGHT along the bottom, blocks fall, the score counts seconds survived. Speed rises over time. High score in `badge.storage`.
-- **Shop.** From the title screen: items from `config.shop.items` (`{name, price}`); SELECT buys with `vk.pay.start{to = config.shop.recipient, amount = item.price, memo = item.name}`. The approval is amber "VERIFIED - NOT PRESENT" (a shop has no badge present), and shows the real amount and the shop's verified name.
+- **Shop.** From the title screen: items from `config.shop.items` (`{name, price}`); SELECT buys with `vk.pay.start{to = wallet.config("shop_address"), amount = item.price, memo = item.name}`. The approval is amber "VERIFIED - NOT PRESENT" (a shop has no badge present), and shows the real amount and the shop's verified name.
 - On `done` the item (an extra life, a colour) is unlocked and stored.
 
-`config.lua`: `shop.recipient` (address with a registry record), `shop.items`, `speed`, `colors`.
+`config.lua`: `shop.address_key` (the name of the config key that holds the shop's address, `shop_address`), `shop.items`, `speed`, `colors`. The address itself is a deployment value, provisioned with `VKSET shop_address <base58>` (an address with a registry record); it is never in the app.
 
 As built (WP44):
 
 - **The title screen is the shop**, as in the simulation: one list with `Play` and one `Buy <item>` row per item, and a separate status screen while a purchase runs. Items: shield and sword (each a life) and green paint (a colour); an owned item cannot be bought again.
 - High score and unlocks are in `badge.storage.kv` (keys `best` and `o<id>`, so an item id is at most 6 characters).
 - **CANCEL during a purchase:** before the approval opens it drops the purchase; after signing it returns to the title and the flow finishes in the background.
-- **`shop.recipient` ships as the placeholder `REPLACE_WITH_SHOP_ADDRESS`.** Nothing fills it in: edit `config.lua` (and `evilgame/config.lua`) before a demo ([build guide](../guides/build-flash-provision.md#before-a-demo)). Until then a purchase ends with "the shop is not set up" and no approval opens.
-- Log lines: `GAME title`, `GAME play`, `GAME score <n>`, `GAME over <n>`, `GAME shop <id> <price>`, `GAME buy failed <reason>`.
+- **The shop is open only on a badge provisioned with `shop_address`** (since 2026-10-04; before, `config.lua` held the placeholder `REPLACE_WITH_SHOP_ADDRESS` and every purchase ended in "the shop is not set up"). With the key empty the title is the Play row alone, so nothing on the screen leads nowhere; `VKSET shop_address` with no value closes the shop again. The app reads the key when it starts.
+- Log lines: `GAME shop open` or `GAME shop closed` (on start), `GAME title`, `GAME play`, `GAME score <n>`, `GAME over <n>`, `GAME shop <id> <price>`, `GAME buy failed <reason>`.
 
 ## Evil game
 
-The same game with a dishonest shop, for the demo. `apps/evilgame/` contains only `app.ini` and `config.lua`; `scripts/push-apps.sh` copies `apps/game/*.lua` except `config.lua` into it before pushing.
+The same game with a dishonest shop, for the demo. `apps/evilgame/` contains only `app.ini` and `config.lua`; its `app.ini` says `include=game`, so `scripts/push-apps.sh` copies `apps/game/`'s files except `config.lua` and `app.ini` into it before pushing. It also says `hidden=1` and `profile=dev`: it is never on a launcher and a release push leaves it out; a demo starts it over serial (`vkdev.py run evilgame`) on a badge that has the dev apps.
 
 `config.lua` adds `evil`:
 
 | `evil` | What the game does | What the firmware shows |
 |---|---|---|
 | `"amount"` | its own screen says "Buy sword: 5.00", but it builds the transfer for `config.evil_amount` (500.00) | the true amount, `500.00 HACK`, and a hold because it is over the cap |
-| `"recipient"` | builds the transfer to `config.evil_recipient` while passing the real shop's record | red, WRONG RECIPIENT; cannot be signed |
+| `"recipient"` | builds the transfer to the badge's own address while passing the real shop's record | red, WRONG RECIPIENT; cannot be signed |
 
 The point of the demo: the game's screen lies, the firmware's cannot.
 
-As built (WP44): both evil cases go through `vk.pay.start`, the same code path as an honest purchase, with one option changed: `amount = config.evil_amount`, or `destination = config.evil_recipient`. `evil_recipient` is therefore a **token account** (what `destination` takes), not a wallet address, and ships as the placeholder `REPLACE_WITH_ATTACKER_TOKEN_ACCOUNT`. The lie applies to every item. Neither demo has run: both need the network and a registry record for the shop.
+As built (WP44): both evil cases go through `vk.pay.start`, the same code path as an honest purchase, with one option changed: `amount = config.evil_amount`, or `destination = wallet.address()`. The lie applies to every item. Until 2026-10-04 the destination was `config.evil_recipient`, shipped as the placeholder `REPLACE_WITH_ATTACKER_TOKEN_ACCOUNT`; any account the shop's record does not name gives WRONG RECIPIENT, so the badge's own address (whoever runs the evil game keeps the money) needs no value at all, and the shop comes from `shop_address` as in the Game. Neither demo has run: both need the network and a registry record for the shop.
 
 ## Duel
 
@@ -189,6 +215,7 @@ As built (WP45); the frames are specified in [protocol](../protocol/espnow.md#ty
 - The flash is the one screen not drawn with `vk.ui`: the whole screen in the ink colour with `PRESS` in the paper colour (`gfx.clear`, `gfx.text`).
 - If the loser's payment fails before the approval (no network, no record), the app itself sends RESULT failed, so the winner does not wait out `settle_timeout_s`; it reads `flow.result_sent` and `flow.sig` for that ([Lua API](../platform/lua-api.md#vkpay)). A forged RESULT can only make the winner show "unpaid" early; PAID needs the on-chain confirmation.
 - Two badges that invite each other at the same moment both ignore the other's INVITE and time out to the title.
+- The header's left text is `config.header` (`BADGEOS`); it was the literal `DUEL` until 2026-10-04. The rest of Duel's words are still literals in `main.lua`, not in `config.lua`.
 - Log lines: `DUEL title`, `DUEL stake <text>`, `DUEL invite <id>`, `DUEL invite timeout`, `DUEL request <req_id>`, `DUEL paying <req_id>`, `DUEL paid`, `DUEL unpaid`.
 
 ## Inbox (native)
@@ -199,7 +226,7 @@ As built (WP32): a row's label is the note's title in capitals, its value the ag
 
 ## Wallet (native)
 
-Reached from the launcher and from Settings → Wallet. Read-only pages, LEFT/RIGHT to change page:
+Reached from Settings → Wallet. It is the wallet's settings, so since 2026-10-04 it is not on the launcher (`hidden=1` in its `BADGE_APP` line); it was a launcher cell before. Read-only pages, LEFT/RIGHT to change page:
 
 1. **Status**: provisioned or not, public key (full, wrapped), key location, clock source, build profile, domain self-check result.
 2. **Tokens**: each token's symbol, mint (short), cap, max, balance.
@@ -219,10 +246,10 @@ As built (WP36):
 - Reset: `requestReset()` returns nothing, so the app looks at `vk::wallet::approval::active()` straight after the call; if no confirmation opened, a row `CONFIRMATION … unavailable` appears.
 - It repaints after a key, once a second (every 5 s on Apps), and when a frame arrives more than 0.25 s late: a native app gets no callback when an approval closes over it, and the late frame (hook H8d's `dt`) is how it knows to redraw.
 
-## Hello (native)
+## Native test (fixture)
 
-The smallest native app ([native apps](../platform/native-apps.md#the-smallest-app)). Kept as the template to copy.
+`src/native_apps/nativetest/nativetest.cpp`, compiled in the dev profile only (`#if VK_PROFILE_DEV`) and hidden. The native app the device tests launch, stop and draw over (`t_native`, `t_shell`, `t_apr`, `t_notify`, `t_pages2`): it fills the screen with two colours a test counts, and SELECT does nothing. It replaced the sample `hello_native`, whose other job, the example to copy, is now `os/templates/native_app/` ([native apps](../platform/native-apps.md#the-smallest-app)).
 
 ## Adding an app
 
-Lua: a new folder with `app.ini`, `main.lua`, `config.lua`; push it. Native: a new folder with one `.cpp`; reflash. Recipes: [../guides/extending.md](../guides/extending.md#add-a-lua-app). Add a row to the table at the top of this document.
+`scripts/new-app.sh <id> "<Name>" [--native] [--category <name>]`, then push it (Lua) or reflash (native); removing it is deleting its folder ([extending](../guides/extending.md#add-an-app)). Add a row to the table at the top of this document.

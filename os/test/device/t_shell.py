@@ -17,7 +17,7 @@ Steps:
   2. Grid navigation: a RIGHT tap and a DOWN tap each change the screenshot; UP and LEFT put the
      cursor back on the first app.
   3. CANCEL opens `settings`; CANCEL again returns to `launcher`.
-  4. hello_native is launched and CANCEL exits it: app "" and screen "launcher".
+  4. nativetest is launched and CANCEL exits it: app "" and screen "launcher".
   5. A pushed app whose main.lua calls error() lands on `app_error`; CANCEL returns to `launcher`.
   6. A pushed Lua app is listed before the native apps. With the cursor on it, holding RIGHT for
      900 ms opens `app_delete`. CANCEL keeps the app; the same again and SELECT deletes it (LIST
@@ -31,13 +31,12 @@ import os
 import struct
 import tempfile
 
-from common import assert_screen_lit, assert_screen_sent, launch, on_launcher, to_launcher
+from common import assert_screen_lit, assert_screen_sent, launch, launcher_cursor_to, on_launcher, to_launcher
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 SHOTS = os.path.join(_HERE, "shots")
 
-GRID_COLS = 2
-NATIVE_APP = "hello_native"
+NATIVE_APP = "nativetest"
 ERR_APP = "shellerr"
 DEL_APP = "shelldel"
 
@@ -95,14 +94,6 @@ def _wait_screen(badge, name, what, timeout=5):
         state = badge.state()
         raise AssertionError("%s: expected screen %r with no app; app=%r screen=%r" % (
             what, name, state.get("app"), state.get("screen")))
-
-
-def _cursor_to(badge, index):
-    """Moves the launcher's cursor from the first app to app `index` of the grid."""
-    for _ in range(index // GRID_COLS):
-        badge.btn("down", "tap")
-    if index % GRID_COLS == 1:
-        badge.btn("right", "tap")
 
 
 def run(badge):
@@ -172,7 +163,8 @@ def run(badge):
     index = ids.index(DEL_APP)
     assert index < ids.index(NATIVE_APP), "a Lua app is listed after a native app: %s" % ids
     _wait_screen(badge, "launcher", "after pushing %s" % DEL_APP)
-    _cursor_to(badge, index)
+    # The fixture has no category: it is a cell of the top level (VKSTATE `menu`).
+    launcher_cursor_to(badge, DEL_APP)
 
     badge.btn("right", "hold", 900)
     _wait_screen(badge, "app_delete", "holding RIGHT on %s" % DEL_APP)
